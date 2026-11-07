@@ -2,11 +2,13 @@
 // shop), each with a shopkeeper behind the counter, plus the shop menu you get at the counter.
 import * as THREE from '../vendor/three.module.min.js';
 import { $ } from './core.js';
-import { CITIES, siteOverrides, blockKey, addRoof, roofBuf, propBuf, glowBuf, parapet, parkedSpots, addTree } from './world.js';
+import { CITIES, siteOverrides, blockKey, addRoof, roofBuf, propBuf, glowBuf, parapet, parkedSpots, addTree, worldHooks, blockRects, pointBlocked, addCollider, SW } from './world.js';
+import { srand } from './core.js';
 import { solid, sign, lamp, ib, floorB } from './interiors.js';
 import { buildPerson, SKINS, HAIRS } from './people.js';
 
 export const shopSpots = []; // {x, z, y, r, kind, name, city, face}
+export const atmSpots = [];  // {x, z, nx, nz} cash machines on the pavement (contracts)
 
 // one block per town turns into a shop strip facing the street on `face` ('pz' or 'nz')
 const STRIPS = [
@@ -92,8 +94,46 @@ for (const S of STRIPS) {
     for (let x = x0 + 3; x < x1 - 2; x += 3) propBuf.box(x - 0.06, x + 0.06, 0.2, 0.22, lz0 + 1, lz0 + 5.5, 0xe8e8e8);
     for (const k of [1, 4, 8]) parkedSpots.push({ x: x0 + 1.5 + k * 3, z: lz0 + 3.2, heading: 0 });
     for (const tx of [I.ix0 + 1.5, I.ix1 - 1.5]) addTree(tx, (lz0 + lz1) / 2, 1.2);
+    atmAt(um0(x0, uw) - 3.2, zF + front * 1.2, 0, front);
     glowBuf.box(x0, x1, 0.21, 0.22, Math.min(zF, zF + front * 0.3), Math.max(zF, zF + front * 0.3), 0xfff0c0);
   });
+}
+
+function um0(x0, uw) { return x0 + uw * 1.5; }
+// a cash machine standing on the pavement, screen facing (nx, nz)
+function atmAt(x, z, nx, nz) {
+  const ax = Math.abs(nx) > 0 ? 0.3 : 0.45, az = Math.abs(nz) > 0 ? 0.3 : 0.45;
+  propBuf.box(x - ax, x + ax, 0, 1.75, z - az, z + az, 0x3a4a5a);
+  propBuf.box(x - ax - 0.03, x + ax + 0.03, 1.75, 1.95, z - az - 0.03, z + az + 0.03, 0x1f6a3a);
+  const sx = x + nx * (ax + 0.01), sz = z + nz * (az + 0.01);
+  glowBuf.box(sx - (nz ? 0.28 : 0.01), sx + (nz ? 0.28 : 0.01), 1.05, 1.45, sz - (nx ? 0.28 : 0.01), sz + (nx ? 0.28 : 0.01), 0x6affa0);
+  glowBuf.box(x - ax - 0.04, x + ax + 0.04, 1.8, 1.9, z - az - 0.04, z + az + 0.04, 0x4aff8a);
+  addCollider(x - ax, x + ax, z - az, z + az, 1.95);
+  atmSpots.push({ x: x + nx * 1.1, z: z + nz * 1.1, nx, nz });
+}
+// a handful more around every town, against the building line
+worldHooks.beforeBake.push(() => {
+  for (const city of CITIES) {
+    const blocks = blockRects.filter((b) => b.city === city);
+    let made = 0;
+    for (let t = 0; t < 80 && made < (city.style === 'metro' ? 7 : 5); t++) {
+      const b = blocks[Math.floor(srand() * blocks.length)], side = Math.floor(srand() * 4);
+      const along = 0.25 + srand() * 0.5;
+      let x, z, nx = 0, nz = 0;
+      if (side === 0) { x = b.x0 + (b.x1 - b.x0) * along; z = b.z0 + SW - 0.75; nz = -1; }
+      else if (side === 1) { x = b.x0 + (b.x1 - b.x0) * along; z = b.z1 - SW + 0.75; nz = 1; }
+      else if (side === 2) { z = b.z0 + (b.z1 - b.z0) * along; x = b.x0 + SW - 0.75; nx = -1; }
+      else { z = b.z0 + (b.z1 - b.z0) * along; x = b.x1 - SW + 0.75; nx = 1; }
+      if (pointBlocked(x, z, 0.8) || pointBlocked(x + nx * 1.2, z + nz * 1.2, 0.5)) continue;
+      if (atmSpots.some((a) => Math.abs(a.x - x) + Math.abs(a.z - z) < 60)) continue;
+      atmAt(x, z, nx, nz); made++;
+    }
+  }
+});
+export function atmNear(x, y, z) {
+  if (y > 1.2 || y < -0.6) return null;
+  for (const a of atmSpots) if (Math.abs(a.x - x) < 1.4 && Math.abs(a.z - z) < 1.4) return a;
+  return null;
 }
 
 // shopkeepers are spawned once the people module is ready
@@ -149,7 +189,7 @@ let menuCtx = null, shopOpen = null;
 export function openShop(spot, ctx) {
   menuCtx = ctx; shopOpen = spot;
   $('shop-title').textContent = spot.name;
-  const b = BLURBS[spot.kind]; $('shop-blurb').textContent = b[Math.floor(Math.random() * b.length)];
+  const b = spot.blurbs || BLURBS[spot.kind]; $('shop-blurb').textContent = b[Math.floor(Math.random() * b.length)];
   renderShop();
   $('shop').classList.remove('hidden');
 }
@@ -164,8 +204,8 @@ function renderShop(note = '') {
   items.forEach((it, i) => {
     const state = menuCtx.state(it); // '' | 'owned' | 'full'
     const row = document.createElement('button');
-    row.className = 'shop-row' + (state ? ' owned' : menuCtx.cash() < it.price ? ' poor' : '');
-    row.innerHTML = `<span class="k">${i + 1}</span><span class="n">${it.name}<small>${it.desc}</small></span><span class="p">${state === 'owned' ? 'OWNED' : state === 'full' ? 'FULL' : '$' + it.price}</span>`;
+    row.className = 'shop-row' + (state ? ' owned' : !it.tag && menuCtx.cash() < it.price ? ' poor' : '');
+    row.innerHTML = `<span class="k">${i + 1}</span><span class="n">${it.name}<small>${it.desc}</small></span><span class="p">${state === 'owned' ? 'OWNED' : state === 'full' ? 'FULL' : it.tag || '$' + it.price}</span>`;
     row.addEventListener('click', () => shopBuy(i));
     list.appendChild(row);
   });

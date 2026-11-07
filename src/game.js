@@ -16,7 +16,7 @@ import { updateInteriors, zoneAt, undergroundRects, isUnderground } from './inte
 import { links } from './world.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
-import { shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
+import { atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
 
 const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
@@ -32,7 +32,7 @@ const G = {
   kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 25, heartT: 0, overT: 0, airT: 0,
   shake: 0, hurtFlash: 0, msgT: 0,
   heat: 0, level: 0, lkp: { x: 0, z: 0 }, lastSeenT: 99, airTracking: 0, airAlertT: 0, spottedMsgT: 0,
-  locale: '', localeT: 0, allies: [], drops: [], getUps: [], hitstopT: 0, fovKick: 0, fireHeld: false,
+  locale: '', localeT: 0, allies: [], drops: [], getUps: [], contract: null, offers: [], offersDay: 0, hitstopT: 0, fovKick: 0, fireHeld: false,
 };
 // weapons: the pistol you start with, plus whatever the gun shops will sell you
 const WEAPONS = {
@@ -148,6 +148,7 @@ class Hunter {
     addRagdoll(this.p, this.T.scale, { x: this.vx + this.kx, y: 0, z: this.vz + this.kz }, impulse, hitY);
     if (byPlayer) { G.kills++; addHeat(this.type === 'cop' ? 22 : 14); }
     if (loot) maybeDropCash(this);
+    if (this.contract) contractTargetDown(this);
   }
   damage(n, dirX, dirZ, hitY, byPlayer = true) {
     this.hp -= n; this.alert();
@@ -190,7 +191,7 @@ class Hunter {
       else if (this.role === 'stalker' && d > 6) { // keep a distance until you turn your back
         const fx3 = -Math.sin(player.yaw), fz3 = -Math.cos(player.yaw), facing = ((this.x - tp.x) * fx3 + (this.z - tp.z) * fz3) / (d || 1);
         if (facing > 0.3 || player.car) hold = 15; else spdK = 1.15;
-      } else if (this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
+      } else if (this.fleer ? d < 40 : this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
       // you're on another level: find stairs or a ladder that gets them closer (brutes won't do ladders)
       let goLadder = null;
       if (Math.abs(dy) > 1.4 && d < 90) {
@@ -568,6 +569,8 @@ function useAction() {
   if (player.mode === 'zip') { input.jumpEdge = true; return; }
   const shop = player.mode === 'move' ? shopNear(player.x, player.y, player.z) : null;
   if (shop) { tryOpenShop(shop); return; }
+  const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
+  if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
   const Z = zipStartNear();
   if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
   enterCar();
@@ -988,8 +991,8 @@ function launchHunter(h, ux, uz, getsUp) {
   addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
   const rag = ragdolls[ragdolls.length - 1];
   rag.launchFrom = { x: h.x, z: h.z };
-  if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4 });
-  else { G.kills++; addHeat(h.type === 'cop' ? 22 : 14); maybeDropCash(h); }
+  if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
+  else { G.kills++; addHeat(h.type === 'cop' ? 22 : 14); maybeDropCash(h); if (h.contract) contractTargetDown(h); }
 }
 function updateGetUps(dt) {
   for (let i = G.getUps.length - 1; i >= 0; i--) {
@@ -1010,6 +1013,7 @@ function updateGetUps(dt) {
     const p = { x: hx, z: hz }; resolveCircle(p, 0.4);
     const nh = new Hunter(p.x, p.z, U.type, U.gunner, 'chase');
     nh.y = floorAt(p.x, p.z, hy + 0.6); nh.hp = U.hp; nh.stun = 1.4; nh.noticeT = 0;
+    if (U.contract) dressTarget(nh, U.contract); nh.guard = U.guard; nh.fleer = U.fleer;
     G.hunters.push(nh);
   }
 }
@@ -1055,11 +1059,11 @@ function secondary() { if (player.weapon === 'crowbar') crowbarSwing(true); else
 // ---------------------------------------------------------------------
 // shops and hired help
 // ---------------------------------------------------------------------
-function tryOpenShop(spot) {
+function tryOpenShop(spot, ctx = shopCtx) {
   const close = G.hunters.some((h) => !h.dead && h.state === 'chase' && Math.hypot(h.x - player.x, h.z - player.z) < 22 && Math.abs(h.y - player.y) < 3);
   if (close) { showMsg("THEY WON'T SERVE YOU WITH HUNTERS ON YOUR TAIL", 2.2); return; }
   G.mode = 'shop'; keys.clear(); recomputeKeys(); G.fireHeld = false;
-  openShop(spot, shopCtx);
+  openShop(spot, ctx);
   if (document.exitPointerLock) document.exitPointerLock();
   setAircraftVolume(0, 0);
 }
@@ -1097,6 +1101,92 @@ const shopCtx = {
     return null;
   },
 };
+// ---------------------------------------------------------------------
+// ATM contracts: pick a target, take them down, get paid on the spot
+// ---------------------------------------------------------------------
+const ATM_SPOT = { name: 'CASHPOINT', kind: 'atm', blurbs: ['BALANCE: EMBARRASSING. OPPORTUNITIES: AVAILABLE.', 'INSERT CARD. OR DON\'T. WE KNOW WHO YOU ARE.', 'THE BANK OF NO QUESTIONS ASKED'] };
+const C_FIRST = ['BARRY', 'DENISE', 'CLIVE', 'TREVOR', 'SHARON', 'NIGEL', 'BEV', 'DUNCAN', 'MAUREEN', 'GORDON', 'LORRAINE', 'KEITH'];
+const C_NICK = ['THE BEAK', 'TWO LUNCHES', 'NO NECK', 'THE SPREADSHEET', 'MUDDY BOOTS', 'BIG SPOON', 'THE WEASEL', 'SOGGY', 'TAXMAN', 'KNEES'];
+const C_LAST = ['MCCLUSKY', 'PILCHARD', 'BUNTING', 'GRIMSHAW', 'NUTTALL', 'POTTS', 'FAIRWEATHER', 'CRUMB', 'HADDOCK', 'WIGGINS'];
+const C_WHY = ['owes a man named Clive a lot of money', 'put a bounty on YOU, so this is personal', 'parks across three spaces at the supermarket', 'has been selling fake bounty tips', 'ran off with the office raffle', 'is the one who leaked your address', 'replied-all to the whole city', 'cheats at the pub quiz'];
+const C_KINDS = [
+  { kind: 'easy', label: 'STROLLING ABOUT', pay: [55, 85], tip: 'Not expecting trouble.' },
+  { kind: 'runner', label: 'A RUNNER', pay: [80, 120], tip: 'Will leg it the second they see you.' },
+  { kind: 'guarded', label: 'HAS MINDERS', pay: [120, 175], tip: 'Two big lads go everywhere with them.' },
+  { kind: 'armed', label: 'ARMED', pay: [100, 150], tip: 'Carries a pistol and isn\'t shy.' },
+];
+const targetMat = new THREE.SpriteMaterial({
+  map: canvasTex(64, 64, (ctx) => { ctx.strokeStyle = '#ffd23a'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(32, 32, 22, 0, Math.PI * 2); ctx.stroke(); ctx.fillStyle = '#ffd23a'; ctx.fillRect(29, 2, 6, 16); ctx.fillRect(29, 46, 6, 16); ctx.fillRect(2, 29, 16, 6); ctx.fillRect(46, 29, 16, 6); }),
+  depthTest: false, transparent: true, sizeAttenuation: false,
+});
+function makeOffers() {
+  G.offersDay = G.day; G.offers = [];
+  const kinds = C_KINDS.slice().sort(() => Math.random() - 0.5).slice(0, 3);
+  for (let i = 0; i < kinds.length; i++) {
+    const K = kinds[i];
+    const name = `${mpick(C_FIRST)} "${mpick(C_NICK)}" ${mpick(C_LAST)}`;
+    const pay = Math.round(mr(K.pay[0], K.pay[1]) * (1 + (G.day - 1) * 0.02) / 5) * 5;
+    G.offers.push({ id: 'c' + i, K, target: name, name: `${name}`, pay, why: mpick(C_WHY) });
+  }
+}
+const atmCtx = {
+  cash: () => player.cash,
+  items() {
+    if (G.offersDay !== G.day || !G.offers.length) makeOffers();
+    return G.offers.map((o) => ({ id: o.id, name: o.name, desc: `${o.K.label}. ${o.why[0].toUpperCase() + o.why.slice(1)}. ${o.K.tip}`, price: o.pay, tag: G.contract && G.contract.offer === o ? 'ACTIVE' : `PAYS $${o.pay}` }));
+  },
+  state(it) { return G.contract && G.contract.offer.id === it.id ? 'owned' : ''; },
+  buy(it) {
+    if (G.contract) return 'FINISH YOUR CURRENT JOB FIRST';
+    const o = G.offers.find((q) => q.id === it.id); if (!o) return 'THAT ONE\'S GONE';
+    const tp = targetPos(), c = cityAt(tp.x, tp.z, 30);
+    let p = null;
+    for (let t = 0; t < 30 && !p; t++) {
+      const q = randomOpenPoint(tp.x, tp.z, 70, 170, 4);
+      if (q && (!c || cityAt(q.x, q.z, 0) === c) && !los(q.x, q.z, tp.x, tp.z)) p = q;
+    }
+    if (!p) p = randomOpenPoint(tp.x, tp.z, 60, 140) || { x: tp.x + 80, z: tp.z };
+    const k = o.K.kind;
+    const h = new Hunter(p.x, p.z, k === 'guarded' ? 'civ' : k === 'runner' ? 'runner' : 'civ', k === 'armed', 'search');
+    G.contract = { offer: o, h, t: 240, pay: o.pay, name: o.target };
+    dressTarget(h, G.contract);
+    if (k === 'runner') h.fleer = true;
+    G.hunters.push(h);
+    if (k === 'guarded') for (let i = 0; i < 2; i++) { const g = new Hunter(p.x + mr(-2, 2), p.z + mr(-2, 2), 'brute', false, 'search'); g.guard = true; g.wt = null; G.hunters.push(g); h.guards = (h.guards || []).concat(g); }
+    sfx.pickup();
+    setTimeout(() => leaveShop(), 700);
+    return `JOB TAKEN: ${o.target}. FOLLOW THE YELLOW MARKER. 4 MINUTES.`;
+  },
+};
+function dressTarget(h, C) {
+  h.contract = C; C.h = h;
+  h.p.torso.material = lam(0xe8b820); h.p.armL.material = h.p.armR.material = lam(0xe8b820);
+  const tm = new THREE.Sprite(targetMat); tm.scale.setScalar(0.05); tm.position.y = 2.6; h.g.add(tm); h.targetMarker = tm;
+  h.marker.position.y = 2.25;
+}
+function contractTargetDown(h) {
+  const C = G.contract; if (!C || C.h !== h) return;
+  player.cash += C.pay; sfx.cash(); setTimeout(() => sfx.cash(), 160);
+  showBanner(`<small>CONTRACT COMPLETE</small>+$${C.pay}`, 2.6);
+  endContract();
+  G.offers = G.offers.filter((o) => o !== C.offer); if (!G.offers.length) G.offersDay = 0;
+}
+function endContract() {
+  const C = G.contract; if (!C) return;
+  if (C.h.targetMarker) C.h.targetMarker.visible = false;
+  for (const g of C.h.guards || []) g.guard = false;
+  C.h.contract = null; G.contract = null;
+}
+function updateContract(dt) {
+  const C = G.contract; if (!C) return;
+  C.t -= dt;
+  if (C.t <= 0) { showMsg('CONTRACT EXPIRED. THE TARGET GOT AWAY', 2.5); C.h.remove(); endContract(); return; }
+  // the target only joins the hunt when they actually see you; runners never do
+  if (C.h.fleer && C.h.state === 'chase') C.h.marker.visible = false;
+  // their minders stick with them until they spot you
+  for (const g of C.h.guards || []) if (!g.dead && g.state !== 'chase' && !C.h.dead) { g.wt = { x: C.h.x + mr(-2, 2), z: C.h.z + mr(-2, 2) }; if (C.h.state === 'chase') g.alert(mr(0, 0.6)); }
+}
+
 // one warm light that hops to whichever shop you're next to, so the interiors read at night
 const shopLight = new THREE.PointLight(0xffe6c0, 0, 16, 1.4); scene.add(shopLight);
 function updateShopLight() {
@@ -1248,7 +1338,7 @@ const hud = {
   city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'),
   time: $('hud-time'), kills: $('hud-kills'), alert: $('hud-alert'), msg: $('hud-msg'), banner: $('hud-banner'),
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
-  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'),
+  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'),
 };
 function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
 let bannerT = 0;
@@ -1290,6 +1380,7 @@ function drawMinimap() {
     mm.fillRect(-1.1, -2.3, 2.2, 4.6); mm.restore();
   }
   for (const sp of shopSpots) { mm.fillStyle = sp.kind === 'guns' ? '#ff9a2a' : sp.kind === 'hire' ? '#4aa0ff' : '#ff5ac8'; const k = (big ? 6 : 4) / sc * 0.9; mm.fillRect(sp.x - k, sp.z - k, k * 2, k * 2); }
+  mm.fillStyle = '#9affb0'; for (const a of atmSpots) mm.fillRect(a.x - 1.6 / sc, a.z - 1.6 / sc, 3.2 / sc, 3.2 / sc);
   mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
   const dot = Math.max(1.8, 2.2 / sc);
   mm.fillStyle = '#3cff8a'; for (const a of G.allies) if (!a.dead) { mm.beginPath(); mm.arc(a.x, a.z, dot * 1.2, 0, Math.PI * 2); mm.fill(); }
@@ -1300,7 +1391,21 @@ function drawMinimap() {
     mm.fillStyle = '#fff'; mm.strokeStyle = '#1d2a4a'; mm.lineWidth = 1 / sc;
     mm.beginPath(); mm.arc(a.x, a.z, (a.kind === 'heli' ? 4 : 2.4) / sc * 1.4, 0, Math.PI * 2); mm.fill(); mm.stroke();
   }
+  if (G.contract) {
+    const T = G.contract.h, r0 = (big ? 7 : 5) / sc;
+    mm.strokeStyle = '#ffd23a'; mm.lineWidth = 2.2 / sc; mm.beginPath(); mm.arc(T.x, T.z, r0, 0, Math.PI * 2); mm.stroke();
+    mm.fillStyle = '#ffd23a'; mm.beginPath(); mm.arc(T.x, T.z, r0 * 0.4, 0, Math.PI * 2); mm.fill();
+  }
   mm.restore();
+  // contract target off the edge of the minimap: a yellow arrow on the rim pointing at them
+  if (G.contract && !big) {
+    const T = G.contract.h, dx = T.x - tp.x, dz = T.z - tp.z, dd = Math.hypot(dx, dz);
+    if (dd > range * 0.92) {
+      const a = Math.atan2(dz, dx) + yaw, R0 = W / 2 - 9;
+      mm.save(); mm.translate(W / 2 + Math.cos(a) * R0, W / 2 + Math.sin(a) * R0); mm.rotate(a);
+      mm.fillStyle = '#ffd23a'; mm.beginPath(); mm.moveTo(7, 0); mm.lineTo(-5, -6); mm.lineTo(-5, 6); mm.closePath(); mm.fill(); mm.restore();
+    }
+  }
   mm.save(); mm.translate(W / 2, W / 2); if (big) mm.rotate(-(player.car ? player.car.heading + Math.PI + player.camOff : player.yaw));
   mm.fillStyle = '#5ab4ff'; mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
   mm.beginPath(); mm.moveTo(0, -8); mm.lineTo(6, 6); mm.lineTo(0, 3); mm.lineTo(-6, 6); mm.closePath(); mm.fill(); mm.stroke();
@@ -1338,6 +1443,9 @@ function updateHUD(dt) {
   const W = WEAPONS[player.weapon], A = player.ammo[player.weapon];
   hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
   hud.cash.textContent = '$' + player.cash;
+  const CT = G.contract;
+  if (CT) { const dd = Math.hypot(CT.h.x - player.x, CT.h.z - player.z); hud.job.innerHTML = `<b>CONTRACT</b> ${CT.name}<br>${Math.round(dd)} m · ${fmtTime(CT.t)} left · pays $${CT.pay}`; }
+  hud.job.classList.toggle('hidden', !CT);
   const al = G.allies.filter((a) => !a.dead);
   hud.allies.innerHTML = al.map((a) => `<span>${a.name} <em style="width:${Math.max(0, a.hp / a.T.hp * 100).toFixed(0)}%"></em></span>`).join('');
   hud.carbar.classList.toggle('hidden', !player.car);
@@ -1348,10 +1456,11 @@ function updateHUD(dt) {
   else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
   else if (player.mode === 'ladder') prompt = isTouch ? 'Push forward to climb, JUMP to let go' : 'W / S to climb, Space to let go';
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
+  else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
   else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
-  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z)));
+  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
 }
 
 // =====================================================================
@@ -1417,6 +1526,7 @@ function clearWorld() {
   for (const a of [...G.helis, ...G.drones]) a.remove(); G.helis.length = 0; G.drones.length = 0;
   for (const a of G.allies) a.remove(); G.allies.length = 0;
   for (const D of G.drops) scene.remove(D.m); G.drops.length = 0; G.getUps.length = 0;
+  G.contract = null; G.offers = []; G.offersDay = 0;
 }
 function spawnTraffic(count) {
   const total = lanes.reduce((s, l) => s + (l.a1 - l.a0), 0);
@@ -1668,10 +1778,10 @@ function updateDirector(dt) {
   if (G.spawnT <= 0) {
     G.spawnT = 0.6;
     if (alive.length < targetHunters()) spawnHunter();
-    for (const h of alive) if (h.state !== 'chase' && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
-    for (const h of alive) if (h.state === 'chase' && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
+    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
+    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
     // not everyone joins in: past the cap, the furthest ones who can't see you go back to searching
-    const ch = alive.filter((h) => h.state === 'chase');
+    const ch = alive.filter((h) => h.state === 'chase' && !h.contract);
     if (ch.length > maxChasers()) {
       ch.sort((a, b) => Math.hypot(b.x - tp.x, b.z - tp.z) - Math.hypot(a.x - tp.x, a.z - tp.z));
       for (let i = 0; i < ch.length - maxChasers(); i++) if (!ch[i].hasLOS || Math.hypot(ch[i].x - tp.x, ch[i].z - tp.z) > 30) { ch[i].state = 'search'; ch[i].wt = null; ch[i].alertT = -1; }
@@ -1738,7 +1848,7 @@ function simulate(dt, t) {
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
-    updateGetUps(dt); updateDrops(dt, t); updateAllies(dt); updateShopLight();
+    updateGetUps(dt); updateDrops(dt, t); updateContract(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
     if (!player.alive) { G.overT -= dt; if (G.overT <= 0 && G.mode === 'playing') endGame(false); }
@@ -1759,4 +1869,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

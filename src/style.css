@@ -141,3 +141,7 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 .shop-row.owned { opacity: .5; }
 #shop-note { min-height: 20px; margin-top: 10px; font-weight: 800; letter-spacing: 2px; color: #ffd27a; }
 .is-touch #hud-cash { bottom: auto; top: calc(186px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); }
+#hud-job { position: absolute; left: 50%; top: calc(54px + env(safe-area-inset-top)); transform: translateX(-50%); text-align: center;
+  font-size: 12px; font-weight: 700; letter-spacing: 1px; color: #ffe08a; text-shadow: 0 1px 4px #000; white-space: nowrap;
+  padding: 5px 14px; border-radius: 12px; background: rgba(20,16,4,.6); border: 1px solid rgba(255,210,58,.35); }
+#hud-job b { color: #ffd23a; letter-spacing: 3px; margin-right: 4px; }
