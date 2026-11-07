@@ -74,7 +74,9 @@ export function enterHide(S, K) {
   }
   if (S.kind !== 'lorry') K.showMsg(seen ? 'THEY SAW YOU GET IN. NOT GREAT' : `IN THE ${hideName(S)}. KEEP STILL. E TO GET OUT`, 2.5);
 }
-export const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY' })[S.kind] || 'BIN';
+export const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY', stall: 'MARKET STALL', shed: 'SHED', loo: 'PORTALOO', compost: 'COMPOST BIN' })[S.kind] || 'BIN';
+// a dog's nose: the hiding place you're in, if it's within r of (x, z) (dogs can't smell you over a moving lorry)
+export function sniffHide(x, z, r) { const S = SK_STATE.hide; if (!S || S.kind === 'lorry') return null; return Math.abs(S.x - x) < r && Math.abs(S.z - z) < r ? S : null; }
 export function leaveHide(K, found = null) {
   const S = SK_STATE.hide; if (!S) return;
   SK_STATE.hide = null; K.player.hide = null; S.lift = 1;
@@ -109,7 +111,11 @@ export function hunterPeekArrive(h, K) {
   if (!S) return;
   S.lift = 0.8; if (Math.abs(S.x - K.player.x) + Math.abs(S.z - K.player.z) < 25) K.sfx.lid();
   h.waitT = 1.2; h.face = Math.atan2(S.x - h.x, S.z - h.z);
-  if (SK_STATE.hide === S) { leaveHide(K, h); return; }
+  if (SK_STATE.hide === S) {
+    // a portaloo door opened on you: mostly they're too embarrassed to look properly
+    if (S.kind === 'loo' && Math.random() < 0.65) { K.say(h, mpick(['OH! SORRY! SORRY!', 'OCCUPIED. RIGHT. SORRY', 'LOCK THE DOOR, FOR GOODNESS\' SAKE', 'I\'LL... WAIT OVER HERE']));  return; }
+    leaveHide(K, h); return;
+  }
   if (Math.random() > 0.35) return;
   if (S.kind !== 'dumpster') K.say(h, mpick(['NOBODY IN HERE', 'JUST COATS', 'EMPTY', 'HELLO? NO. NOBODY']));
   else K.say(h, mpick(['JUST RUBBISH', 'NOTHING. UGH, THE SMELL', 'NOT IN THIS ONE', 'EMPTY. WELL, NOT EMPTY. BUT NO ONE']));
@@ -121,12 +127,18 @@ export function hunterPeekArrive(h, K) {
 const JUNK_SHAPES = {
   bottle: stGeo((b) => { b.cyl(0, 0, 0.06, 0.06, -0.12, 0.06, 0x2f7a3a, 7); b.cyl(0, 0, 0.06, 0.025, 0.06, 0.12, 0x2f7a3a, 7); b.cyl(0, 0, 0.025, 0.025, 0.12, 0.18, 0x3a8a4a, 6); }),
   can: stGeo((b) => { b.cyl(0, 0, 0.045, 0.045, -0.07, 0.07, 0xc8c8cc, 8); b.cyl(0, 0, 0.046, 0.046, -0.03, 0.04, 0xc0302a, 8, false); }),
+  // from the market's bric-a-brac stall: a string of bangers, and a wind-up alarm clock
+  banger: stGeo((b) => { for (const x of [-0.05, 0, 0.05]) b.cyl(x, 0, 0.022, 0.022, -0.09, 0.09, 0xd83a2a, 6); b.cyl(0, 0, 0.006, 0.006, 0.09, 0.16, 0xe8e0a0, 4); }),
+  clock: stGeo((b) => { b.cyl(0, 0, 0.09, 0.09, -0.08, 0.08, 0xd0b030, 10); b.cyl(0, 0, 0.075, 0.075, -0.082, 0.082, 0xf4f0e0, 10, false); for (const x of [-0.06, 0.06]) b.cyl(x, 0, 0.04, 0.04, 0.08, 0.12, 0xd0b030, 6); }),
 };
+export const JUNK_NAMES = { bottle: ['BOTTLE', 'BOTTLES'], can: ['CAN', 'CANS'], banger: ['BANGER', 'BANGERS'], clock: ['ALARM CLOCK', 'ALARM CLOCKS'] };
 export const junk = []; // {kind, x, y, z, ry, i, taken, mesh}
 const junkMeshes = {};
 const flying = []; // thrown {kind, x,y,z, vx,vy,vz, spin, mesh}
-const flyMeshes = { bottle: new THREE.Mesh(JUNK_SHAPES.bottle, stMat), can: new THREE.Mesh(JUNK_SHAPES.can, stMat) };
-const flyPool = { bottle: [], can: [] };
+const flyMeshes = {}, flyPool = {};
+for (const k in JUNK_SHAPES) { flyMeshes[k] = new THREE.Mesh(JUNK_SHAPES[k], stMat); flyPool[k] = []; }
+// things that go off after they land: bangers pop, alarm clocks ring for a while
+const fuses = []; // {kind, x, y, z, t, rings, m}
 function junkDraw(J) {
   const M = junkMeshes[J.kind];
   if (J.taken) hidden(M, J.i); else stSet(M, J.i, J.x, J.y, J.z, Math.PI / 2, J.ry);
@@ -190,13 +202,18 @@ export function noiseAt(x, z, r, K, what = 'smash') {
       h.state = 'search'; h.alertT = -1; h.huntT = 14; h.sus = 0.5;
     } else { h.huntT = Math.max(h.huntT, 10); K.interrupt(h); }
     h.wt = randomOpenPoint(x, z, 0, 2.5, 6) || { x, z }; h.waitT = 0; h.lured = 6; n++;
-    if (n <= 2 && Math.random() < 0.7) K.say(h, mpick(what === 'smash' ? ['WHAT WAS THAT?', 'OVER THERE!', 'WHO\'S THAT?', 'HELLO?'] : ['WHAT\'S THAT?', 'HUH?']));
+    if (n <= 2 && Math.random() < 0.7) K.say(h, mpick(what === 'smash' ? ['WHAT WAS THAT?', 'OVER THERE!', 'WHO\'S THAT?', 'HELLO?'] : what === 'bang' ? ['GUNSHOTS?!', 'WAS THAT A GUN?', 'OVER THERE!', 'FIREWORKS? NOW?'] : what === 'ring' ? ['WHOSE ALARM IS THAT?', 'SOMEONE TURN THAT OFF', 'IT\'S COMING FROM OVER THERE'] : ['WHAT\'S THAT?', 'HUH?']));
   }
   if (n && K.G.lastSeenT > 1.5) { K.G.lkp.x = x; K.G.lkp.z = z; } // and the search moves over there too
   if (n) SK_STATE.luredT = 4;
   return n;
 }
 function landJunk(F, K, hitPerson) {
+  if (F.kind === 'banger' || F.kind === 'clock') { // lies there fizzing (or ticking), then goes off
+    K.sfx.thunk(); F.m.position.y = floorAt(F.x, F.z, F.y + 0.3) + 0.1;
+    fuses.push({ kind: F.kind, x: F.x, y: F.m.position.y, z: F.z, t: F.kind === 'banger' ? 1.8 : 5, rings: F.kind === 'banger' ? 3 : 7, m: F.m });
+    return;
+  }
   if (F.kind === 'bottle') {
     K.sfx.smash();
     for (let k = 0; k < 4; k++) emitPuff(F.x, F.y + 0.05, F.z, { life: 0.4, vx: mr(-1.5, 1.5), vy: mr(0.5, 2), vz: mr(-1.5, 1.5), size0: 0.08, size1: 0.25, alpha: 0.9, color: k % 2 ? 0x7ad08a : 0xe8fff0 });
@@ -487,6 +504,7 @@ export function resetStealth(K) {
   SK_STATE.hide = null; SK_STATE.junk.length = 0; SK_STATE.smellT = 0; SK_STATE.hideT = 0; SK_STATE.lifted = 0; SK_STATE.liftedCash = 0; SK_STATE.camsBroken = 0; SK_STATE.camAlarms = 0;
   if (K) K.player.hide = null;
   for (const F of flying) { scene.remove(F.m); flyPool[F.kind].push(F.m); } flying.length = 0;
+  for (const F of fuses) { scene.remove(F.m); flyPool[F.kind].push(F.m); } fuses.length = 0;
   stealthNewDay();
 }
 // overnight: the council fixes the cameras and the streets fill up with rubbish again
@@ -507,12 +525,30 @@ export function updateStealth(dt, K) {
   }
   SK_STATE.luredT = Math.max(0, SK_STATE.luredT - dt);
   updateFlying(dt, K);
+  updateFuses(dt, K);
   updateCams(dt, K);
   updatePigeons(dt, K);
+}
+function updateFuses(dt, K) {
+  for (let i = fuses.length - 1; i >= 0; i--) {
+    const F = fuses[i]; F.t -= dt;
+    if (F.kind === 'banger' && Math.random() < dt * 20) emitPuff(F.x, F.y + 0.1, F.z, { life: 0.3, vy: 1.5, size0: 0.04, size1: 0.12, alpha: 0.9, color: 0xffd060 });
+    if (F.kind === 'clock') F.m.rotation.z = F.t < 0 ? Math.sin(K.G.elapsed * 60) * 0.15 : 0;
+    if (F.t > 0) continue;
+    if (F.kind === 'banger') { // three loud pops a beat apart
+      K.sfx.shot(); comicWord(mpick(['BANG!', 'POP!', 'CRACK!']), F.x + mr(-0.3, 0.3), F.y + 1, F.z + mr(-0.3, 0.3));
+      for (let k = 0; k < 5; k++) emitPuff(F.x, F.y + 0.2, F.z, { life: 0.8, vx: mr(-1, 1), vy: mr(1, 2.5), vz: mr(-1, 1), size0: 0.2, size1: 0.7, alpha: 0.5, color: k % 2 ? 0xd8d8d8 : 0xffb040 });
+      noiseAt(F.x, F.z, 42, K, 'bang'); F.t = 0.35;
+    } else { // brrrrring: anyone in earshot comes over to switch it off
+      K.sfx.bell(); if (F.rings % 2) comicWord('BRRRING!', F.x, F.y + 0.9, F.z);
+      noiseAt(F.x, F.z, 30, K, 'ring'); F.t = 1.4;
+    }
+    if (--F.rings <= 0) { scene.remove(F.m); flyPool[F.kind].push(F.m); fuses.splice(i, 1); }
+  }
 }
 // how much the stealth bits make you stand out (the smell, mostly)
 export function stealthConspic() { return SK_STATE.smellT > 0 ? 0.3 : 0; }
 export function stealthDebug() {
-  return { ...SK_STATE, hideSpots: hideSpots.filter((S) => S.stand).length, hideAll: hideSpots.length, junk: junk.filter((J) => !J.taken).length, pocket: SK_STATE.junk.length, cams: cams.length, camsLive: cams.filter((C) => !C.broken).length, flocks: flocks.length, birds: birdCount, flying: flying.length, hide: !!SK_STATE.hide };
+  return { ...SK_STATE, hideSpots: hideSpots.filter((S) => S.stand).length, hideAll: hideSpots.length, junk: junk.filter((J) => !J.taken).length, pocket: SK_STATE.junk.length, cams: cams.length, camsLive: cams.filter((C) => !C.broken).length, flocks: flocks.length, birds: birdCount, flying: flying.length, fuses: fuses.length, hide: !!SK_STATE.hide };
 }
 export { flocks };

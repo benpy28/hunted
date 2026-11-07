@@ -16,9 +16,23 @@ test('page loads with no script errors and shows the menu', async () => {
 });
 
 test('WebGL renders a real image (not a blank canvas)', async () => {
-  await g.page.waitForTimeout(500);
-  const png = await g.page.locator('canvas').first().screenshot();
-  assert.ok(png.length > 8000, `screenshot looks blank (${png.length} bytes)`);
+  // Render one frame and read it back in the same task (the drawing buffer is
+  // only valid until the browser composites). A Playwright screenshot waits for
+  // a stable frame, which software WebGL on CI can take ~30s to produce.
+  const s = await g.run((H) => {
+    const r = H.renderer, gl = r.getContext();
+    r.render(H.scene, H.camera);
+    const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, px = new Uint8Array(4);
+    const seen = new Set(); let lit = 0, n = 0;
+    for (let gy = 1; gy < 12; gy++) for (let gx = 1; gx < 16; gx++) {
+      gl.readPixels(Math.floor(w * gx / 16), Math.floor(h * gy / 12), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      seen.add((px[0] >> 4) + ',' + (px[1] >> 4) + ',' + (px[2] >> 4)); if (px[0] + px[1] + px[2] > 30) lit++; n++;
+    }
+    return { colours: seen.size, lit, n, w, h };
+  });
+  assert.ok(s.w > 0 && s.h > 0, 'canvas has a drawing buffer');
+  assert.ok(s.colours >= 4, `frame looks flat: ${JSON.stringify(s)}`);
+  assert.ok(s.lit > s.n / 4, `frame looks black: ${JSON.stringify(s)}`);
 });
 
 test('starting a run puts you in the world with hunters around', async () => {

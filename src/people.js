@@ -114,7 +114,7 @@ const pickR = (arr) => arr[Math.floor(Math.random() * arr.length)];
 // fill in whatever the caller didn't choose: hairstyle, face, glasses, beard...
 export function randomizeLook(look) {
   if (look.hairStyle === undefined) look.hairStyle = pickR(HAIR_STYLES);
-  if (look.cap && ['afro', 'bun', 'mohawk', 'spiky', 'curly'].includes(look.hairStyle)) look.hairStyle = 'short';
+  if ((look.cap || look.hat) && ['afro', 'bun', 'mohawk', 'spiky', 'curly', 'long', 'ponytail'].includes(look.hairStyle)) look.hairStyle = 'short';
   if (Math.random() < 0.06) look.hair = pickR(DYED);
   if (!look.face) look.face = { eyes: pickR(EYES), mouth: pickR(MOUTHS), freckles: Math.random() < 0.15, glasses: Math.random() < 0.15, stache: Math.random() < 0.08, blush: Math.random() < 0.25 };
   if (look.beard === undefined) look.beard = Math.random() < 0.14 && !['long', 'bob', 'ponytail', 'bun'].includes(look.hairStyle);
@@ -141,7 +141,7 @@ export function buildPerson(look) {
   p.headMats = [sk, sk, lam(look.hair), sk, faceMat(look.skin, look.hair, look.face, 'neutral'), sk];
   p.head = new THREE.Mesh(PG.head, p.headMats); p.head.position.set(0, 1.71, 0); g.add(p.head);
   mk(featGeo, look.skin, 0, 0, 0, p.head);
-  const hg = hairGeo(look.cap ? (look.hairStyle === 'bald' ? 'bald' : 'buzz') : look.hairStyle, look.beard);
+  const hg = hairGeo(look.hat === 'headscarf' || look.hat === 'chef' ? 'bald' : look.cap || look.hat ? (look.hairStyle === 'bald' ? 'bald' : 'buzz') : look.hairStyle, look.beard);
   if (hg) mk(hg, look.hair, 0, 0, 0, p.head);
   p.armL = mk(PG.arm, look.shirt, -0.395 * look.build, 1.5, 0);
   p.armR = mk(PG.arm, look.shirt, 0.395 * look.build, 1.5, 0);
@@ -150,8 +150,70 @@ export function buildPerson(look) {
   if (look.gun) mk(PG.gun, 0x1c1c20, 0, 0, 0, p.armR);
   if (look.cap) { mk(PG.cap, look.cap, 0, 0.27, 0, p.head); mk(PG.brim, look.cap, 0, 0.23, 0.26, p.head); }
   if (look.vest) mk(PG.vest, look.vest, 0, 0.05, 0, p.torso);
-  mk(PG.shoe, 0x1a1a1a, 0, -0.78, 0.04, p.legL); mk(PG.shoe, 0x1a1a1a, 0, -0.78, 0.04, p.legR);
+  mk(PG.shoe, look.shoes || 0x1a1a1a, 0, -0.78, 0.04, p.legL); mk(PG.shoe, look.shoes || 0x1a1a1a, 0, -0.78, 0.04, p.legR);
+  dressExtras(p, look, mk);
   return p;
+}
+// ---------------------------------------------------------------------
+// what people wear and carry, so a crowd reads as a town full of different people
+// ---------------------------------------------------------------------
+const XG = {
+  beanie: new THREE.BoxGeometry(0.42, 0.16, 0.42), bobble: new THREE.BoxGeometry(0.12, 0.12, 0.12),
+  flatcap: new THREE.BoxGeometry(0.43, 0.07, 0.46), sunhat: new THREE.BoxGeometry(0.7, 0.04, 0.7), crown: new THREE.BoxGeometry(0.4, 0.14, 0.4),
+  hardhat: new THREE.BoxGeometry(0.44, 0.14, 0.46), hardbrim: new THREE.BoxGeometry(0.5, 0.03, 0.56), chef: new THREE.BoxGeometry(0.36, 0.3, 0.36),
+  scarf: new THREE.BoxGeometry(0.42, 0.12, 0.42), scarfTail: new THREE.BoxGeometry(0.1, 0.36, 0.05), tie: new THREE.BoxGeometry(0.07, 0.42, 0.02),
+  apron: new THREE.BoxGeometry(0.5, 0.9, 0.03), coat: new THREE.BoxGeometry(0.64, 0.5, 0.38), skirt: new THREE.BoxGeometry(0.62, 0.42, 0.38),
+  pack: new THREE.BoxGeometry(0.42, 0.5, 0.2), strap: new THREE.BoxGeometry(0.06, 0.6, 0.36), satchel: new THREE.BoxGeometry(0.3, 0.26, 0.1),
+  bag: new THREE.BoxGeometry(0.26, 0.3, 0.12).translate(0, -0.85, 0), case: new THREE.BoxGeometry(0.08, 0.3, 0.42).translate(0, -0.85, 0),
+  stick: new THREE.BoxGeometry(0.04, 0.95, 0.04).translate(0, -0.95, 0.1), headscarf: new THREE.BoxGeometry(0.42, 0.3, 0.42),
+};
+function dressExtras(p, L, mk) {
+  const H = p.head, T = p.torso;
+  if (L.hat === 'beanie' || L.hat === 'bobble') { mk(XG.beanie, L.hatCol, 0, 0.24, 0, H); if (L.hat === 'bobble') mk(XG.bobble, 0xf0f0f0, 0, 0.36, 0, H); }
+  else if (L.hat === 'flatcap') { const m = mk(XG.flatcap, L.hatCol, 0, 0.22, 0.03, H); m.rotation.x = -0.12; }
+  else if (L.hat === 'sunhat') { mk(XG.sunhat, L.hatCol, 0, 0.2, 0, H); mk(XG.crown, L.hatCol, 0, 0.28, 0, H); }
+  else if (L.hat === 'hardhat') { mk(XG.hardhat, L.hatCol, 0, 0.26, 0, H); mk(XG.hardbrim, L.hatCol, 0, 0.2, 0.02, H); }
+  else if (L.hat === 'chef') mk(XG.chef, 0xf4f4f0, 0, 0.34, 0, H);
+  else if (L.hat === 'headscarf') mk(XG.headscarf, L.hatCol, 0, 0.06, -0.02, H);
+  if (L.coat) { mk(XG.coat, L.coat, 0, -0.55, 0, T); T.material = lam(L.coat); p.armL.material = p.armR.material = lam(L.coat); }
+  if (L.skirt) mk(XG.skirt, L.skirt, 0, -0.52, 0, T);
+  if (L.scarf) { mk(XG.scarf, L.scarf, 0, 0.38, 0, T); mk(XG.scarfTail, L.scarf, 0.12, 0.18, 0.2, T); }
+  if (L.tie) mk(XG.tie, L.tie, 0, 0.06, 0.18, T);
+  if (L.apron) mk(XG.apron, L.apron, 0, -0.18, 0.185, T);
+  if (L.bag === 'backpack') { mk(XG.pack, L.bagCol, 0, 0.0, -0.27, T); }
+  else if (L.bag === 'satchel') { mk(XG.strap, L.bagCol, 0, 0.05, 0, T).rotation.z = 0.7; mk(XG.satchel, L.bagCol, 0.28, -0.32, 0.06, T); }
+  else if (L.bag === 'shopping') { mk(XG.bag, L.bagCol, 0, 0, 0, p.armL); mk(XG.bag, mpickP([0xf0f0f0, 0xe8c040, 0x3a8a4a]), 0, 0, 0, p.armR); }
+  else if (L.bag === 'case') mk(XG.case, 0x2a1a10, 0, 0, 0, p.armL);
+  if (L.old) { T.rotation.x = 0.18; H.position.z += 0.08; H.position.y -= 0.04; p.stick = mk(XG.stick, 0x5a3a22, 0, 0, 0, p.armR); }
+}
+const mpickP = (a) => a[Math.floor(Math.random() * a.length)];
+const HATCOLS = [0x2a3a6a, 0xc83a3a, 0x3a6a3a, 0xe0d0a0, 0x2a2a2a, 0x8a5a9a, 0xe08a2a, 0x6a6a72];
+const COATCOLS = [0x4a3a2a, 0x2a2a30, 0x6a5040, 0x3a4a5a, 0x8a2a2a, 0xc0a070, 0x2a4a3a];
+// everyday people dressed for who they are and where they are: office types downtown, pensioners in the
+// suburbs, dock workers in hi-vis. Returns {kind, slow} so the caller can make them move to match.
+export function dressCivilian(look, town) {
+  const r = Math.random(), P = mpickP;
+  const pick = (w) => { let t = 0; for (const [k, p] of w) { t += p; if (r < t) return k; } return null; };
+  const kind = town === 'ASHFORD' ? pick([['pensioner', 0.2], ['parent', 0.14], ['gardener', 0.08], ['teen', 0.12], ['shopper', 0.12], ['smart', 0.06]])
+    : town === 'SALTMARSH DOCKS' ? pick([['docker', 0.3], ['fisher', 0.12], ['pensioner', 0.06], ['office', 0.08], ['teen', 0.06], ['chef', 0.04]])
+    : pick([['office', 0.22], ['student', 0.12], ['smart', 0.1], ['shopper', 0.1], ['pensioner', 0.07], ['chef', 0.03], ['tourist', 0.06]]);
+  const o = { kind, slow: 1 };
+  if (kind === 'office') { look.shirt = P([0xe8ecf0, 0xc8d8f0, 0xf0f0f0, 0xd0e0d0]); look.pants = P([0x23262e, 0x2a2a36, 0x3b3f4a]); look.tie = P([0xa02a2a, 0x2a3a8a, 0x2a6a3a, 0x6a2a6a]); look.shoes = 0x1a1210; if (Math.random() < 0.45) look.bag = 'case'; if (Math.random() < 0.3) look.coat = P(COATCOLS); }
+  else if (kind === 'student' || kind === 'teen') { look.shirt = P([0xc83a3a, 0x3a5a8c, 0x2a2a2a, 0x6b3a8c, 0x5a7a2a, 0xe0c030]); look.bag = 'backpack'; look.bagCol = P([0x2a2a2a, 0xc83a3a, 0x2a5aa0, 0xe0a020]); if (Math.random() < 0.4) { look.hat = 'beanie'; look.hatCol = P(HATCOLS); } look.shoes = P([0xf0f0f0, 0x1a1a1a, 0xc83a3a]); }
+  else if (kind === 'smart') { look.coat = P(COATCOLS); if (Math.random() < 0.6) look.scarf = P([0xc83a3a, 0xe0c060, 0x3a5a8c, 0xf0f0f0, 0x8a5a9a]); if (Math.random() < 0.4) look.skirt = P([0x2a2a30, 0x6a2a3a, 0x3a3a5a]); if (Math.random() < 0.3) { look.bag = 'satchel'; look.bagCol = P([0x6a3a1a, 0x1a1a1a]); } }
+  else if (kind === 'shopper' || kind === 'parent') { look.bag = 'shopping'; look.bagCol = P([0xf0f0f0, 0xe8c040, 0x3a8a4a, 0xc83a3a]); if (Math.random() < 0.35) look.skirt = P([0x3a5a8c, 0x8a3a3a, 0x2a2a2a, 0xd0a060]); }
+  else if (kind === 'pensioner') {
+    look.old = true; look.hair = P([0xd8d8d8, 0xe8e8e8, 0xb8b8b8, 0x9a9a9a]); look.coat = P([0x6a5040, 0x4a5a4a, 0x8a7a6a, 0x3a3a5a, 0xa08a70]);
+    if (Math.random() < 0.45) { look.hat = Math.random() < 0.5 ? 'flatcap' : 'headscarf'; look.hatCol = P([0x6a5a4a, 0x4a4a52, 0xc85a6a, 0x7a8a6a]); }
+    if (Math.random() < 0.3) look.skirt = P([0x5a4a6a, 0x4a3a2a, 0x3a4a5a]); if (Math.random() < 0.3) { look.bag = 'shopping'; look.bagCol = P([0x3a6a3a, 0xa03a3a]); }
+    o.slow = 0.7;
+  } else if (kind === 'gardener') { look.shirt = P([0x5a7a2a, 0x8a6a4a, 0xd0c090]); look.apron = 0x3a6a3a; look.hat = 'sunhat'; look.hatCol = 0xe0d0a0; }
+  else if (kind === 'docker') { look.vest = P([0xff7a1a, 0xe8e020, 0xff7a1a]); look.hat = Math.random() < 0.7 ? 'hardhat' : 'beanie'; look.hatCol = look.hat === 'hardhat' ? P([0xf0e020, 0xf0f0f0, 0xff8a2a]) : P(HATCOLS); look.pants = P([0x2c3e66, 0x3b3f4a, 0x23262e]); look.shoes = 0x4a3a2a; }
+  else if (kind === 'fisher') { look.coat = P([0xf0c020, 0xe8a020, 0x2a5aa0]); look.hat = 'beanie'; look.hatCol = P([0x2a3a6a, 0xc83a3a, 0x2a2a2a]); look.shoes = 0x1a1a1a; }
+  else if (kind === 'chef') { look.shirt = 0xf4f4f0; look.pants = P([0x2a2a2a, 0x3a3a3a]); look.apron = 0xe8e8e0; look.hat = 'chef'; }
+  else if (kind === 'tourist') { look.hat = 'sunhat'; look.hatCol = P([0xe0d0a0, 0xf0f0f0, 0xe08a2a]); look.bag = 'backpack'; look.bagCol = P([0x2a5aa0, 0xe0a020]); look.shirt = P([0xe07aa0, 0x2f7f8f, 0xf0e8d0, 0xd6763a]); }
+  if (look.hat && look.hat !== 'headscarf' && look.hat !== 'chef') look.cap = null;
+  return o;
 }
 
 export const ragdolls = [];
