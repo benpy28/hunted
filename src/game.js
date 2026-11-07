@@ -40,6 +40,7 @@ const WEAPONS = {
   pistol: { name: 'PISTOL', mag: 12, cd: 0.17, spread: 0.008, pellets: 1, reload: 1.3, maxRes: 180, heat: 2.5, alert: 45 },
   crowbar: { name: 'CROWBAR', melee: true },
   shotgun: { name: 'SHOTGUN', mag: 6, cd: 0.85, spread: 0.055, pellets: 8, reload: 2.1, maxRes: 60, heat: 3.5, alert: 55, range: 50 },
+  laser: { name: 'LASER EYES', laser: true, cd: 0.06, auto: true },
   smg: { name: 'SMG', mag: 30, cd: 0.075, spread: 0.02, pellets: 1, reload: 1.6, maxRes: 300, heat: 1.1, alert: 55, auto: true },
 };
 const SLOTS = ['pistol', 'crowbar', 'shotgun', 'smg'];
@@ -64,7 +65,7 @@ const LEVELS = [0, 20, 60, 120, 190, 270];
 const LEVEL_NAMES = ['LOW PROFILE', 'NOTICED', 'KNOWN FACE', 'WANTED', 'MOST WANTED', 'PUBLIC ENEMY'];
 const HELIS_AT = [0, 0, 1, 1, 2, 3];
 const DRONES_AT = [0, 1, 2, 3, 4, 6];
-function addHeat(n) { G.heat = clamp(G.heat + n, 0, 330); }
+function addHeat(n) { if (G.super) return; G.heat = clamp(G.heat + n, 0, 330); }
 function heatFloor() { return (G.day - 1) * 2; }
 // local suspicion: how much the people round here have started to wonder about you. Spending money,
 // hanging about and making a scene all add to it; it fades once you've moved on.
@@ -103,6 +104,7 @@ function hourAt(elapsed) {
 
 function hurtPlayer(dmg, fromX, fromZ, knock = 0) {
   if (!player.alive || G.mode !== 'playing') return;
+  if (G.super) { player.hp = Math.max(1, player.hp - dmg * 0.05); G.shake = Math.min(0.3, G.shake + dmg / 120); return; } // more or less unkillable
   player.hp -= dmg; player.lastHurt = 0;
   G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + dmg / 40); G.shake = Math.min(0.5, G.shake + dmg / 60);
   if (knock && !player.car) { const dx = player.x - fromX, dz = player.z - fromZ, d = Math.hypot(dx, dz) || 1; player.kx += (dx / d) * knock; player.kz += (dz / d) * knock; }
@@ -153,7 +155,7 @@ class Hunter {
     this.dead = false;
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
     this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
-    this.sus = 0; this.huntT = 0; this.thinkAt = G.elapsed; this.home = { x, z };
+    this.sus = 0; this.huntT = 0; this.panicT = 0; this.thinkAt = G.elapsed; this.home = { x, z };
     this.spdMul = mr(0.82, 1.1); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
   }
   alert(delay = 0) {
@@ -182,6 +184,16 @@ class Hunter {
     const dx = tp.x - this.x, dz = tp.z - this.z, d = Math.hypot(dx, dz);
     const dy = player.car ? 0 : player.y - this.y;
     if (this.climb || this.ladder) { this.updateClimb(dt); return; }
+    if (this.held) { // dangling in front of you, legs going
+      camera.getWorldDirection(_hd);
+      this.x = camera.position.x + _hd.x * 1.5; this.z = camera.position.z + _hd.z * 1.5; this.y = camera.position.y - 1.6 + _hd.y * 1.5;
+      this.face = player.yaw; const k = Math.sin(G.elapsed * 14);
+      this.p.legL.rotation.x = k * 0.9; this.p.legR.rotation.x = -k * 0.9; this.p.armL.rotation.x = -2.6 + k * 0.4; this.p.armR.rotation.x = -2.6 - k * 0.4;
+      this.g.position.set(this.x, this.y, this.z); this.g.rotation.y = this.face + Math.PI;
+      this.begT = (this.begT ?? 0) - dt; if (this.begT <= 0) { this.begT = mr(1.6, 2.6); say(this, mpick(HELD_LINES)); }
+      return;
+    }
+    if (G.super && (this.state === 'chase' || this.alertT >= 0)) { this.state = 'search'; this.alertT = -1; this.panicT = mr(4, 7); this.wt = null; this.sus = 0; }
     this.attackCd -= dt; this.fireCd -= dt;
     if (this.alertT >= 0) { this.alertT -= dt; if (this.alertT < 0) this.alert(); }
 
@@ -191,7 +203,7 @@ class Hunter {
       const see = d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 || this.y < -1 || player.y < -1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
       this.hasLOS = see;
       const tdt = Math.min(0.5, G.elapsed - this.thinkAt); this.thinkAt = G.elapsed;
-      if (this.state !== 'chase') {
+      if (this.state !== 'chase' && !G.super) {
         // nobody clocks you instantly: they get suspicious first, faster the more you stand out
         const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.4 : 1) * (G.weatherSight ?? 1);
         const ahead = (Math.sin(this.face) * dx + Math.cos(this.face) * dz) / (d || 1);
@@ -273,7 +285,22 @@ class Hunter {
       if (player.car && d < 3 && Math.abs(player.car.speed) < 4) player.dragT += dt;
     } else {
       this.huntT = Math.max(0, this.huntT - dt);
-      if (this.sus > 0.45 && this.hasLOS && d < 40) { this.waitT = Math.max(this.waitT, 0.3); this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 4); } // "hang on, is that...?"
+      if (G.super) { // the hero's about: keep your head down and say nice things
+        const close = d < (player.flying ? 16 : 7) && Math.abs(dy) < 25;
+        if (close || (this.panicT > 0 && d < 5)) this.cowerT = 1.2;
+        this.cowerT = Math.max(0, (this.cowerT || 0) - dt);
+        if (this.cowerT > 0) {
+          this.begT = (this.begT ?? mr(0, 1.5)) - dt;
+          if (this.begT <= 0) { this.begT = mr(2.5, 5); const line = mpick(BEG_LINES); say(this, line); if (line === 'TAKE MY WALLET!') maybeDropCash(this); if (Math.random() < 0.4) sfx.scream(); }
+        }
+      }
+      if (this.cowerT > 0) { this.waitT = 0; this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 6); }
+      else if (this.panicT > 0) { // run for it, arms flailing
+        this.panicT -= dt;
+        const ax = -dx / (d || 1), az = -dz / (d || 1); let ox2 = ax, oz2 = az;
+        if (blockedAt(this.x + ax * 2.5, this.z + az * 2.5)) { const n = this.navTo({ x: this.x + ax * 10, z: this.z + az * 10 }); if (n) { ox2 = n.x; oz2 = n.z; } }
+        tvx = ox2 * T.speed * 0.9; tvz = oz2 * T.speed * 0.9; this.wt = null;
+      } else if (this.sus > 0.45 && this.hasLOS && d < 40) { this.waitT = Math.max(this.waitT, 0.3); this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 4); } // "hang on, is that...?"
       else if (this.waitT > 0) { this.waitT -= dt; this.face += Math.sin(G.elapsed * 1.3 + this.phase) * dt * 1.2; }
       else if (!this.wt || Math.hypot(this.wt.x - this.x, this.wt.z - this.z) < 1.5) {
         if (this.wt && Math.random() < 0.6) this.waitT = mr(1, 3.5); // stop and look around
@@ -285,10 +312,12 @@ class Hunter {
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
       if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
+      if (!(this.panicT > 0) && !(this.cowerT > 0)) {
       const w = this.waitT > 0 ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1);
       tvx = ox * w; tvz = oz * w;
       this.progT += dt;
       if (this.progT > 2) { if (Math.hypot(this.x - this.lx, this.z - this.lz) < 0.6) this.wt = null; this.progT = 0; this.lx = this.x; this.lz = this.z; }
+      }
     }
 
     const acc = Math.min(1, dt * (this.stun > 0 ? 2 : 8));
@@ -328,8 +357,11 @@ class Hunter {
       else if (this.noticeT > 0) { p.armR.rotation.x = -1.4; p.armL.rotation.x = 0; } // pointing: "it's them!"
       else if (d < 2.6) { p.armL.rotation.x = -1.35 + sw * 0.25; p.armR.rotation.x = -1.35 - sw * 0.25; } // grabbing
       else { p.armL.rotation.x = -0.35 - sw * 1.1; p.armR.rotation.x = -0.35 + sw * 1.1; } // sprinting
-    } else { p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
-    this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08, this.z);
+    } else if (this.cowerT > 0) { p.armL.rotation.x = -2.9; p.armR.rotation.x = -2.9; p.armL.rotation.z = 0.3; p.armR.rotation.z = -0.3; p.legL.rotation.x = -1.2; p.legR.rotation.x = 0.4; }
+    else if (this.panicT > 0) { p.armL.rotation.x = -2.8 + Math.sin(this.phase * 2) * 0.5; p.armR.rotation.x = -2.8 - Math.sin(this.phase * 2) * 0.5; }
+    else { p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
+    if (!(this.cowerT > 0)) { p.armL.rotation.z = 0; p.armR.rotation.z = 0; }
+    this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08 - (this.cowerT > 0 ? 0.45 : 0), this.z);
     this.g.rotation.y = this.face;
     const wary = this.state !== 'chase' && this.sus > 0.35 && d < 50;
     this.marker.visible = wary || (this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12));
@@ -469,6 +501,16 @@ class Car {
   get fx() { return Math.sin(this.heading); }
   get fz() { return Math.cos(this.heading); }
   update(dt) {
+    if (this.air) { // flying through the air, courtesy of the hero
+      const A = this.air; A.vy -= 22 * dt; this.x += A.vx * dt; this.z += A.vz * dt; A.y += A.vy * dt; this.heading += A.spin * dt; A.roll += A.spin * 0.6 * dt;
+      if (A.y <= 0 && A.vy < 0) {
+        A.y = 0; this.air = null; this.speed = 0; this.damage(100); sfx.crash(); G.shake = Math.max(G.shake, 0.25);
+        for (let i = 0; i < 6; i++) emitPuff(this.x + mr(-2, 2), 0.5, this.z + mr(-2, 2), { life: 1.2, vy: mr(1, 3), vx: mr(-3, 3), vz: mr(-3, 3), size0: 1, size1: 3, alpha: 0.5, color: 0x8a8070 });
+        for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - this.x, h.z - this.z) < 3.5) { const dx = h.x - this.x, dz = h.z - this.z, dl = Math.hypot(dx, dz) || 1; launchHunter(h, dx / dl, dz / dl, true); }
+        this.g.rotation.set(0, this.heading, 0);
+      } else { const r = resolveCircle(this, 1.2); if (r) { A.vx *= -0.3; A.vz *= -0.3; } this.g.rotation.set(A.roll, this.heading, A.roll * 0.5); }
+      this.g.position.set(this.x, A.y, this.z); return;
+    }
     const pd = Math.abs(this.x - player.x) + Math.abs(this.z - player.z);
     this.far = pd > 420 && this.driver !== 'player';
     this.g.visible = pd < 480;
@@ -612,6 +654,7 @@ function zipStartNear() {
 }
 function useAction() {
   if (player.car) { exitCar(); return; }
+  if (G.super && !player.car && heroGrab()) return;
   if (player.mode === 'zip') { input.jumpEdge = true; return; }
   const door = player.mode === 'move' ? safeDoorNear(player.x, player.y, player.z) : null;
   if (door && !door.owned) { rentSafehouse(door); return; }
@@ -932,6 +975,7 @@ function playerShoot() {
   if (player.car || !player.alive || player.reloadT > 0 || player.fireCd > 0 || player.switchT > 0) return;
   const W = WEAPONS[player.weapon];
   if (W.melee) { crowbarSwing(false); return; }
+  if (W.laser) { if (G.held) { heroThrow(); player.fireCd = 0.4; G.fireHeld = false; return; } fireLaser(); return; }
   const A = player.ammo[player.weapon];
   if (A.mag <= 0) { if (A.res > 0) startReload(); else if (player.fireCd > -0.3 || !G.fireHeld) { sfx.empty(); showMsg('OUT OF AMMO'); player.fireCd = 0.3; } return; }
   A.mag--; player.fireCd = W.cd; player.recoil = player.weapon === 'shotgun' ? 1.8 : player.weapon === 'smg' ? 0.55 : 1; G.shotT = 0;
@@ -956,6 +1000,94 @@ function playerShoot() {
   if (hits.size) sfx.hit();
   alertAround(player.x, player.z, W.alert, 1); bumpLocal(0.15); player.drawnT = 0;
 }
+// superpower mode: the city's greatest hero (self-appointed)
+const BEG_LINES = ['PLEASE! I\'M JUST A DENTIST', 'HUGE FAN! HUGE! PLEASE GO AWAY', 'NOT THE EYES! NOT THE EYES!', 'TAKE MY WALLET!', 'I DIDN\'T SEE ANYTHING', 'SORRY! SORRY! SORRY!', 'YOU\'RE MY HERO! PLEASE LEAVE', 'I\'VE GOT A FAMILY! A SMALL ONE!', 'I VOTED FOR YOU!', 'MUMMY!', 'I LOVE YOUR CAPE!', 'I\'LL DO ANYTHING!'];
+const HELD_LINES = ['PUT ME DOWN! GENTLY!', 'I\'M SCARED OF HEIGHTS!', 'I\'LL TELL EVERYONE YOU\'RE GREAT!', 'MY LEGS ARE GOING!', 'THIS IS FINE. THIS IS FINE.', 'PLEASE NOT THE CANAL!'];
+const HERO_LINES = ['YOU\'RE WELCOME', 'SAY THANK YOU', 'ANOTHER LIFE SAVED. PROBABLY.', 'I\'M THE GOOD GUY', 'SMILE FOR THE CAMERAS', 'THEY LOVE ME REALLY'];
+const bubbleTex = new Map(), bubbles = [];
+function say(h, text) {
+  let t = bubbleTex.get(text);
+  if (!t) {
+    t = canvasTex(512, 96, (ctx, W, H) => {
+      ctx.font = 'bold 38px Arial, sans-serif'; const w = Math.min(W - 8, ctx.measureText(text).width + 40);
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#111'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.roundRect((W - w) / 2, 6, w, H - 22, 20); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#111'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, W / 2, (H - 16) / 2 + 4, W - 30);
+    });
+    bubbleTex.set(text, t);
+  }
+  let b = bubbles.find((q) => q.life <= 0);
+  if (!b) { if (bubbles.length >= 8) return; b = { s: new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true })), life: 0 }; b.s.renderOrder = 5; bubbles.push(b); }
+  b.s.material.map = t; b.s.material.needsUpdate = true; b.s.scale.set(2.6, 0.49, 1); b.s.position.set(0, 2.75, 0);
+  h.g.add(b.s); b.life = 2.4; b.h = h;
+}
+function updateBubbles(dt) { for (const b of bubbles) if (b.life > 0) { b.life -= dt; if (b.life <= 0 || b.h.dead) { b.life = 0; b.s.removeFromParent(); } } }
+const _hd = new THREE.Vector3();
+function heroGrab() {
+  if (G.held) { const h = G.held; h.held = false; G.held = null; h.state = 'search'; h.y = floorAt(h.x, h.z, h.y + 1); h.panicT = 6; say(h, 'THANK YOU THANK YOU'); return true; }
+  let best = null, bd = 3.2;
+  for (const h of G.hunters) { if (h.dead || h.contract) continue; const d = Math.hypot(h.x - player.x, h.z - player.z); if (d < bd && Math.abs(h.y - player.y) < 2) { bd = d; best = h; } }
+  if (!best) return false;
+  G.held = best; best.held = true; best.cowerT = 0; best.panicT = 0; sfx.scream(); say(best, 'AAAAH!'); showMsg(mpick(HERO_LINES), 1.5);
+  return true;
+}
+function heroThrow() {
+  const h = G.held; if (!h) return;
+  camera.getWorldDirection(_hd);
+  launchHunter(h, 0, 0, true, { x: _hd.x * 34, y: _hd.y * 34 + 7, z: _hd.z * 34 });
+  sfx.swoosh(); sfx.scream(); G.shake = Math.max(G.shake, 0.12); showMsg(mpick(HOMERUN_LINES), 1);
+  for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 30) o.panicT = mr(4, 7);
+}
+// a backhand that sends people and parked cars flying
+function heroSwat() {
+  if (player.shoveCd > 0) return; player.shoveCd = 0.45; player.shoveAnim = 1; sfx.shove();
+  camera.getWorldDirection(_hd); const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  let any = false;
+  for (const h of G.hunters) {
+    if (h.dead || h.held) continue; const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
+    if (d < 4 && (dx * fx + dz * fz) / (d || 1) > 0.3 && Math.abs(h.y - player.y) < 2) { launchHunter(h, dx / (d || 1), dz / (d || 1), true, { x: fx * 30, y: 12, z: fz * 30 }); any = true; }
+  }
+  for (const c of G.cars) {
+    if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz);
+    if (d < 5.5 && (dx * fx + dz * fz) / (d || 1) > 0.2 && player.y < 3) {
+      if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false);
+      c.driver = null; c.lane = null; c.air = { vx: fx * 26, vz: fz * 26, vy: 13, y: 0, spin: mr(-5, 5), roll: 0 }; any = true;
+    }
+  }
+  if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
+}
+function heroSlam() {
+  sfx.explode(); G.shake = 0.6; G.hitstopT = 0.12; G.fovKick = 14;
+  for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; emitPuff(player.x + Math.cos(a) * 1.5, player.y + 0.3, player.z + Math.sin(a) * 1.5, { life: 1, vx: Math.cos(a) * 9, vz: Math.sin(a) * 9, vy: 0.6, size0: 0.8, size1: 3, alpha: 0.6, color: 0x9a9080 }); }
+  for (const h of G.hunters) {
+    if (h.dead || h.held) continue; const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
+    if (d < 9 && Math.abs(h.y - player.y) < 3) launchHunter(h, dx / (d || 1), dz / (d || 1), true, { x: dx / (d || 1) * (24 - d * 1.5), y: 12 - d * 0.6, z: dz / (d || 1) * (24 - d * 1.5) });
+    else if (d < 40) h.panicT = mr(5, 8);
+  }
+  for (const c of G.cars) { if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz); if (d < 8) { if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false); c.driver = null; c.lane = null; c.air = { vx: dx / (d || 1) * 10, vz: dz / (d || 1) * 10, vy: 9, y: 0, spin: mr(-3, 3), roll: 0 }; } }
+  showMsg('SUPERHERO LANDING', 1.5);
+}
+// superpower mode: two red beams straight out of your eyes
+const _eyeL = new THREE.Vector3(), _eyeR = new THREE.Vector3(), _lz = new THREE.Vector3();
+const laserGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, 0.5);
+const laserMeshes = [0, 1].map(() => { const g = new THREE.Group();
+  g.add(new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0xff1a10, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
+  g.add(new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0xff5030, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
+  g.children[0].scale.set(0.012, 0.012, 1); g.children[1].scale.set(0.05, 0.05, 1); g.visible = false; scene.add(g); return g; });
+function laserBeam(i, from, to) { const g = laserMeshes[i]; g.visible = true; g.position.copy(from); g.lookAt(to); g.scale.set(1, 1, from.distanceTo(to)); }
+function updateLaser(dt) { G.laserT = Math.max(0, (G.laserT || 0) - dt); if (G.laserT <= 0) for (const g of laserMeshes) g.visible = false; }
+function fireLaser() {
+  player.fireCd = WEAPONS.laser.cd; player.drawnT = 0; G.laserT = 0.12;
+  camera.getWorldDirection(_aim);
+  const r = fireRay(_aim, 220, false), o = camera.position;
+  const t = r ? Math.hypot(r.h.x - o.x, r.h.z - o.z) : raycastWorld(o, _aim, 220).t;
+  _lz.copy(o).addScaledVector(_aim, Math.min(t, 220));
+  _eyeL.set(-0.07, -0.1, -0.45).applyMatrix4(camera.matrixWorld); _eyeR.set(0.07, -0.1, -0.45).applyMatrix4(camera.matrixWorld);
+  laserBeam(0, _eyeL, _lz); laserBeam(1, _eyeR, _lz);
+  if (Math.random() < 0.5) emitPuff(_lz.x, _lz.y, _lz.z, { life: 0.35, vy: 1, size0: 0.25, size1: 1, alpha: 0.8, color: Math.random() < 0.5 ? 0xff4020 : 0xffc040 });
+  if (Math.random() < 0.3) sfx.zap ? sfx.zap() : sfx.smg();
+  if (r && !r.h.dead) { const dx = r.h.x - player.x, dz = r.h.z - player.z, dl = Math.hypot(dx, dz) || 1; launchHunter(r.h, dx / dl, dz / dl, !r.h.contract); showMsg(mpick(HOMERUN_LINES), 1); for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - r.h.x, h.z - r.h.z) < 30) h.panicT = mr(4, 7); }
+}
 // one bullet: returns the hunter it hit (damage is pooled so a shotgun blast lands as one hit)
 function fireRay(dir, range, tracer) {
   const o = camera.position;
@@ -976,7 +1108,7 @@ function fireRay(dir, range, tracer) {
   } else if (carHit) {
     carHit.damage(5);
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0.4, size0: 0.15, size1: 0.6, alpha: 0.9, color: 0xffe0a0 });
-    if (carHit.driver === 'traffic') carHit.driver = 'hunter';
+    if (carHit.driver === 'traffic' && !G.super) carHit.driver = 'hunter';
   } else if (airHit) {
     airHit.damage(1);
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0, size0: 0.3, size1: 1, alpha: 0.9, color: 0xffe0a0 });
@@ -1033,11 +1165,12 @@ function crowbarImpact(heavy) {
   addHeat(4); alertAround(player.x, player.z, 20, 1);
 }
 // sends someone flying 5 to 10 m; unless that finished them off, they get back up a few seconds later
-function launchHunter(h, ux, uz, getsUp) {
+function launchHunter(h, ux, uz, getsUp, imp) {
   if (h.dead) return;
   const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
+  if (h.held) { h.held = false; if (G.held === h) G.held = null; }
   h.dead = true; h.marker.visible = false; h.g.position.set(h.x, h.y, h.z);
-  addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
+  addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, imp || { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
   const rag = ragdolls[ragdolls.length - 1];
   rag.launchFrom = { x: h.x, z: h.z };
   if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
@@ -1103,7 +1236,7 @@ function cycleWeapon(dir) {
 }
 function primaryDown() { G.fireHeld = true; if (WEAPONS[player.weapon].melee) crowbarSwing(false); else playerShoot(); }
 function primaryUp() { G.fireHeld = false; }
-function secondary() { if (player.weapon === 'crowbar') crowbarSwing(true); else playerShove(); }
+function secondary() { if (G.super) heroSwat(); else if (player.weapon === 'crowbar') crowbarSwing(true); else playerShove(); }
 
 // ---------------------------------------------------------------------
 // shops and hired help
@@ -1282,12 +1415,13 @@ function updateAllies(dt) {
   G.allies = G.allies.filter((a) => !a.dead);
 }
 function startReload() {
-  const W = WEAPONS[player.weapon]; if (W.melee) return;
+  const W = WEAPONS[player.weapon]; if (W.melee || W.laser) return;
   const A = player.ammo[player.weapon];
   if (player.reloadT > 0 || A.mag >= W.mag || A.res <= 0 || player.car) return;
   player.reloadT = W.reload; sfx.reload();
 }
 function playerShove() {
+  if (G.super && !player.car && player.alive) { heroSwat(); return; }
   if (player.car || player.shoveCd > 0 || !player.alive) return;
   player.shoveCd = 0.55; player.shoveAnim = 1; sfx.shove();
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
@@ -1513,7 +1647,7 @@ function updateHUD(dt) {
   const hh = Math.floor(G.hour), mn = Math.floor(((G.hour - hh) * 60) / 15) * 15;
   hud.clock.textContent = String(hh).padStart(2, '0') + ':' + String(mn).padStart(2, '0') + (G.dayAmt < 0.3 ? ' · NIGHT' : '');
   hud.stars.innerHTML = Array.from({ length: 5 }, (_, i) => `<span class="${i < G.level ? 'on' : ''}">★</span>`).join('');
-  hud.pname.textContent = LEVEL_NAMES[G.level];
+  hud.pname.textContent = G.super ? 'THE PARAGON' : LEVEL_NAMES[G.level];
   const lo = LEVELS[G.level], hi = LEVELS[G.level + 1] ?? 330;
   hud.heat.style.width = (clamp((G.heat - lo) / (hi - lo), 0, 1) * 100).toFixed(0) + '%';
   const nh = G.helis.filter((a) => !a.dead && !a.leaving).length, nd = G.drones.filter((a) => !a.dead && !a.leaving).length;
@@ -1525,11 +1659,12 @@ function updateHUD(dt) {
   else if (G.inSafe && G.inSafe.owned) { hud.alert.textContent = 'SAFEHOUSE BURNED'; hud.alert.className = 'hot'; }
   else if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR'; hud.alert.className = 'hot'; }
   else if (chasing) { hud.alert.textContent = `${chasing} HUNTING YOU`; hud.alert.className = 'hot'; }
+  else if (G.super) { hud.alert.textContent = G.held ? 'HOLDING A FAN' : player.flying ? 'FLYING' : 'ADORED BY ALL'; hud.alert.className = 'calm'; }
   else if (G.stareT > 0) { hud.alert.textContent = "SOMEONE'S STARING AT YOU"; hud.alert.className = 'warm'; }
   else if (G.unseenT > 10) { hud.alert.textContent = G.conspic < 0.3 && !player.car ? 'BLENDING IN' : 'HIDDEN'; hud.alert.className = 'calm'; }
   else { hud.alert.textContent = 'THEY LOST SIGHT OF YOU'; hud.alert.className = 'warm'; }
   const W = WEAPONS[player.weapon], A = player.ammo[player.weapon];
-  hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
+  hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.laser ? (player.flying ? '<i>FLYING</i>' : '<i>UNLIMITED</i>') : W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
   hud.cash.textContent = '$' + player.cash;
   const nOut = Object.keys(player.outfit).length;
   const ls = localSus();
@@ -1621,7 +1756,9 @@ function clearWorld() {
   for (const a of [...G.helis, ...G.drones]) a.remove(); G.helis.length = 0; G.drones.length = 0;
   for (const a of G.allies) a.remove(); G.allies.length = 0;
   for (const D of G.drops) scene.remove(D.m); G.drops.length = 0; G.getUps.length = 0;
-  G.contract = null; G.offers = []; G.offersDay = 0;
+  G.contract = null; G.offers = []; G.offersDay = 0; G.held = null;
+  for (const b of bubbles) { b.life = 0; b.s.removeFromParent(); }
+  for (const c of G.cars) c.air = null;
 }
 function spawnTraffic(count) {
   const total = lanes.reduce((s, l) => s + (l.a1 - l.a0), 0);
@@ -1654,15 +1791,19 @@ function resetGame() {
   if (!G.pickups.length) { for (let i = 0; i < 10; i++) G.pickups.push(new Pickup('health')); for (let i = 0; i < 10; i++) G.pickups.push(new Pickup('ammo')); }
   else for (const p of G.pickups) p.place();
 }
-function startGame() {
+function startGame(sup = G.super) {
+  G.super = !!sup;
   initAudio(); resetGame();
+  SLOTS[0] = G.super ? 'laser' : 'pistol';
+  if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
+  player.flying = false; player.slamming = false;
   G.mode = 'playing';
   for (const id of ['menu', 'over', 'pause']) $(id).classList.add('hidden');
   $('hud').classList.remove('hidden');
   if (isTouch) $('touch').classList.remove('hidden');
   lockPointer();
-  showBanner(`DAY 1<small>EVERYONE IS AFTER THE BOUNTY ON YOUR HEAD</small>`, 3.5);
-  showMsg("NAN'S OLD FLAT IS THE WHITE HOUSE ON YOUR MAP. GET IN UNSEEN TO LIE LOW", 5);
+  if (G.super) { showBanner(`THE PARAGON<small>THE CITY'S GREATEST HERO. ASK ANYONE. THEY'RE TOO SCARED TO SAY OTHERWISE.</small>`, 4); showMsg('CLICK LASER · SPACE TWICE FLY · E GRAB · F SWAT · C SLAM', 7); }
+  else { showBanner(`DAY 1<small>EVERYONE IS AFTER THE BOUNTY ON YOUR HEAD</small>`, 3.5); showMsg("NAN'S OLD FLAT IS THE WHITE HOUSE ON YOUR MAP. GET IN UNSEEN TO LIE LOW", 5); }
 }
 function pauseGame() {
   if (G.mode !== 'playing') return;
@@ -1694,8 +1835,9 @@ function endGame(won) {
   $('over').classList.remove('hidden');
 }
 function showBest() { const b = loadBest(); $('best').textContent = b ? `Best run: Day ${b.day}, ${fmtTime(b.time)} survived, ${b.kills} takedowns` : ''; }
-$('btn-play').addEventListener('click', startGame);
-$('btn-again').addEventListener('click', startGame);
+$('btn-play').addEventListener('click', () => startGame(false));
+$('btn-super').addEventListener('click', () => startGame(true));
+$('btn-again').addEventListener('click', () => startGame());
 $('btn-resume').addEventListener('click', resumeGame);
 $('btn-quit').addEventListener('click', toMenu);
 $('btn-menu').addEventListener('click', toMenu);
@@ -1731,7 +1873,8 @@ function updatePlayer(dt) {
   player.sprinting = sprint;
   const speed = sprint ? 10 : 5.8;
   player.kx *= Math.max(0, 1 - dt * 6); player.kz *= Math.max(0, 1 - dt * 6);
-  parkourMove(dt, player, input, sprint, speed, parkourCb);
+  if (G.super && input.jumpEdge && !player.grounded && player.mode === 'move' && !player.flying) { player.flying = true; player.vy = 0; showMsg('FLYING. HOLD SPACE TO RISE, C TO DROP', 2); sfx.swoosh(); }
+  if (player.flying) flyMove(dt); else parkourMove(dt, player, input, sprint, speed, parkourCb);
   input.jumpEdge = false;
   for (const h of G.hunters) {
     if (h.dead || Math.abs(h.y - player.y) > 1.2) continue;
@@ -1743,6 +1886,22 @@ function updatePlayer(dt) {
     player.bob += Math.hypot(player.vx, player.vz) * dt * 1.6 * (player.slideT > 0 ? 0 : 1);
     if (Math.floor(ob / Math.PI) !== Math.floor(player.bob / Math.PI)) sfx.step();
   }
+}
+function flyMove(dt) {
+  const fast = input.sprint ? 42 : 15, cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  const wx = (fx * cp * input.fwd + rx * input.side) * fast, wz = (fz * cp * input.fwd + rz * input.side) * fast;
+  const above = player.y - floorAt(player.x, player.z, player.y + 0.3);
+  if (input.crouch && above > 5 && !player.slamming) { player.slamming = true; sfx.swoosh(); }
+  const wy = player.slamming ? -55 : sp * input.fwd * fast + (input.jump ? 14 : 0) - (input.crouch ? 12 : 0);
+  const k = Math.min(1, dt * (player.slamming ? 12 : 4));
+  player.vx = lerp(player.vx, wx, k); player.vz = lerp(player.vz, wz, k); player.vy = lerp(player.vy, wy, k);
+  const prevY = player.y;
+  player.x += player.vx * dt; player.z += player.vz * dt; player.y = Math.min(260, player.y + player.vy * dt);
+  resolveBody(player, 0.4, player.y, 1.8);
+  const fl = floorAt(player.x, player.z, Math.max(prevY, player.y) + 0.3);
+  if (player.y <= fl) { player.y = fl; if (player.vy < 0.5) { if (player.slamming) heroSlam(); else for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - player.x, h.z - player.z) < 25) h.panicT = mr(3, 6); player.flying = false; player.slamming = false; player.grounded = true; player.vy = 0; } }
+  player.sprinting = false; player.bob += dt * 2;
 }
 const interiorCb = {
   hitPlayer: (dir, speed) => {
@@ -1803,7 +1962,7 @@ function updateCamera(dt, t) {
   const mantleDip = player.mode === 'mantle' ? -0.25 * Math.sin(clamp(player.anim.t / player.anim.dur, 0, 1) * Math.PI) : 0;
   const swingRoll = player.swingKind === 'heavy' && player.swingT < 0.7 ? Math.sin(clamp((player.swingT - 0.3) / 0.35, 0, 1) * Math.PI) * 0.05 : 0;
   camera.rotation.set(player.pitch + player.recoil * 0.03 + mantleDip - player.landDip * 0.08, player.yaw, player.alive ? G.camRoll + swingRoll : Math.min(1.2, G.deathT * 1.4));
-  vm.visible = player.alive;
+  vm.visible = player.alive && player.weapon !== 'laser';
   const b = player.bob;
   vm.position.set(Math.cos(b) * 0.012, Math.abs(Math.sin(b)) * -0.015 - (player.reloadT > 0 ? 0.25 : 0), player.recoil * 0.06);
   armR.rotation.x = 0.05 + player.recoil * 0.25;
@@ -1910,7 +2069,7 @@ function updateDirector(dt) {
   const day = Math.floor(G.elapsed / CFG.dayLength) + 1;
   if (day > G.day) {
     G.day = day;
-    if (G.day > CFG.days) { endGame(true); return; }
+    if (G.day > CFG.days && !G.super) { endGame(true); return; }
     sfx.day();
     showBanner(`DAY ${G.day}<small>${G.day === CFG.days ? 'LAST DAY. HOLD ON.' : 'THE BOUNTY WENT UP. MORE OF THEM NOW.'}</small>`, 3.5);
   }
@@ -1943,7 +2102,7 @@ function updateDirector(dt) {
   G.spottedMsgT -= dt;
   // air tracking alerts ground units
   if (G.airTracking) { G.airAlertT -= dt; if (G.airAlertT <= 0) { G.airAlertT = 3; sendLooking(tp.x, tp.z, 60, 15); } }
-  manageAircraft(dt);
+  if (!G.super) manageAircraft(dt);
   // population
   G.spawnT -= dt;
   const alive = G.hunters.filter((h) => !h.dead);
@@ -1965,7 +2124,7 @@ function updateDirector(dt) {
   if (G.pingT <= 0) {
     G.pingT = Math.max(28, 70 - G.day - G.level * 6);
     // only once you're properly wanted does someone post a rough idea of where you are
-    if (G.level >= 2 && !G.safe) {
+    if (G.level >= 2 && !G.safe && !G.super) {
       G.lkp.x = tp.x + mr(-25, 25); G.lkp.z = tp.z + mr(-25, 25);
       sendLooking(G.lkp.x, G.lkp.z, 80, 25);
       showMsg('SOMEONE POSTED ROUGHLY WHERE YOU ARE', 3); sfx.alarm();
@@ -2023,7 +2182,7 @@ function simulate(dt, t) {
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
     updateSafehouse(dt);
-    updateGetUps(dt); updateDrops(dt, t); updateContract(dt); updateAllies(dt); updateShopLight();
+    updateGetUps(dt); updateDrops(dt, t); updateLaser(dt); updateBubbles(dt); updateContract(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
     if (!player.alive) { G.overT -= dt; if (G.overT <= 0 && G.mode === 'playing') endGame(false); }

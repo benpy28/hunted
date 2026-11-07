@@ -175,3 +175,4 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 #hud-sus:empty { display: none; }
 #hud-sus span { flex: 1; height: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
 #hud-sus i { display: block; height: 100%; background: linear-gradient(90deg, #ffcf7a, #ff7a4a); }
+#btn-super { margin-top: 10px; background: linear-gradient(90deg, #d0202a, #ff6a3a); color: #fff; }

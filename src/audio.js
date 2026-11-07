@@ -94,3 +94,6 @@ export function setZipSound(v) {
   zipOsc.frequency.setTargetAtTime(400 + v * 90, actx.currentTime, 0.05);
   zipGain.gain.setTargetAtTime(v > 0 ? clamp(0.1 + v / 60, 0, 0.5) : 0, actx.currentTime, 0.08);
 }
+// superpower mode: screaming bystanders and eye lasers
+sfx.scream = () => { const f = 520 + Math.random() * 420; tone(f, 0.55, 'triangle', 0.06, 1.45); tone(f * 1.02, 0.55, 'sawtooth', 0.02, 1.45); };
+sfx.zap = () => { tone(1500 + Math.random() * 300, 0.07, 'sawtooth', 0.035, 0.5); };
