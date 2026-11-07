@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>HUNTED</title>
+<link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- In-game HUD -->
+<div id="hud" class="hidden">
+  <div id="hud-left">
+    <div id="hud-city">PORT HALDEN</div>
+    <div class="hud-label">DAY</div>
+    <div id="hud-day"><span id="hud-day-num">1</span><span id="hud-day-total"> / 30</span></div>
+    <div class="hud-label">REWARD</div>
+    <div id="hud-reward">$1,000,000,000</div>
+    <div id="hud-time">00:00 survived</div>
+    <div id="hud-kills"></div>
+  </div>
+
+  <div id="hud-alert" class="calm">NOBODY SEES YOU</div>
+  <div id="hud-msg"></div>
+  <div id="hud-banner"></div>
+
+  <canvas id="minimap" width="170" height="170"></canvas>
+  <div id="hud-clock">16:00</div>
+
+  <div id="hud-bars">
+    <div class="bar"><div class="bar-label">HEALTH</div><div class="bar-track"><div id="bar-health" class="bar-fill"></div></div></div>
+    <div class="bar"><div class="bar-label">STAMINA</div><div class="bar-track"><div id="bar-stamina" class="bar-fill"></div></div></div>
+  </div>
+
+  <div id="hud-ammo"></div>
+  <div id="hud-prompt"></div>
+  <div id="carbar" class="hidden"><div class="bar-label">CAR</div><div class="bar-track"><div id="bar-car" class="bar-fill"></div></div></div>
+  <div id="crosshair"></div>
+  <div id="vignette"></div>
+</div>
+
+<!-- Touch controls (shown on phones / tablets) -->
+<div id="touch" class="hidden">
+  <div id="stick"><div id="stick-knob"></div></div>
+  <button id="btn-fire" class="tbtn">FIRE</button>
+  <button id="btn-run" class="tbtn">RUN</button>
+  <button id="btn-car" class="tbtn hidden">CAR</button>
+  <button id="btn-reload" class="tbtn small">R</button>
+  <button id="btn-jump" class="tbtn">JUMP</button>
+  <button id="btn-shove" class="tbtn">SHOVE</button>
+  <button id="btn-pause" class="tbtn small">II</button>
+</div>
+
+<!-- Menus -->
+<div id="menu" class="overlay">
+  <div class="panel">
+    <h1>HUNTED</h1>
+    <p class="tag">Someone put a bounty on your head. Now every single person in Port Halden wants it.</p>
+    <p class="tag">Survive <b>30 days</b>. Nobody is on your side.</p>
+    <button id="btn-play" class="big">PLAY</button>
+    <div id="controls-desktop" class="controls">
+      <div><b>WASD</b> move</div><div><b>Mouse</b> look</div>
+      <div><b>Shift</b> sprint</div><div><b>Space</b> jump</div>
+      <div><b>Click</b> shoot</div><div><b>R</b> reload</div>
+      <div><b>F / Right click</b> shove</div><div><b>E</b> steal / leave car</div>
+      <div><b>Esc</b> pause</div>
+    </div>
+    <div id="controls-touch" class="controls hidden">
+      <div>Left thumb: move</div><div>Right thumb: look</div>
+      <div>FIRE: shoot</div><div>SHOVE: push hunters away</div>
+      <div>RUN: sprint toggle</div><div>CAR: steal / leave a car</div>
+    </div>
+    <p id="best" class="tag small"></p>
+  </div>
+</div>
+
+<div id="pause" class="overlay hidden">
+  <div class="panel">
+    <h2>PAUSED</h2>
+    <p class="tag">They're still out there.</p>
+    <button id="btn-resume" class="big">RESUME</button>
+    <button id="btn-quit" class="ghost">QUIT TO MENU</button>
+  </div>
+</div>
+
+<div id="over" class="overlay hidden">
+  <div class="panel">
+    <h2 id="over-title">CAUGHT</h2>
+    <p id="over-text" class="tag"></p>
+    <div id="over-stats" class="stats"></div>
+    <button id="btn-again" class="big">TRY AGAIN</button>
+    <button id="btn-menu" class="ghost">MENU</button>
+  </div>
+</div>
+
+<div id="loading" class="overlay"><div class="panel"><h2>Building the city…</h2></div></div>
+
+<script type="module" src="src/game.js"></script>
+</body>
+</html>
