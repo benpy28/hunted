@@ -82,6 +82,7 @@ function icCallCustomers(L, K) {
   for (const h of K.hunters()) {
     if (q >= 6) break;
     if (h.dead || h.state === 'chase' || h.panicT > 0 || h.job || h.racer || h.mdFan || h.contract || h.guard || h.rival) continue;
+    if (h.act) continue; // already busy (at a stall, on a bench, in a cafe, watching the match): they stay put
     const d = Math.hypot(h.x - L.x, h.z - L.z); if (d > 32) continue;
     if (!(h.kid || Math.random() < 0.4)) continue;
     const off = 0.9 + q * 0.75, x = H.x + L.fx * (off - 1.2), z = H.z + L.fz * (off - 1.2);
