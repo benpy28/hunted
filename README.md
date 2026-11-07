@@ -7,7 +7,11 @@ A browser 3D survival game. Someone put a bounty on your head, and everyone in t
 - Easiest: open `dist/hunted.html` directly in a browser (one file, works offline).
 - From source: serve the folder (for example `python3 -m http.server`) and open `http://localhost:8000`.
 
-Desktop: WASD move, mouse look, Shift sprint, Space jump, click shoot, R reload, F or right click shove, E steal or leave a car, M big map, Esc pause.
+Desktop: WASD move, mouse look, Shift sprint, Space jump / climb / vault, C or Ctrl crouch / slide / roll, click shoot, R reload, F or right click shove, E steal a car or ride a zipline, M big map, Esc pause.
+
+Parkour: vault low cover at a run, jump at ledges to pull up, sprint into a wall and press Space to scramble up, climb ladders, ride ziplines between rooftops (yellow on the minimap).
+
+Places to explore: the Halden Metro (three stations under Port Halden, watch for the train), sewers under Ashford and Saltmarsh Docks (manholes in the street), the Halden Galleria mall, and the Halden Heights construction site with its tower crane.
 Phones and tablets get on-screen controls.
 
 ## Build the single-file version
@@ -19,7 +23,9 @@ node tools/build-single.mjs
 ## Layout
 
 - `src/core.js`: renderer, scene, helpers, procedural textures, merged-geometry builder
-- `src/world.js`: towns, highways, countryside, collisions, navigation grid, ray casts
+- `src/world.js`: towns, highways, countryside, height-aware collisions, ladders and ziplines, navigation grid, ray casts
+- `src/interiors.js`: subway, sewers, mall, construction site
+- `src/parkour.js`: player movement, vaulting, climbing, ladders, ziplines
 - `src/audio.js`, `src/fx.js`, `src/people.js`: synth sound, particles and bullet trails, characters and ragdolls
 - `src/game.js`: hunters, cars, aircraft, profile system, weapons, HUD, game loop
 - `vendor/three.module.min.js`: three.js r170 (MIT, see `vendor/THREE_LICENSE`)

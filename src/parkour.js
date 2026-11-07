@@ -1,7 +1,7 @@
 // Parkour: running, jumping, sliding, vaulting low cover, mantling ledges, climbing walls and ladders,
 // and riding ziplines between rooftops. Works on a player-like body {x, y (feet), z, vx, vy, vz, yaw}.
 import { clamp, lerp } from './core.js';
-import { resolveBody, floorAt, stackTop, headroom, ladderNear, zipNear, groundY } from './world.js';
+import { resolveBody, floorAt, stackTop, headroom, ladderNear, ladderTopNear, zipNear, groundY } from './world.js';
 import { sfx } from './audio.js';
 
 const GRAV = 22, JUMP_V = 7.4;
@@ -78,11 +78,12 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
   if (P.mode === 'ladder') {
     const L = P.ladder;
     P.x = L.x + L.nx * 0.05; P.z = L.z + L.nz * 0.05; P.vx = P.vz = 0;
-    P.y += inp.fwd * 4.2 * dt; P.crouch = Math.max(0, P.crouch - dt * 4);
+    const facingWall = fx * -L.nx + fz * -L.nz > 0;
+    P.y += inp.fwd * (facingWall ? 1 : -1) * 4.2 * dt; P.crouch = Math.max(0, P.crouch - dt * 4);
     if (inp.fwd) cb.stepSound(dt * 3);
     if (inp.jumpEdge) { P.mode = 'move'; P.vy = 5; P.vx = L.nx * 5; P.vz = L.nz * 5; P.grounded = false; P.peakY = P.y; return; }
     if (P.y >= L.y1 - 1.0) { startAnim(P, 'mantle', L.x - L.nx * 1.1, L.y1, L.z - L.nz * 1.1, 0.45); sfx.climb(); return; }
-    if (P.y <= L.y0 && inp.fwd < 0) { P.y = Math.max(L.y0, floorAt(P.x, P.z, L.y0 + 0.1)); P.mode = 'move'; }
+    if (P.y <= L.y0 && inp.fwd * (facingWall ? 1 : -1) < 0) { P.y = Math.max(L.y0, floorAt(P.x, P.z, L.y0 + 0.1)); P.mode = 'move'; }
     return;
   }
   if (P.mode === 'zip') {
@@ -130,6 +131,8 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
   if (inp.fwd > 0) {
     const L = ladderNear(P.x, P.z, P.y);
     if (L && fx * -L.nx + fz * -L.nz > 0.35) { P.mode = 'ladder'; P.ladder = L; P.vy = 0; P.slideT = 0; sfx.climb(); return; }
+    const T = P.grounded ? ladderTopNear(P.x, P.z, P.y) : null;
+    if (T && fx * T.nx + fz * T.nz > 0.35) { P.mode = 'ladder'; P.ladder = T; P.y = T.y1 - 1.05; P.vy = 0; P.slideT = 0; P.downLadder = true; sfx.climb(); return; }
   }
   // grab a zipline cable you jump at
   if (!P.grounded && P.vy < 3) {
@@ -162,5 +165,4 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
     if (P.grounded && P.vy <= 0 && P.y - floor > 0.5) P.peakY = P.y; // walked off an edge
     P.grounded = false; P.airT += dt; P.peakY = Math.max(P.peakY, P.y);
   }
-  if (P.y < groundY(P.x, P.z) - 0.5) P.y = groundY(P.x, P.z);
 }

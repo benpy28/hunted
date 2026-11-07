@@ -12,6 +12,8 @@ import {
 } from './world.js';
 import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
+import { updateInteriors, zoneAt, undergroundRects, isUnderground } from './interiors.js';
+import { links } from './world.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
 
@@ -149,10 +151,10 @@ class Hunter {
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
-      const see = d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
+      const see = d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 || this.y < -1 || player.y < -1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
       this.hasLOS = see;
       if (this.state !== 'chase') {
-        const noisy = player.car ? 30 : (player.sprinting ? 16 : 7);
+        const noisy = Math.abs(dy) > 3 ? 0 : player.car ? 30 : (player.sprinting ? 16 : player.crouch > 0.5 ? 3 : 7);
         const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.5 : 1) * (1 + G.level * 0.08);
         if (d < noisy || (see && d < sight)) { this.alert(); shout(this); }
       } else if (see) { this.lastSeen = 0; if (d < 60) reportSighting(tp.x, tp.z); }
@@ -175,16 +177,27 @@ class Hunter {
         const fx3 = -Math.sin(player.yaw), fz3 = -Math.cos(player.yaw), facing = ((this.x - tp.x) * fx3 + (this.z - tp.z) * fz3) / (d || 1);
         if (facing > 0.3 || player.car) hold = 15; else spdK = 1.15;
       } else if (this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
-      // you're up high: head for a ladder if there's one handy, otherwise to the wall below you
+      // you're on another level: find stairs or a ladder that gets them closer (brutes won't do ladders)
       let goLadder = null;
-      if (dy > 1.4 && this.y < 1 && d < 45 && this.type !== 'brute') {
-        let bd = 30;
-        for (const L of ladders) { const ld = Math.abs(L.x - this.x) + Math.abs(L.z - this.z); if (ld < bd && L.y1 > player.y - 2 && Math.abs(L.x - tp.x) + Math.abs(L.z - tp.z) < 40) { bd = ld; goLadder = L; } }
-        if (goLadder) { tx = goLadder.x + goLadder.nx * 0.3; tz = goLadder.z + goLadder.nz * 0.3; hold = 0; }
-        if (goLadder && Math.hypot(tx - this.x, tz - this.z) < 0.9) { this.ladder = goLadder; this.stun = 0; return; }
+      if (Math.abs(dy) > 1.4 && d < 90) {
+        let bd = 70;
+        for (const Lk of links) {
+          if (Lk.kind === 'ladder' && this.type === 'brute') continue;
+          for (const [s0, e0] of [[Lk.a, Lk.b], [Lk.b, Lk.a]]) {
+            if (Math.abs(s0.y - this.y) > 1.1 || Math.abs(e0.y - player.y) > Math.abs(dy) - 1) continue;
+            const ld = Math.abs(s0.x - this.x) + Math.abs(s0.z - this.z) + (Math.abs(e0.x - tp.x) + Math.abs(e0.z - tp.z)) * 0.5;
+            if (ld < bd) { bd = ld; goLadder = { s: s0, e: e0, Lk }; }
+          }
+        }
+        if (goLadder) { tx = goLadder.s.x; tz = goLadder.s.z; hold = 0; }
+        if (goLadder && Math.hypot(tx - this.x, tz - this.z) < 1.0) {
+          const { s: s0, e: e0, Lk } = goLadder, len = Math.hypot(e0.x - s0.x, e0.y - s0.y, e0.z - s0.z);
+          this.climb = { t: 0, dur: len / (Lk.kind === 'ladder' ? (this.type === 'runner' ? 3.4 : 2.4) : 3.6), fx: this.x, fy: this.y, fz: this.z, tx: e0.x, ty: e0.y, tz: e0.z, kind: Lk.kind };
+          this.face = Math.atan2(e0.x - s0.x, e0.z - s0.z); this.stun = 0; return;
+        }
       }
       const ex0 = tx - this.x, ez0 = tz - this.z;
-      if (this.y > 1) { /* on a roof: straight at you */ }
+      if (this.y > 1 || this.y < -1) { /* on a roof or underground: straight at it */ }
       else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && los(this.x, this.z, tx, tz))) { tx = n.x; tz = n.z; } }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
       const spd = T.speed * dayMult() * this.spdMul * spdK;
@@ -281,9 +294,11 @@ class Hunter {
       if (this.y >= L.y1 - 1) { this.ladder = null; this.climb = { t: 0, dur: 0.5, fx: this.x, fy: this.y, fz: this.z, tx: L.x - L.nx * 1.1, ty: L.y1, tz: L.z - L.nz * 1.1 }; }
     } else {
       const C = this.climb; C.t += dt;
-      const k = Math.min(1, C.t / C.dur), e = k * k * (3 - 2 * k);
-      this.x = lerp(C.fx, C.tx, e); this.z = lerp(C.fz, C.tz, e); this.y = lerp(C.fy, C.ty, Math.min(1, e * 1.5));
-      p.armL.rotation.x = p.armR.rotation.x = -2.8 + k * 2;
+      const k = Math.min(1, C.t / C.dur), e = C.kind ? k : k * k * (3 - 2 * k);
+      this.x = lerp(C.fx, C.tx, e); this.z = lerp(C.fz, C.tz, e); this.y = lerp(C.fy, C.ty, C.kind ? e : Math.min(1, e * 1.5));
+      if (C.kind === 'stairs') { const sw = Math.sin(C.t * 9) * 0.7; p.legL.rotation.x = sw; p.legR.rotation.x = -sw; p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
+      else if (C.kind === 'ladder') { const sw = Math.sin(C.t * 8); p.armL.rotation.x = -2.6 + sw * 0.4; p.armR.rotation.x = -2.6 - sw * 0.4; p.legL.rotation.x = sw * 0.5; p.legR.rotation.x = -sw * 0.5; }
+      else p.armL.rotation.x = p.armR.rotation.x = -2.8 + k * 2;
       if (k >= 1) { this.climb = null; this.vy = 0; this.peakY = this.y; }
     }
     this.g.position.set(this.x, this.y, this.z); this.g.rotation.y = this.face;
@@ -1012,6 +1027,8 @@ function drawMinimap() {
   for (const b of blockRects) if (inR(b.x0, b.z0, b.x1, b.z1, 60)) mm.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0);
   if (!big) { mm.fillStyle = '#57535e'; for (const c of colliders) if (c.x1 - c.x0 > 2 && c.z1 - c.z0 > 2 && c.h > 2 && inR(c.x0, c.z0, c.x1, c.z1, 20)) mm.fillRect(c.x0, c.z0, c.x1 - c.x0, c.z1 - c.z0); }
   if (big) { mm.fillStyle = '#fff'; mm.font = `bold ${14 / sc}px Arial`; mm.textAlign = 'center'; for (const c of CITIES) { mm.save(); mm.translate(c.cx, c.cz); mm.fillText(c.name, 0, 0); mm.restore(); } }
+  const under = player.y < -1.2 && !player.car;
+  for (const u of undergroundRects) if (inR(u.x0, u.z0, u.x1, u.z1, 10)) { mm.fillStyle = under ? (u.kind === 'metro' ? '#4a7ab0' : '#6a8a4a') : 'rgba(90,140,200,.25)'; mm.fillRect(u.x0, u.z0, u.x1 - u.x0, u.z1 - u.z0); }
   mm.strokeStyle = '#ffd23a'; mm.lineWidth = 1.6 / sc;
   for (const Z of ziplines) if (inR(Math.min(Z.a.x, Z.b.x), Math.min(Z.a.z, Z.b.z), Math.max(Z.a.x, Z.b.x), Math.max(Z.a.z, Z.b.z), 10)) { mm.beginPath(); mm.moveTo(Z.a.x, Z.a.z); mm.lineTo(Z.b.x, Z.b.z); mm.stroke(); }
   if (!big) { mm.fillStyle = '#ffd23a'; for (const L of ladders) if (inR(L.x, L.z, L.x, L.z, 5)) mm.fillRect(L.x - 1.2, L.z - 1.2, 2.4, 2.4); }
@@ -1083,6 +1100,7 @@ function updateHUD(dt) {
 // Lighting
 // =====================================================================
 const C_NIGHT = new THREE.Color(0x0b0e1e), C_DAY = new THREE.Color(0x9cc0e4), C_DUSK = new THREE.Color(0xe0907a), C_DUSK2 = new THREE.Color(0x7a5a9a);
+const C_UNDER = new THREE.Color(0x14120e), C_HEMI_UNDER = new THREE.Color(0xd8c8a0);
 const C_SUN_DAY = new THREE.Color(0xfff0dd), C_SUN_DUSK = new THREE.Color(0xff9a55), C_HEMI = new THREE.Color(0xc8d0ff);
 const beaconMat = new THREE.SpriteMaterial({ map: puffTex, color: 0xff2a2a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
 const beaconSprites = beacons.map((b) => { const s = new THREE.Sprite(beaconMat); s.position.set(b.x, b.y, b.z); s.scale.setScalar(2.2); scene.add(s); return s; });
@@ -1100,6 +1118,13 @@ function updateLighting(t) {
   const ang = ((h - 6) / 12) * Math.PI;
   sun.position.set(camera.position.x + Math.cos(ang) * 150, Math.max(20, Math.sin(ang) * 160), camera.position.z + 60);
   sun.target.position.set(camera.position.x, 0, camera.position.z); sun.target.updateMatrixWorld();
+  // underground: close, dark and stuffy
+  const under = clamp((-camera.position.y - 1) / 2, 0, 1);
+  if (under > 0) {
+    scene.background.lerp(C_UNDER, under); scene.fog.color.lerp(C_UNDER, under);
+    scene.fog.near = lerp(scene.fog.near, 4, under); scene.fog.far = lerp(scene.fog.far, 70, under);
+    hemi.intensity = lerp(hemi.intensity, 0.75, under); hemi.color.lerp(C_HEMI_UNDER, under); sun.intensity *= 1 - under;
+  }
   const win = 0.04 + (1 - dayAmt) * 1.05 + dusk * 0.2;
   for (const m of emissiveFacades) m.emissiveIntensity = win;
   const blink = Math.sin(t * 3) > 0.2;
@@ -1244,6 +1269,17 @@ function updatePlayer(dt) {
     if (Math.floor(ob / Math.PI) !== Math.floor(player.bob / Math.PI)) sfx.step();
   }
 }
+const interiorCb = {
+  hitPlayer: (dir, speed) => {
+    if (player.carHitCd > 0) return; player.carHitCd = 1.5;
+    if (player.mode !== 'move') { player.mode = 'move'; }
+    hurtPlayer(Math.min(80, 30 + speed * 2.5), player.x - dir * 3, player.z, 0);
+    player.vx = dir * speed * 0.8; player.vy = 7; player.kz = (player.z > interiorTrackZ() ? 1 : -1) * 9; player.grounded = false;
+    showMsg('HIT BY A TRAIN', 2); sfx.crash();
+  },
+  rumble: (v) => { if (v > 0.05) G.shake = Math.max(G.shake, v * 0.12); G.rumble = v; },
+};
+const interiorTrackZ = () => CITIES[0].Rz(6);
 let stepAcc = 0;
 const parkourCb = {
   hurt: (dmg, rolled) => { hurtPlayer(dmg, player.x, player.z); showMsg(rolled ? 'ROLLED IT' : 'HARD LANDING', 1.2); },
@@ -1314,11 +1350,16 @@ function updateDirector(dt) {
   }
   const tp = targetPos();
   // locale
-  const loc = localeName(tp.x, tp.z);
+  const zn = player.car ? null : zoneAt(player.x, player.y, player.z);
+  const loc = zn ? zn.name : localeName(tp.x, tp.z);
   if (loc !== G.locale) {
     const first = !G.locale;
     G.locale = loc;
-    if (!first && CITIES.some((c) => c.name === loc)) showBanner(`<small>WELCOME TO</small>${loc}`, 3);
+    const cityNow = localeName(tp.x, tp.z);
+    if (!first && CITIES.some((c) => c.name === cityNow) && G.lastCity !== cityNow) showBanner(`<small>WELCOME TO</small>${cityNow}`, 3);
+    if (!first && zn && G.lastZone !== zn.name) showMsg(zn.name, 2);
+    G.lastCity = cityNow;
+    G.lastZone = zn ? zn.name : null;
   }
   // profile
   G.lastSeenT += dt;
@@ -1408,6 +1449,7 @@ function simulate(dt, t) {
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
+    updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
     if (!player.alive) { G.overT -= dt; if (G.overT <= 0 && G.mode === 'playing') endGame(false); }
     updateHUD(dt);
@@ -1425,4 +1467,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

@@ -31,7 +31,30 @@ export const WORLD = { minX: -300, maxX: ASH.maxX + 130, minZ: -300, maxZ: SEA_Z
 export const colliders = [];   // {x0,x1,z0,z1,h,y0} solid from y0 up to h
 export const roofs = [];       // walkable building tops {x0,x1,z0,z1,h,city}
 export const ladders = [];     // {x,z,nx,nz,y0,y1} climbable, (nx,nz) points out of the wall
-export const ziplines = [];    // {a:{x,y,z}, b:{x,y,z}, len} ride from a (high) to b (low)
+export const ziplines = [];
+export const links = [];       // AI routes between levels {a:{x,y,z}, b:{x,y,z}, kind}: ladders, stairs
+export const groundHoles = []; // {x0,x1,z0,z1} openings in the ground (stairwells, manholes)
+export const siteOverrides = new Map(); // 'CITY:i:j' -> fn(blockRect, inner) builds a special block
+export const worldHooks = { beforeBake: [], afterBake: [] };
+export const blockKey = (city, i, j) => `${city.name}:${i}:${j}`;
+// split a rectangle around holes; returns the solid pieces
+export function rectMinus(r, holes) {
+  let parts = [r];
+  for (const h of holes) {
+    const next = [];
+    for (const p of parts) {
+      if (h.x1 <= p.x0 || h.x0 >= p.x1 || h.z1 <= p.z0 || h.z0 >= p.z1) { next.push(p); continue; }
+      const x0 = Math.max(p.x0, h.x0), x1 = Math.min(p.x1, h.x1);
+      if (h.z0 > p.z0) next.push({ x0: p.x0, x1: p.x1, z0: p.z0, z1: h.z0 });
+      if (h.z1 < p.z1) next.push({ x0: p.x0, x1: p.x1, z0: h.z1, z1: p.z1 });
+      if (x0 > p.x0) next.push({ x0: p.x0, x1: x0, z0: Math.max(p.z0, h.z0), z1: Math.min(p.z1, h.z1) });
+      if (x1 < p.x1) next.push({ x0: x1, x1: p.x1, z0: Math.max(p.z0, h.z0), z1: Math.min(p.z1, h.z1) });
+    }
+    parts = next;
+  }
+  return parts;
+}
+export function inHole(x, z) { for (const h of groundHoles) if (x > h.x0 && x < h.x1 && z > h.z0 && z < h.z1) return true; return false; }    // {a:{x,y,z}, b:{x,y,z}, len} ride from a (high) to b (low)
 export const blockRects = [];  // sidewalk-ringed blocks (for pickups)
 export const vents = [];       // steam vents
 export const smokeStacks = []; // chimney tops
@@ -158,13 +181,13 @@ const BRICK_KEYS = BRICKS.map((_, i) => 'brick' + i);
 const GLASS_KEYS = ['glass0', 'glass1', 'glass2', 'glass3'];
 const OFFICE_KEYS = ['office0', 'office1', 'office2'];
 
-function facadeBox(key, x0, x1, y0, y1, z0, z1, tint) {
+export function facadeBox(key, x0, x1, y0, y1, z0, z1, tint) {
   const f = FAC[key];
   f.buf.box(x0, x1, y0, y1, z0, z1, f.tint ? (tint ?? 0xffffff) : null, { uvW: f.uvW, uvH: f.uvH, uOff: Math.floor(srand() * 4) / 4, top: false });
 }
 
 // shop fronts, signs, billboards
-const shopTex = canvasTex(128, 64, (ctx, W, H) => {
+export const shopTex = canvasTex(128, 64, (ctx, W, H) => {
   const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#fff2cf'); g.addColorStop(1, '#e6b06a');
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = 'rgba(80,50,30,.5)'; for (let i = 0; i < 6; i++) ctx.fillRect(10 + Math.random() * 100, 30 + Math.random() * 20, 8, 20);
@@ -172,7 +195,7 @@ const shopTex = canvasTex(128, 64, (ctx, W, H) => {
 }, true);
 const SIGN_WORDS = ['HOTEL', 'CINEMA', 'DINER', 'JAZZ', 'ARCADE', 'PAWN', 'LIVE', 'BAR', 'NOODLE', 'DANCE', 'COMEDY', 'RAMEN', 'KARAOKE', 'TATTOO'];
 const SIGN_COLORS = [['#e0283c', '#fff'], ['#5b8fe6', '#fff'], ['#e2b432', '#3a2200'], ['#9a4fd0', '#fff'], ['#20a59a', '#fff'], ['#f06aa8', '#fff'], ['#f08a24', '#fff']];
-const signMats = SIGN_WORDS.map((word, i) => {
+export const signMats = SIGN_WORDS.map((word, i) => {
   const [bg, fg] = SIGN_COLORS[i % SIGN_COLORS.length];
   return new THREE.MeshBasicMaterial({
     map: canvasTex(64, 320, (ctx, W, H) => {
@@ -183,14 +206,14 @@ const signMats = SIGN_WORDS.map((word, i) => {
     }),
   });
 });
-const edgeMat = new THREE.MeshLambertMaterial({ color: 0x222228 });
+export const edgeMat = new THREE.MeshLambertMaterial({ color: 0x222228 });
 const ADS = [
   ['#e8402a', '#fff', ['FIZZO', 'tastes like lightning']], ['#1f3c88', '#ffd45a', ['HALDEN TRUST BANK', 'your money, probably safe']],
   ['#f5c518', '#222', ['BURGER BARN', 'open till 4am']], ['#2a9d8f', '#fff', ['SUNNY FM 98.4', 'all hits, all day']],
   ['#111', '#7cf', ['NEXA ONE', 'the phone that listens']], ['#6a2c8a', '#fff', ['GET LOST TRAVEL', 'anywhere but here']],
   ['#fff', '#c22', ['DR. MOLAR', 'smile, you are on camera']], ['#2b2b2b', '#ff5a3c', ['CASH 4 GOLD', 'no questions asked']],
 ];
-const adMats = ADS.map(([bg, fg, [a, b]]) => new THREE.MeshBasicMaterial({
+export const adMats = ADS.map(([bg, fg, [a, b]]) => new THREE.MeshBasicMaterial({
   map: canvasTex(512, 256, (ctx, W, H) => {
     ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -209,7 +232,7 @@ const welcomeMats = CITIES.map((c, i) => new THREE.MeshBasicMaterial({
   map: textTex(512, 256, ['#245a3a', '#5a3a24', '#24405a'][i], '#fff', ['WELCOME TO', c.name, ['THE CITY THAT NEVER SLEEPS', 'A NICE QUIET TOWN', 'WORKING WATERFRONT'][i]], 'bold 44px Arial, sans-serif'),
 }));
 
-function staticMesh(geo, mat, x, y, z, ry = 0) {
+export function staticMesh(geo, mat, x, y, z, ry = 0) {
   const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.y = ry;
   m.matrixAutoUpdate = false; m.updateMatrix(); scene.add(m); return m;
 }
@@ -217,8 +240,8 @@ function staticMesh(geo, mat, x, y, z, ry = 0) {
 // ---------------------------------------------------------------------
 // Buffers + palette
 // ---------------------------------------------------------------------
-const roofBuf = new GeoBuf(), propBuf = new GeoBuf(), glowBuf = new GeoBuf(), shopBuf = new GeoBuf(), markBuf = new GeoBuf(), waterBuf = new GeoBuf(), groundBuf = new GeoBuf();
-const C = {
+export const roofBuf = new GeoBuf(), propBuf = new GeoBuf(), glowBuf = new GeoBuf(), shopBuf = new GeoBuf(), markBuf = new GeoBuf(), waterBuf = new GeoBuf(), groundBuf = new GeoBuf();
+export const C = {
   sidewalk: 0x8a8590, roof: 0x3d3944, parapet: 0x55505c, grass: 0x4f7d3e, trunk: 0x5a3e2b, asphalt: 0x2f2d35,
   pole: 0x2e3035, lamp: 0xfff0c4, sodium: 0xffb050, signal: 0x6b5a18, white: 0xe8e8e8, yellow: 0xe0b52a, concrete: 0xa8a4a0,
 };
@@ -230,11 +253,11 @@ const ROOF_COLORS = [0x6b2a22, 0x3a3a40, 0x4a3628, 0x2f4a3a, 0x5a5a60, 0x7a4a2a]
 const CONTAINER_COLORS = [0xb0302a, 0x2a5aa0, 0x2a8a4a, 0xd0902a, 0x6a6a70, 0xc85a1a, 0x2a7a8a, 0xe0d0b0];
 
 let curCity = null;
-const forcedLadders = []; // {roof, x, z, nx, nz}
-function addCollider(x0, x1, z0, z1, h, extra) { const c = { x0, x1, z0, z1, h, y0: 0 }; if (extra) Object.assign(c, extra); colliders.push(c); return c; }
-function addRoof(x0, x1, z0, z1, h, extra) { const c = addCollider(x0, x1, z0, z1, h, extra); roofs.push(c); return c; }
+export const forcedLadders = []; // {roof, x, z, nx, nz, y0}
+export function addCollider(x0, x1, z0, z1, h, extra) { const c = { x0, x1, z0, z1, h, y0: 0 }; if (extra) Object.assign(c, extra); colliders.push(c); return c; }
+export function addRoof(x0, x1, z0, z1, h, extra) { const c = addCollider(x0, x1, z0, z1, h, extra); roofs.push(c); return c; }
 
-function addTree(x, z, s = sr(1.1, 1.7), col = true) {
+export function addTree(x, z, s = sr(1.1, 1.7), col = true) {
   propBuf.box(x - 0.2, x + 0.2, 0, 2.6, z - 0.2, z + 0.2, C.trunk);
   const g = spick(GREENS);
   if (srand() < 0.3) propBuf.cyl(x, z, s * 1.3, 0, 1.8, 1.8 + s * 4, g, 6, false); // conifer
@@ -244,7 +267,7 @@ function addTree(x, z, s = sr(1.1, 1.7), col = true) {
   }
   if (col) addCollider(x - 0.3, x + 0.3, z - 0.3, z + 0.3, 4);
 }
-function addStreetLight(x, z, ax, az, color = C.lamp, h = 6.5) {
+export function addStreetLight(x, z, ax, az, color = C.lamp, h = 6.5) {
   propBuf.box(x - 0.1, x + 0.1, 0, h, z - 0.1, z + 0.1, C.pole);
   const ex = x + ax * 2.2, ez = z + az * 2.2;
   propBuf.box(Math.min(x, ex) - 0.06, Math.max(x, ex) + 0.06, h - 0.15, h - 0.03, Math.min(z, ez) - 0.06, Math.max(z, ez) + 0.06, C.pole);
@@ -259,7 +282,7 @@ function addBladeSign(side, fixed, a, y, hS) {
   if (xs) staticMesh(geo, mats, fixed + out * 0.75, y, a); else staticMesh(geo, mats, a, y, fixed + out * 0.75);
 }
 // billboard facing direction (nx, nz) at (x, z), bottom at y
-function addBillboard(x, z, y, ry, w = 9, h = 4.5, legs = true) {
+export function addBillboard(x, z, y, ry, w = 9, h = 4.5, legs = true) {
   const mat = spick(adMats);
   const geo = new THREE.BoxGeometry(w, h, 0.3);
   staticMesh(geo, [edgeMat, edgeMat, edgeMat, edgeMat, mat, mat], x, y + h / 2, z, ry);
@@ -271,7 +294,7 @@ function addBillboard(x, z, y, ry, w = 9, h = 4.5, legs = true) {
 function streetFaces(x0, x1, z0, z1, ix0, ix1, iz0, iz1) {
   return { px: Math.abs(x1 - ix1) < 0.01, nx: Math.abs(x0 - ix0) < 0.01, pz: Math.abs(z1 - iz1) < 0.01, nz: Math.abs(z0 - iz0) < 0.01 };
 }
-const SIDES = ['px', 'nx', 'pz', 'nz'];
+export const SIDES = ['px', 'nx', 'pz', 'nz'];
 function sideInfo(side, x0, x1, z0, z1) {
   return { fixed: side === 'px' ? x1 : side === 'nx' ? x0 : side === 'pz' ? z1 : z0, a0: side[1] === 'x' ? z0 : x0, a1: side[1] === 'x' ? z1 : x1, out: side[0] === 'p' ? 1 : -1 };
 }
@@ -289,7 +312,7 @@ function shopfronts(x0, x1, z0, z1, street, chance = 0.8, signChance = 0.3, h = 
     if (srand() < signChance && h > 10 && a1 - a0 > 6) { const hS = sr(4.5, 7.5); addBladeSign(side, fixed, srand() < 0.5 ? a0 + 1.5 : a1 - 1.5, 4.2 + hS / 2 + sr(0, 1.5), hS); }
   }
 }
-function parapet(x0, x1, z0, z1, h, col = C.parapet) {
+export function parapet(x0, x1, z0, z1, h, col = C.parapet) {
   propBuf.box(x0, x1, h, h + 0.7, z0, z0 + 0.35, col); propBuf.box(x0, x1, h, h + 0.7, z1 - 0.35, z1, col);
   propBuf.box(x0, x0 + 0.35, h, h + 0.7, z0, z1, col); propBuf.box(x1 - 0.35, x1, h, h + 0.7, z0, z1, col);
   const e = { y0: h, ledge: true };
@@ -304,7 +327,7 @@ function waterTank(x, z, h) {
 }
 
 // generic building with roof details
-function building(key, x0, x1, z0, z1, h, street, opt = {}) {
+export function building(key, x0, x1, z0, z1, h, street, opt = {}) {
   facadeBox(key, x0, x1, 0, h, z0, z1, opt.tint);
   roofBuf.flat(x0, x1, z0, z1, h, opt.roof ?? C.roof);
   if (opt.parapet !== false) parapet(x0, x1, z0, z1, h);
@@ -368,10 +391,10 @@ function stopSign(x, z) {
   propBuf.box(x - 0.35, x + 0.35, 2.1, 2.8, z - 0.05, z + 0.05, 0xc0201a);
 }
 function citySkeleton(city, canalRow = -1) {
-  groundBuf.flat(city.minX - 3, city.maxX + 3, city.minZ - 3, city.maxZ + 3, 0.01, C.asphalt);
+  for (const q of rectMinus({ x0: city.minX - 3, x1: city.maxX + 3, z0: city.minZ - 3, z1: city.maxZ + 3 }, groundHoles)) groundBuf.flat(q.x0, q.x1, q.z0, q.z1, 0.01, C.asphalt);
   for (let i = 0; i < city.n; i++) for (let j = 0; j < city.n; j++) {
     const r = { x0: city.Rx(i) + RD / 2, x1: city.Rx(i + 1) - RD / 2, z0: city.Rz(j) + RD / 2, z1: city.Rz(j + 1) - RD / 2, i, j, city };
-    propBuf.box(r.x0, r.x1, 0, 0.15, r.z0, r.z1, city.style === 'industrial' ? 0x7d7a74 : C.sidewalk);
+    for (const q of rectMinus(r, groundHoles)) propBuf.box(q.x0, q.x1, 0, 0.15, q.z0, q.z1, city.style === 'industrial' ? 0x7d7a74 : C.sidewalk);
     blockRects.push(r);
   }
   roadMarkings(city, canalRow);
@@ -389,6 +412,7 @@ function genMetro(city) {
     const { i, j } = r, ix0 = r.x0 + SW, ix1 = r.x1 - SW, iz0 = r.z0 + SW, iz1 = r.z1 - SW;
     const bcx = (r.x0 + r.x1) / 2, bcz = (r.z0 + r.z1) / 2;
     const dc = Math.hypot(bcx - city.cx, bcz - city.cz) / city.half;
+    { const ov = siteOverrides.get(blockKey(r.city, r.i, r.j)); if (ov) { ov(r, { ix0: r.x0 + SW, ix1: r.x1 - SW, iz0: r.z0 + SW, iz1: r.z1 - SW }); continue; } }
     const st = (x0, x1, z0, z1) => streetFaces(x0, x1, z0, z1, ix0, ix1, iz0, iz1);
 
     if (i === mid - 1 && j === mid - 1) { // Halden Commons park
@@ -506,6 +530,7 @@ function genSuburb(city) {
   const mainRow = city.n / 2; // horizontal road through the centre = Main St
   for (const r of blockRects.filter((b) => b.city === city)) {
     const { i, j } = r, ix0 = r.x0 + SW, ix1 = r.x1 - SW, iz0 = r.z0 + SW, iz1 = r.z1 - SW;
+    { const ov = siteOverrides.get(blockKey(r.city, r.i, r.j)); if (ov) { ov(r, { ix0: r.x0 + SW, ix1: r.x1 - SW, iz0: r.z0 + SW, iz1: r.z1 - SW }); continue; } }
     const bcx = (r.x0 + r.x1) / 2, bcz = (r.z0 + r.z1) / 2;
     propBuf.box(ix0, ix1, 0.15, 0.2, iz0, iz1, C.grass);
     const onMain = (j === mainRow - 1 || j === mainRow) && i >= 1 && i <= city.n - 2;
@@ -608,6 +633,7 @@ function genIndustrial(city) {
   citySkeleton(city);
   for (const r of blockRects.filter((b) => b.city === city)) {
     const { i, j } = r, ix0 = r.x0 + SW, ix1 = r.x1 - SW, iz0 = r.z0 + SW, iz1 = r.z1 - SW;
+    { const ov = siteOverrides.get(blockKey(r.city, r.i, r.j)); if (ov) { ov(r, { ix0: r.x0 + SW, ix1: r.x1 - SW, iz0: r.z0 + SW, iz1: r.z1 - SW }); continue; } }
     const bcx = (r.x0 + r.x1) / 2, bcz = (r.z0 + r.z1) / 2;
     propBuf.box(ix0, ix1, 0.15, 0.17, iz0, iz1, 0x5e5b58);
     const st = (x0, x1, z0, z1) => streetFaces(x0, x1, z0, z1, ix0, ix1, iz0, iz1);
@@ -923,12 +949,13 @@ function genCountryside() {
 // ---------------------------------------------------------------------
 export const lanes = [];
 export function generateWorld() {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000, 60, 60), new THREE.MeshLambertMaterial({ color: 0x5a7d45 }));
-  ground.rotation.x = -Math.PI / 2; ground.position.set(350, 0, 330);
-  scene.add(ground);
+  const gb = new GeoBuf();
+  for (const q of rectMinus({ x0: -2650, x1: 3350, z0: -2670, z1: 3330 }, groundHoles)) gb.flat(q.x0, q.x1, q.z0, q.z1, 0, 0x5a7d45);
+  gb.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   genMetro(PH); genSuburb(ASH); genIndustrial(DOCKS);
   for (const h of HIGHWAYS) genHighway(h);
   genCountryside();
+  for (const f of worldHooks.beforeBake) f();
   for (const f of Object.values(FAC)) f.buf.build(f.mat);
   roofBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   propBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
@@ -940,16 +967,18 @@ export function generateWorld() {
   lanes.push(...laneMap.values());
   buildBuckets();
   genParkour();
+  for (const f of worldHooks.afterBake) f();
 }
 
 // ---------------------------------------------------------------------
 // Parkour routes: ladders up the sides of buildings and ziplines between rooftops
 // ---------------------------------------------------------------------
-function placeLadder(buf, L) {
+export function placeLadder(buf, L) {
   const px = -L.nz, pz = L.nx; // along the wall
   for (const s of [-0.28, 0.28]) { const x = L.x + px * s, z = L.z + pz * s; buf.box(x - 0.04, x + 0.04, L.y0, L.y1 + 1, z - 0.04, z + 0.04, 0x3a3c42); }
   for (let y = L.y0 + 0.35; y < L.y1 + 0.9; y += 0.38) buf.beam([L.x - px * 0.28, y, L.z - pz * 0.28], [L.x + px * 0.28, y, L.z + pz * 0.28], 0.045, 0x5a5c62);
   ladders.push(L);
+  links.push({ a: { x: L.x + L.nx * 0.3, y: L.y0, z: L.z + L.nz * 0.3 }, b: { x: L.x - L.nx * 1.1, y: L.y1, z: L.z - L.nz * 1.1 }, kind: 'ladder', ladder: L });
 }
 function tryLadderOn(r, buf) {
   for (let t = 0; t < 8; t++) {
@@ -970,7 +999,7 @@ function genParkour() {
   for (const f of forcedLadders) placeLadder(buf, { x: f.x, z: f.z, nx: f.nx, nz: f.nz, y0: f.y0, y1: f.roof.h, roof: f.roof });
   const hasLadder = new Set(ladders.map((l) => l.roof));
   for (const r of roofs) {
-    if (r.house || r.stack || r.landmark || r.crane || r.catwalk || r.h < 4.5 || r.h > 45 || !r.city) continue;
+    if (r.house || r.stack || r.landmark || r.crane || r.catwalk || r.noLadder || r.h < 4.5 || r.h > 45 || !r.city) continue;
     const chance = r.city.style === 'metro' ? 0.35 : r.city.style === 'industrial' ? 0.55 : 0.6;
     if (srand() < chance && tryLadderOn(r, buf)) hasLadder.add(r);
   }
@@ -994,8 +1023,9 @@ function genParkour() {
       if (n >= cap[city.style]) break;
       if ((used.get(A) || 0) >= 2 || (used.get(B) || 0) >= 2) continue;
       const bcx = (B.x0 + B.x1) / 2, bcz = (B.z0 + B.z1) / 2, acx = (A.x0 + A.x1) / 2, acz = (A.z0 + A.z1) / 2;
-      const ax = clamp(bcx, A.x0 + 1.6, A.x1 - 1.6), az = clamp(bcz, A.z0 + 1.6, A.z1 - 1.6);
-      const bx = clamp(acx, B.x0 + 1.2, B.x1 - 1.2), bz = clamp(acz, B.z0 + 1.2, B.z1 - 1.2);
+      const ia = (lo, hi, k) => Math.min(k, (hi - lo) / 2);
+      const ax = clamp(bcx, A.x0 + ia(A.x0, A.x1, 1.6), A.x1 - ia(A.x0, A.x1, 1.6)), az = clamp(bcz, A.z0 + ia(A.z0, A.z1, 1.6), A.z1 - ia(A.z0, A.z1, 1.6));
+      const bx = clamp(acx, B.x0 + ia(B.x0, B.x1, 1.2), B.x1 - ia(B.x0, B.x1, 1.2)), bz = clamp(acz, B.z0 + ia(B.z0, B.z1, 1.2), B.z1 - ia(B.z0, B.z1, 1.2));
       const a = { x: ax, y: A.h + 3.3, z: az }, b = { x: bx, y: B.h + 2.2, z: bz };
       const len = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z), hd = Math.hypot(b.x - a.x, b.z - a.z);
       const slope = (a.y - b.y) / hd;
@@ -1012,7 +1042,7 @@ function genParkour() {
         }
       }
       if (!clear) continue;
-      if (!hasLadder.has(A) && !A.crane && !tryLadderOn(A, buf)) continue;
+      if (!hasLadder.has(A) && !A.crane && (A.noLadder || !tryLadderOn(A, buf))) continue;
       hasLadder.add(A);
       used.set(A, (used.get(A) || 0) + 1); used.set(B, (used.get(B) || 0) + 1); n++;
       ziplines.push({ a, b, len, hd, dx: (b.x - a.x) / len, dy: (b.y - a.y) / len, dz: (b.z - a.z) / len, A, B });
@@ -1034,6 +1064,16 @@ export function ladderNear(x, z, y, r = 0.75) {
     if (Math.abs(dx) > 1.5 || Math.abs(dz) > 1.5) continue;
     const along = Math.abs(dx * -L.nz + dz * L.nx), out = dx * L.nx + dz * L.nz;
     if (along < 0.55 && out > -0.2 && out < r && y >= L.y0 - 0.6 && y < L.y1 - 0.3) return L;
+  }
+  return null;
+}
+// standing at the top of a ladder, walking toward the drop: climb down onto it
+export function ladderTopNear(x, z, y) {
+  for (const L of ladders) {
+    const dx = x - L.x, dz = z - L.z;
+    if (Math.abs(dx) > 2 || Math.abs(dz) > 2 || Math.abs(y - L.y1) > 0.35) continue;
+    const along = Math.abs(dx * -L.nz + dz * L.nx), out = dx * L.nx + dz * L.nz;
+    if (along < 0.6 && out > -1.7 && out < -0.3) return L;
   }
   return null;
 }
@@ -1069,7 +1109,7 @@ export function bucketAt(x, z) {
 export const STEP = 0.4; // anything lower than this above your feet you just walk onto
 // does collider c block a body whose feet are at feetY and is `tall` metres tall?
 export function blocksBody(c, feetY, tall) {
-  if (c.water) return feetY < c.h + 0.3;
+  if (c.water) return feetY < c.h + 0.3 && feetY > -1;
   return c.h > feetY + STEP && c.y0 < feetY + tall;
 }
 export function resolveCircle(p, r) { return resolveBody(p, r, 0, 2); }
@@ -1093,8 +1133,9 @@ export function resolveBody(p, r, feetY, tall = 1.8) {
   return hit;
 }
 // highest surface you could be standing on at (x, z) given your feet are at feetY (snaps up small steps)
+export const DEEP = -60;
 export function floorAt(x, z, feetY, r = 0.25) {
-  let f = groundY(x, z);
+  let f = feetY < -0.6 ? DEEP : groundY(x, z);
   for (const c of bucketAt(x, z)) {
     if (c.water || c.h > feetY + STEP || c.h <= f) continue;
     if (x + r < c.x0 || x - r > c.x1 || z + r < c.z0 || z - r > c.z1) continue;
@@ -1122,6 +1163,7 @@ export function headroom(x, z, y, tall = 1.8) {
   return true;
 }
 export function pointBlocked(x, z, pad = 0.3) {
+  if (inHole(x, z)) return true;
   if (x < WORLD.minX || x > WORLD.maxX || z < WORLD.minZ || z > WORLD.maxZ) return true;
   for (const c of bucketAt(x, z)) if (blocksBody(c, 0, 1.8) && x >= c.x0 - pad && x <= c.x1 + pad && z >= c.z0 - pad && z <= c.z1 + pad) return true;
   return false;
@@ -1132,6 +1174,7 @@ export function maxHeightNear(x, z) {
   return h;
 }
 export function groundY(x, z) {
+  if (groundHoles.length && inHole(x, z)) return DEEP;
   const c = cityAt(x, z);
   if (!c) return 0;
   const lx = x - (c.cx - c.half), lz = z - (c.cz - c.half);
