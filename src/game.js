@@ -18,6 +18,7 @@ import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers }
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
 import { atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
+import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
 
 const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
 
@@ -32,7 +33,7 @@ const G = {
   kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 25, heartT: 0, overT: 0, airT: 0,
   shake: 0, hurtFlash: 0, msgT: 0,
   heat: 0, level: 0, lkp: { x: 0, z: 0 }, lastSeenT: 99, airTracking: 0, airAlertT: 0, spottedMsgT: 0,
-  locale: '', localeT: 0, allies: [], drops: [], getUps: [], contract: null, offers: [], offersDay: 0, hitstopT: 0, fovKick: 0, fireHeld: false,
+  locale: '', localeT: 0, allies: [], drops: [], getUps: [], contract: null, offers: [], offersDay: 0, safe: null, inSafe: null, napDay: 0, sleepT: 0, hitstopT: 0, fovKick: 0, fireHeld: false,
 };
 // weapons: the pistol you start with, plus whatever the gun shops will sell you
 const WEAPONS = {
@@ -569,6 +570,11 @@ function zipStartNear() {
 function useAction() {
   if (player.car) { exitCar(); return; }
   if (player.mode === 'zip') { input.jumpEdge = true; return; }
+  const door = player.mode === 'move' ? safeDoorNear(player.x, player.y, player.z) : null;
+  if (door && !door.owned) { rentSafehouse(door); return; }
+  const sspot = G.inSafe && G.inSafe.owned && player.mode === 'move' ? safeSpotNear(G.inSafe, player.x, player.z) : null;
+  if (sspot === 'bed') { napInSafehouse(); return; }
+  if (sspot === 'stash') { raidStash(G.inSafe); return; }
   const shop = player.mode === 'move' ? shopNear(player.x, player.y, player.z) : null;
   if (shop) { tryOpenShop(shop); return; }
   const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
@@ -1412,6 +1418,12 @@ function drawMinimap() {
     mm.fillRect(-1.1, -2.3, 2.2, 4.6); mm.restore();
   }
   for (const sp of shopSpots) { mm.fillStyle = sp.kind === 'guns' ? '#ff9a2a' : sp.kind === 'hire' ? '#4aa0ff' : '#ff5ac8'; const k = (big ? 6 : 4) / sc * 0.9; mm.fillRect(sp.x - k, sp.z - k, k * 2, k * 2); }
+  for (const S of safehouses) {
+    const cx = (S.x0 + S.x1) / 2, cz = (S.z0 + S.z1) / 2, k = (big ? 7 : 5) / sc;
+    mm.fillStyle = !S.owned ? '#9a9aa6' : S.burnedDay === G.day ? '#ff5a4a' : '#ffffff';
+    mm.fillRect(cx - k, cz - k * 0.2, k * 2, k * 1.2);
+    mm.beginPath(); mm.moveTo(cx - k * 1.3, cz - k * 0.2); mm.lineTo(cx, cz - k * 1.3); mm.lineTo(cx + k * 1.3, cz - k * 0.2); mm.closePath(); mm.fill();
+  }
   mm.fillStyle = '#9affb0'; for (const a of atmSpots) mm.fillRect(a.x - 1.6 / sc, a.z - 1.6 / sc, 3.2 / sc, 3.2 / sc);
   mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
   const dot = Math.max(1.8, 2.2 / sc);
@@ -1468,7 +1480,9 @@ function updateHUD(dt) {
   hud.time.textContent = fmtTime(G.elapsed) + ' survived';
   hud.kills.textContent = G.kills ? G.kills + (G.kills === 1 ? ' takedown' : ' takedowns') : '';
   const chasing = G.hunters.filter((h) => !h.dead && h.state === 'chase').length + G.cars.filter((c) => c.driver === 'hunter').length;
-  if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR'; hud.alert.className = 'hot'; }
+  if (G.safe) { hud.alert.textContent = 'SAFEHOUSE · LYING LOW'; hud.alert.className = 'calm'; }
+  else if (G.inSafe && G.inSafe.owned) { hud.alert.textContent = 'SAFEHOUSE BURNED'; hud.alert.className = 'hot'; }
+  else if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR'; hud.alert.className = 'hot'; }
   else if (chasing) { hud.alert.textContent = `${chasing} HUNTING YOU`; hud.alert.className = 'hot'; }
   else if (G.lastSeenT > 10) { hud.alert.textContent = 'HIDDEN'; hud.alert.className = 'calm'; }
   else { hud.alert.textContent = 'THEY LOST SIGHT OF YOU'; hud.alert.className = 'warm'; }
@@ -1489,12 +1503,15 @@ function updateHUD(dt) {
   if (player.car) prompt = Math.abs(player.car.speed) > 6 ? '' : (isTouch ? 'Tap CAR to get out' : 'Press E to get out');
   else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
   else if (player.mode === 'ladder') prompt = isTouch ? 'Push forward to climb, JUMP to let go' : 'W / S to climb, Space to let go';
+  else if (safeDoorNear(player.x, player.y, player.z) && !safeDoorNear(player.x, player.y, player.z).owned) { const S = safeDoorNear(player.x, player.y, player.z); prompt = `${isTouch ? 'Tap USE' : 'Press E'} to rent ${S.name} for $${S.price}`; }
+  else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'bed') prompt = G.napDay === G.day ? 'You already napped today' : `${isTouch ? 'Tap USE' : 'Press E'} to nap (skips 5 hours)`;
+  else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'stash') prompt = G.inSafe.stashDay === G.day ? 'Stash is empty. Back tomorrow' : `${isTouch ? 'Tap USE' : 'Press E'} to raid the stash`;
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
   else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
   else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
-  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
+  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
 }
 
 // =====================================================================
@@ -1542,7 +1559,7 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   let p = null;
   for (let t = 0; t < 12 && !p; t++) {
     const c = randomOpenPoint(tp.x, tp.z, minD, maxD, 4);
-    if (c && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
+    if (c && !safeAt(c.x, 0, c.z) && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
   }
   if (!p) return;
   const r = Math.random(), copChance = G.level >= 2 ? (G.level - 1) * 0.08 : 0;
@@ -1585,6 +1602,8 @@ function resetGame() {
   showWeaponModel(); updateOutfitView();
   Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false, hitstopT: 0, fovKick: 0, fireHeld: false });
   G.lkp = { x: 0, z: 0 };
+  for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
+  Object.assign(G, { safe: null, inSafe: null, napDay: 0, sleepT: 0 });
   spawnTraffic(70);
   navRecenter(0, 0, true); computeFlow(0, 0);
   for (let i = 0; i < targetHunters(); i++) spawnHunter(40, 170);
@@ -1599,6 +1618,7 @@ function startGame() {
   if (isTouch) $('touch').classList.remove('hidden');
   lockPointer();
   showBanner(`DAY 1<small>EVERYONE IS AFTER THE BOUNTY ON YOUR HEAD</small>`, 3.5);
+  showMsg("NAN'S OLD FLAT IS THE WHITE HOUSE ON YOUR MAP. GET IN UNSEEN TO LIE LOW", 5);
 }
 function pauseGame() {
   if (G.mode !== 'playing') return;
@@ -1771,6 +1791,73 @@ function updateCamera(dt, t) {
   }
   armR.rotation.set(pose[0], pose[1], pose[2]); armR.position.x = pose[3]; armR.position.y = pose[4];
 }
+// ---------------------------------------------------------------------
+// safehouses: get in unseen and lie low
+// ---------------------------------------------------------------------
+const NAP_LINES = ['YOU SLEPT LIKE A BABY. A HUNTED BABY.', 'FIVE HOURS OF DREAMLESS PANIC. REFRESHING.', 'YOU NAPPED. THE CITY CALMED DOWN A BIT.'];
+const sleepEl = $('sleep');
+function seenGoingIn() {
+  if (G.airTracking) return true;
+  return G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS && Math.hypot(h.x - player.x, h.z - player.z) < 55);
+}
+function burnSafehouse(S, msg) {
+  S.burnedDay = G.day; G.safe = null;
+  reportSighting(S.door.x, S.door.z); alertAround(S.door.x, S.door.z, 80, 2); addHeat(8);
+  showMsg(msg, 3); sfx.alarm();
+}
+function updateSafehouse(dt) {
+  const S = player.car || !player.alive ? null : safeAt(player.x, player.y, player.z);
+  if (S && S !== G.inSafe) {
+    if (!S.owned) showMsg(`NOT YOURS. RENT IT AT THE DOOR FOR $${S.price}`, 2.5);
+    else if (S.burnedDay === G.day) showMsg('THIS PLACE IS BURNED UNTIL TOMORROW', 2.5);
+    else if (seenGoingIn()) burnSafehouse(S, 'THEY SAW YOU GO IN. THIS PLACE IS BURNED');
+    else {
+      showMsg(`${S.name}. SAFE. LIE LOW.`, 2.5); sfx.pickup();
+      for (const h of G.hunters) if (!h.dead && h.state === 'chase' && !h.hasLOS) { h.state = 'search'; h.wt = null; h.alertT = -1; }
+    }
+  }
+  G.inSafe = S;
+  G.safe = S && S.owned && S.burnedDay !== G.day ? S : null;
+  if (!G.safe) return;
+  if (G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS && Math.hypot(h.x - player.x, h.z - player.z) < 40)) { burnSafehouse(S, 'THEY FOUND YOU. THIS PLACE IS BURNED'); return; }
+  G.heat -= dt * 9; G.pingT += dt; // nobody leaks where you are while you're tucked away
+  if (player.alive) player.hp = Math.min(100, player.hp + 5 * dt);
+}
+function rentSafehouse(S) {
+  if (player.cash < S.price) { showMsg(`YOU NEED $${S.price - player.cash} MORE FOR ${S.name}`, 2.5); return; }
+  player.cash -= S.price; S.owned = true; sfx.cash();
+  showBanner(`${S.name}<small>${S.blurb.toUpperCase()}</small>`, 3);
+}
+function raidStash(S) {
+  if (S.stashDay === G.day) { showMsg('EMPTY. THE STASH REFILLS TOMORROW', 2); return; }
+  S.stashDay = G.day;
+  player.ammo.pistol.res = Math.min(WEAPONS.pistol.maxRes, player.ammo.pistol.res + 24);
+  player.cash += 15; player.hp = Math.min(100, player.hp + 30); sfx.cash();
+  showMsg('STASH: 24 ROUNDS, $15 AND A SLIGHTLY OLD SANDWICH', 3);
+}
+function napInSafehouse() {
+  const S = G.safe;
+  if (!S) { showMsg("YOU CAN'T SLEEP HERE. THEY KNOW ABOUT IT", 2.2); return; }
+  if (G.napDay === G.day) { showMsg('YOU ALREADY NAPPED TODAY. TOO WIRED TO SLEEP', 2.2); return; }
+  if (G.hunters.some((h) => !h.dead && h.state === 'chase' && Math.hypot(h.x - player.x, h.z - player.z) < 45)) { showMsg("YOU CAN'T SLEEP WITH THEM THIS CLOSE", 2.2); return; }
+  G.napDay = G.day; G.sleepT = 2.2; sleepEl.classList.add('show');
+  const h0 = G.hour;
+  for (let i = 0; i < 2000; i++) { G.elapsed += 0.25; if ((hourAt(G.elapsed) - h0 + 24) % 24 >= 5) break; }
+  player.hp = 100; player.stam = 100; player.exhausted = false;
+  G.heat -= 70; G.lastSeenT = 99; G.pingT = Math.max(G.pingT, 30);
+  // the more famous you are, the likelier someone tips them off while you snore
+  if (Math.random() < 0.08 + G.level * 0.08) {
+    S.burnedDay = Math.floor(G.elapsed / CFG.dayLength) + 1;
+    const n = 3 + G.level;
+    for (let k = 0; k < n; k++) {
+      const p = randomOpenPoint(S.door.x, S.door.z + 6, 2, 9);
+      if (p) G.hunters.push(new Hunter(p.x, p.z, mpick(['civ', 'civ', 'runner', 'brute']), Math.random() < 0.2, 'chase'));
+    }
+    reportSighting(S.door.x, S.door.z);
+    showMsg('YOU WOKE UP TO KNOCKING. LOTS OF KNOCKING.', 3.5); sfx.alarm();
+  } else showMsg(mpick(NAP_LINES), 3);
+}
+
 function updateDirector(dt) {
   G.hour = hourAt(G.elapsed);
   const day = Math.floor(G.elapsed / CFG.dayLength) + 1;
@@ -1883,11 +1970,13 @@ function simulate(dt, t) {
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
+    updateSafehouse(dt);
     updateGetUps(dt); updateDrops(dt, t); updateContract(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
     if (!player.alive) { G.overT -= dt; if (G.overT <= 0 && G.mode === 'playing') endGame(false); }
     updateHUD(dt);
+    if (G.sleepT > 0) { G.sleepT -= dt; if (G.sleepT <= 0) sleepEl.classList.remove('show'); }
   } else if (G.mode === 'menu') {
     G.hour = 18.2;
     for (const c of G.cars) c.update(dt);
@@ -1909,4 +1998,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { safehouses, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

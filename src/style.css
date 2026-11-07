@@ -167,3 +167,7 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 #outfit.o-tache .tache { display: block; left: 50%; bottom: -4vh; width: 36vw; height: 10vh; transform: translateX(-50%); border-radius: 50% 50% 40% 40%; background: #3a2412; filter: blur(7px); }
 #outfit.o-beard .beard { display: block; left: 50%; bottom: -10vh; width: 60vw; height: 22vh; transform: translateX(-50%); border-radius: 50%; background: #d8d8d8; filter: blur(8px); }
 .is-touch #outfit .tache, .is-touch #outfit .beard, .is-touch #outfit .nose { opacity: .7; }
+#sleep { position: absolute; inset: 0; background: #05060a; opacity: 0; pointer-events: none; transition: opacity .5s; display: flex; align-items: center; justify-content: center; z-index: 5; }
+#sleep.show { opacity: 1; transition: opacity .25s; }
+#sleep span { color: #c8d0ff; font: bold 64px Arial, sans-serif; letter-spacing: 12px; animation: zzz 1.2s ease-in-out infinite alternate; }
+@keyframes zzz { from { transform: translateY(6px); opacity: .5; } to { transform: translateY(-6px); opacity: 1; } }
