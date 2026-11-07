@@ -1,13 +1,13 @@
 // Parkour: running, jumping, sliding, vaulting low cover, mantling ledges, climbing walls and ladders,
 // and riding ziplines between rooftops. Works on a player-like body {x, y (feet), z, vx, vy, vz, yaw}.
 import { clamp, lerp } from './core.js';
-import { resolveBody, floorAt, stackTop, headroom, ladderNear, ladderTopNear, zipNear, groundY } from './world.js';
+import { resolveBody, floorAt, stackTop, headroom, ladderNear, ladderTopNear, zipNear, groundY, bucketAt } from './world.js';
 import { sfx } from './audio.js';
 
 const GRAV = 22, JUMP_V = 7.4;
 
 export function resetParkour(P) {
-  Object.assign(P, { mode: 'move', anim: null, ladder: null, zip: null, zipS: 0, zipV: 0, slideT: 0, slideCd: 0, landDip: 0, rollT: 0, grounded: true, crouch: 0, wallRunCd: 0, jumpHeld: false, airT: 0, peakY: 0 });
+  Object.assign(P, { mode: 'move', anim: null, ladder: null, zip: null, zipS: 0, zipV: 0, slideT: 0, slideCd: 0, landDip: 0, rollT: 0, grounded: true, crouch: 0, wallRunCd: 0, jumpHeld: false, airT: 0, peakY: 0, climbN: null, climbCd: 0 });
 }
 export function eyeHeight(P) {
   if (P.mode === 'zip') return -0.35 + 1.9; // hanging under the cable
@@ -75,6 +75,7 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
     }
     return;
   }
+  if (P.mode === 'climb') { climbStep(dt, P, inp, cb, fx, fz); return; }
   if (P.mode === 'ladder') {
     const L = P.ladder;
     P.x = L.x + L.nx * 0.05; P.z = L.z + L.nz * 0.05; P.vx = P.vz = 0;
@@ -126,7 +127,9 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
   if (hit && inp.fwd > 0) {
     const moved = Math.hypot(P.x - ox, P.z - oz) / Math.max(dt, 1e-4);
     if (moved < Math.hypot(P.vx, P.vz) * 0.85 && tryLedge(P, fx, fz, inp, sprint, cb)) return;
+    if ((inp.jump || !P.grounded) && P.climbCd <= 0 && cb.stamina() > 8 && startClimb(P, fx, fz)) return;
   }
+  P.climbCd -= dt;
   // ladders: walk into one to grab it
   if (inp.fwd > 0) {
     const L = ladderNear(P.x, P.z, P.y);
@@ -140,7 +143,13 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
     if (g) { P.mode = 'zip'; P.zip = g.zip; P.zipS = g.s; P.zipV = Math.max(4, Math.hypot(P.vx, P.vz) * 0.7); sfx.climb(); return; }
   }
   // jump
-  if (P.grounded && inp.jump && P.slideT <= 0) { P.vy = JUMP_V; P.grounded = false; P.peakY = P.y; }
+  if (P.grounded && inp.jump && P.slideT <= 0) {
+    P.vy = JUMP_V; P.grounded = false; P.peakY = P.y;
+    // a running leap goes further, and further still off a rooftop, so gaps between buildings are clearable
+    const hs = Math.hypot(P.vx, P.vz);
+    if (sprint && hs > 5) { const k = P.y > 2.5 ? 1.32 : 1.15; P.vx *= k; P.vz *= k; P.vy += P.y > 2.5 ? 1.2 : 0.4; P.longJump = true; }
+  }
+  if (!P.grounded && P.longJump) { const acc = Math.min(1, dt * 1.2); P.vx = lerp(P.vx, P.vx + mx * 2.5, acc); P.vz = lerp(P.vz, P.vz + mz * 2.5, acc); }
   // vertical
   const prevY = P.y;
   P.vy -= GRAV * dt;
@@ -153,16 +162,65 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
     P.y = floor; P.vy = 0;
     if (!P.grounded) {
       P.landDip = Math.min(1, impact / 16);
-      if (drop > 5.5 && impact > 13) {
+      if (drop > 7 && impact > 15) {
         const rolled = inp.crouch;
-        const dmg = Math.round((impact - 12) * (rolled ? 1.6 : 4.5));
+        const dmg = Math.round((impact - 14) * (rolled ? 1.0 : 3.5));
         if (rolled) { P.rollT = 0.5; sfx.roll(); } else sfx.land(1);
         if (dmg > 0) cb.hurt(dmg, rolled);
       } else if (impact > 6) sfx.land(impact / 16);
     }
-    P.grounded = true; P.peakY = P.y; P.airT = 0;
+    P.grounded = true; P.peakY = P.y; P.airT = 0; P.longJump = false;
   } else {
     if (P.grounded && P.vy <= 0 && P.y - floor > 0.5) P.peakY = P.y; // walked off an edge
     P.grounded = false; P.airT += dt; P.peakY = Math.max(P.peakY, P.y);
   }
+}
+
+// ---- wall climbing: hold forward into a wall and jump to scramble up it hand over hand, as long as you
+// have the stamina. Ledges, balconies and fire escape landings above you are grabbed on the way.
+const CLIMB_V = 3.4;
+function startClimb(P, fx, fz) {
+  const nx = Math.abs(fx) > Math.abs(fz) ? -Math.sign(fx) : 0, nz = nx ? 0 : -Math.sign(fz); // wall normal, toward us
+  const wx = P.x - nx * 0.7, wz = P.z - nz * 0.7;
+  const top = stackTop(wx, wz, P.y);
+  if (top < P.y + 1.2) return false; // nothing tall enough to need climbing
+  P.mode = 'climb'; P.airT = 0; P.climbN = { x: nx, z: nz }; P.vx = P.vz = 0; P.vy = 0; P.slideT = 0;
+  return true;
+}
+function climbStep(dt, P, inp, cb, fx, fz) {
+  const N = P.climbN, wx = P.x - N.x * 0.7, wz = P.z - N.z * 0.7;
+  P.crouch = Math.max(0, P.crouch - dt * 4);
+  const facing = fx * -N.x + fz * -N.z;
+  // let go: jump kicks you off the wall (handy in alleys to reach the opposite wall), crouch drops
+  if (inp.jumpEdge && P.airT > 0.15 || inp.crouch || facing < 0.2) {
+    P.mode = 'move'; P.grounded = false; P.peakY = P.y; P.climbCd = 0.4;
+    if (inp.jumpEdge) { P.vy = 6.2; P.vx = N.x * 6; P.vz = N.z * 6; }
+    return;
+  }
+  P.airT += dt;
+  const top = stackTop(wx, wz, P.y - 0.2);
+  // reached the top: pull yourself over
+  if (top < 0 || top - P.y < 1.6) {
+    const t = top < 0 ? P.y : top, tx = P.x - N.x * 1.0, tz = P.z - N.z * 1.0;
+    if (headroom(tx, tz, t, 1.7)) { P.mode = 'mantle'; P.anim = { t: 0, dur: 0.38, fx: P.x, fy: P.y, fz: P.z, tx, ty: t, tz, peak: t }; P.vy = 0; sfx.climb(); return; }
+  }
+  // something overhead (a balcony or landing sticking out): grab it and climb onto it
+  if (!headroom(P.x, P.z, P.y, 2.0)) {
+    for (const c of bucketAt(P.x, P.z)) {
+      if (c.water || c.y0 < P.y + 1.4 || c.y0 > P.y + 2.4 || P.x < c.x0 - 0.3 || P.x > c.x1 + 0.3 || P.z < c.z0 - 0.3 || P.z > c.z1 + 0.3) continue;
+      const tx = Math.min(Math.max(P.x, c.x0 + 0.35), c.x1 - 0.35), tz = Math.min(Math.max(P.z, c.z0 + 0.35), c.z1 - 0.35);
+      if (headroom(tx, tz, c.h, 1.7)) { P.mode = 'mantle'; P.anim = { t: 0, dur: 0.42, fx: P.x, fy: P.y, fz: P.z, tx, ty: c.h, tz, peak: c.h }; P.vy = 0; sfx.climb(); return; }
+    }
+    P.mode = 'move'; P.grounded = false; P.peakY = P.y; P.climbCd = 0.6; return;
+  }
+  const up = inp.fwd > 0 ? 1 : inp.fwd < 0 ? -1 : 0;
+  if (up > 0) { P.y += CLIMB_V * dt; cb.useStamina(28 * dt); cb.stepSound(dt * 2.5); }
+  else if (up < 0) { P.y -= CLIMB_V * 1.6 * dt; }
+  else { P.y -= 0.35 * dt; cb.useStamina(12 * dt); }
+  P.x += (-N.x * 0.5 + (inp.side ? 0 : 0)) * dt; P.z += -N.z * 0.5 * dt; // hug the wall
+  resolveBody(P, 0.4, P.y, 1.8);
+  P.vx = P.vz = P.vy = 0;
+  const floor = floorAt(P.x, P.z, P.y + 0.1);
+  if (P.y <= floor) { P.y = floor; P.mode = 'move'; P.grounded = true; P.climbCd = 0.3; return; }
+  if (cb.stamina() <= 0) { P.mode = 'move'; P.grounded = false; P.peakY = P.y; P.climbCd = 1.2; } // arms give out
 }
