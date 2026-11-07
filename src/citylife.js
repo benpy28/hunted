@@ -171,8 +171,8 @@ export function routineWants(hr) {
 function pickWant(w) { let t = 0; for (const k in w) t += w[k]; let r = Math.random() * t; for (const k in w) { r -= w[k]; if (r <= 0) return k; } return null; }
 // a straight walk with nothing solid in the way
 function lifeSegClear(ax, az, bx, bz) {
-  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / 0.5));
-  for (let i = 1; i < n; i++) { const t = i / n; if (pointBlocked(ax + (bx - ax) * t, az + (bz - az) * t, 0.3)) return false; }
+  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / 0.35));
+  for (let i = 0; i <= n; i++) { const t = i / n; if (pointBlocked(ax + (bx - ax) * t, az + (bz - az) * t, 0.42)) return false; }
   return true;
 }
 // somewhere to stand inside a walk-in that you can walk to straight from the door
@@ -191,9 +191,9 @@ export function routineVisit(h, want, C) {
     let best = null, bd = 160;
     for (const Wh of warehouses) { const d = Math.abs(Wh.rect.x0 + Wh.rect.x1 - 2 * h.x) / 2 + Math.abs(Wh.rect.z0 + Wh.rect.z1 - 2 * h.z) / 2; if (d < bd) { bd = d; best = Wh; } }
     if (!best) return false;
-    const door = best.doors[Math.floor(Math.random() * best.doors.length)];
+    let door = best.doors[0]; for (const o of best.doors) if (Math.hypot(o.ox - h.x, o.oz - h.z) < Math.hypot(door.ox - h.x, door.oz - h.z)) door = o;
     const spots = best.spots.filter((q) => q.y < 1 && !q.taken);
-    for (let t = 0; t < 4 && spots.length; t++) {
+    for (let t = 0; t < 8 && spots.length; t++) {
       const q = spots[Math.floor(Math.random() * spots.length)];
       if (!lifeSegClear(door.x, door.z, q.ex, q.ez) || !lifeSegClear(q.ex, q.ez, q.x, q.z)) continue;
       q.taken = h;
@@ -288,6 +288,7 @@ export function lifeStep(h, dt, C) {
       if (A.phase === 'go') { if (A.ri < A.route.length - 1) A.ri++; else { A.phase = 'do'; A.t = 0; if (A.kind === 'home') { h.inside = true; h.g.visible = false; } } }
       else { if (A.ri > 0) A.ri--; else { endLife(h); return null; } }
     }
+    A.straight = A.phase === 'go' ? A.ri > 0 : A.ri < A.route.length - 1; // past the front door: straight lines, already checked clear
     if (A.phase !== 'do') { const [qx, qz] = A.route[A.ri]; if (!h.wt || h.wt.x !== qx || h.wt.z !== qz) h.wt = { x: qx, z: qz }; return 'walk'; }
   }
   if (A.phase === 'go') {

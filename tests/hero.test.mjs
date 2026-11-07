@@ -45,10 +45,14 @@ test('boredom creeps up when nothing is happening', async () => {
 test('stare at someone long enough and they crumble', async () => {
   const s = await g.run((H) => {
     for (const V of H.villains) { V.state = 'gone'; V.downT = 0; V.g.visible = false; }
+    // stand on an open pavement at street level (the start point can be on a roof or by a ledge, where the
+    // person you stare at would end up below your line of sight)
+    const b = H.lifeSpots.find((L) => L.kind === 'bench' && H.floorAt(L.x, L.z, 1) < 0.5);
+    if (b) { H.player.x = b.x; H.player.z = b.z; H.player.y = H.floorAt(b.x, b.z, 1); H.player.flying = false; H.player.vx = H.player.vz = H.player.vy = 0; }
     const x = H.player.x, z = H.player.z, y = H.player.y;
     for (const o of H.G.hunters) if (Math.hypot(o.x - x, o.z - z) < 45) o.remove();
     // pick a side with a clear view (the player may be standing next to a wall)
-    const [ox, oz] = [[0, 8], [0, -8], [8, 0], [-8, 0], [6, 6], [-6, -6]].find(([a, b]) => H.losSolid(x, y + 1.6, z, x + a, y + 1.6, z + b)) || [0, 8];
+    const [ox, oz] = [[0, 8], [0, -8], [8, 0], [-8, 0], [6, 6], [-6, -6]].find(([a, b]) => Math.abs(H.floorAt(x + a, z + b, y + 1) - y) < 0.3 && H.losSolid(x, y + 1.6, z, x + a, y + 1.6, z + b)) || [0, 8];
     const h = new H.Hunter(x + ox, z + oz, 'civ', false); h.y = y; H.G.hunters.push(h);
     let crumbled = false;
     for (let i = 0; i < 120 && !crumbled; i++) { h.x = x + ox; h.z = z + oz; h.inside = false; H.camera.position.set(x, y + 1.6, z); H.camera.lookAt(h.x, h.y + 1.6, h.z); H.camera.updateMatrixWorld(); H.step(1 / 30); crumbled = !!h.crumbled; }

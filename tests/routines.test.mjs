@@ -29,11 +29,11 @@ const OUTING = (H, { want, kind, home }) => {
     const P = h.act.W; h.x = P.path[0][0]; h.z = P.path[0][1]; // they pick the nearest place of that kind: start them at its door
     const r = P.rect, inRect = () => h.x > r.x0 && h.x < r.x1 && h.z > r.z0 && h.z < r.z1;
     let doing = null;
-    for (let i = 0; i < 40 * 10 && !doing; i++) { H.step(0.1); h.panicT = 0; if (h.act && h.act.phase === 'do') doing = { inside: inRect(), visible: h.g.visible, hidden: !!h.inside, cup: !!(h.cup && h.cup.visible), kind: h.act.kind }; if (!h.act) break; }
+    for (let i = 0; i < 40 * 10 && !doing; i++) { H.step(0.1); h.panicT = 0; H.G.heat = 0; H.player.hp = 100; if (h.act && h.act.phase === 'do') doing = { inside: inRect(), visible: h.g.visible, hidden: !!h.inside, cup: !!(h.cup && h.cup.visible), kind: h.act.kind }; if (!h.act) break; }
     if (!doing) return { fail: 'never got there', W: P.name };
     h.act.dur = h.act.t + 0.2;
     let out = false;
-    for (let i = 0; i < 40 * 10 && !out; i++) { H.step(0.1); h.panicT = 0; if (!h.act) out = true; }
+    for (let i = 0; i < 40 * 10 && !out; i++) { H.step(0.1); h.panicT = 0; H.G.heat = 0; H.player.hp = 100; if (!h.act) out = true; }
     return { ...doing, left: out && !inRect(), visibleAfter: h.g.visible };
   }
   return { fail: 'no place' };
@@ -64,7 +64,7 @@ test('dock workers go into the warehouses for a shift', async () => {
       H.navRecenter(d.ox, d.oz, true);
       const h = new H.Hunter(d.ox, d.oz, 'civ', false, 'search'); h.job = null; H.G.hunters.push(h);
       if (!H.cityLifeDebug.routineVisit(h, 'work', H.LIFE) || h.act.wh !== Wh) { h.remove(); H.G.hunters.length = 0; continue; }
-      for (let i = 0; i < 400; i++) { H.step(0.1); h.panicT = 0; if (!h.act || h.act.phase === 'do') break; }
+      for (let i = 0; i < 400; i++) { H.step(0.1); h.panicT = 0; H.G.heat = 0; H.player.hp = 100; if (!h.act || h.act.phase === 'do') break; }
       const z = H.zoneAt(h.x, h.y + 0.5, h.z);
       return { doing: h.act && h.act.phase === 'do', kind: h.act && h.act.kind, inWarehouse: !!(z && z.warehouse) };
     }

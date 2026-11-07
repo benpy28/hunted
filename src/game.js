@@ -318,6 +318,7 @@ class Hunter {
           if (this.begT <= 0) { this.begT = mr(2.5, 5); const line = mpick(BEG_LINES); say(this, line); if (line === 'TAKE MY WALLET!') maybeDropCash(this); if (Math.random() < 0.4) sfx.scream(); }
         }
       }
+      if ((this.cowerT > 0 || this.panicT > 0) && (this.act || this.inside)) lifeInterrupt(this); // scared: drop whatever they were doing, right now
       if (this.cowerT > 0) { this.waitT = 0; this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 6); }
       else if (this.panicT > 0) { // run for it, arms flailing
         this.panicT -= dt;
@@ -338,7 +339,7 @@ class Hunter {
       if (!this.wt) this.wt = { x: this.x, z: this.z };
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
-      if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
+      if (!(lifeMode === 'walk' && this.act && this.act.straight) && !los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } } // a checked-clear route leg indoors walks straight: the coarse grid can't see the gaps between shelves
       if (!(this.panicT > 0) && !(this.cowerT > 0)) {
       const w = this.waitT > 0 || lifeMode === 'hold' ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1) * (this.walkK || 1);
       tvx = ox * w; tvz = oz * w;
