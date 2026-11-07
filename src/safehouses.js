@@ -5,6 +5,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { textTex, scene } from './core.js';
 import { CITIES, siteOverrides, blockKey, addRoof, roofBuf, propBuf, glowBuf, parapet, addTree, addCollider, building } from './world.js';
 import { solid, sign, lamp, ib, floorB } from './interiors.js';
+import { newsMat } from './news.js';
 
 export const safehouses = []; // {name, city, price, x0,x1,z0,z1 (inside), door, bed, stash, tv, owned, burnedDay, stashDay}
 export const safeTVs = [];    // screen meshes, so the news can play on them
@@ -14,7 +15,7 @@ const HIDEOUTS = [
   { city: CITIES[1], i: 4, j: 4, name: 'THE SHED', price: 60, wall: 0x6a7a4a, blanket: 0x3a8ae0, blurb: "It's a shed. It has a bed in it. Don't ask." },
   { city: CITIES[2], i: 3, j: 3, name: 'THE BOAT SHED', price: 90, wall: 0x3a5a7a, blanket: 0xe0b030, blurb: 'No boat. Plenty of shed.' },
 ];
-const tvMat = new THREE.MeshBasicMaterial({ map: textTex(256, 160, '#0a1830', '#9ad0ff', ['CHANNEL 9', 'PLEASE STAND BY'], 'bold 26px Arial, sans-serif') });
+const tvMat = newsMat; // Channel 9, always on
 export const safeTvMat = tvMat;
 
 for (const S of HIDEOUTS) {

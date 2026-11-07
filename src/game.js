@@ -19,6 +19,7 @@ import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } f
 import { atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
+import { updateNews, newsTex } from './news.js';
 import { WX, WX_NAMES, FESTIVALS, updateWeather, applyWeatherLook, resetWeather, forceWeather } from './weather.js';
 
 const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
@@ -1392,7 +1393,7 @@ function putOnDisguise() {
 function wearDisguise(n) {
   if (player.disg <= 0) return;
   player.disg = Math.max(0, player.disg - n);
-  if (player.disg === 0) { showMsg('THEY\'VE CLOCKED YOUR DISGUISE', 2.4); updateOutfitView(); }
+  if (player.disg === 0) { showMsg('THEY\'VE CLOCKED YOUR DISGUISE', 2.4); updateOutfitView(); G.newsLook = { ...player.outfit }; } // the sketch on the news gets updated
 }
 const outfitEl = $('outfit');
 function updateOutfitView() {
@@ -1797,7 +1798,7 @@ function resetGame() {
 }
 function startGame(sup = G.super) {
   G.super = !!sup;
-  initAudio(); resetGame(); resetWeather();
+  initAudio(); resetGame(); resetWeather(); G.newsLook = {};
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
   player.flying = false; player.slamming = false;
@@ -2176,6 +2177,22 @@ function frame() {
   renderer.render(scene, camera);
   if (vm.visible && G.mode !== 'menu') { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
 }
+// Channel 9: what the billboards and TVs are saying about you
+function newsState() {
+  const seen = G.lastSeenT < 900 ? localeName(G.lkp.x, G.lkp.z) : 'NOBODY KNOWS';
+  const dark = !!(WX.blackout && WX.blackout.city === WX.here);
+  const bits = [];
+  if (G.level >= 1 && !G.super) bits.push(`BOUNTY TARGET LAST SEEN NEAR ${seen}`, `PROFILE: ${LEVEL_NAMES[G.level]}`);
+  if (G.level >= 3 && !G.super) bits.push('AIR UNITS SEARCHING', 'CALL CHANNEL 9 WITH ANY SIGHTINGS');
+  if (WX.festival) bits.push(`${FESTIVALS[WX.festival.city]} IN ${WX.festival.city} TODAY`);
+  if (WX.blackout) bits.push(`POWER CUT IN ${WX.blackout.city}`);
+  bits.push(`WEATHER: ${WX_NAMES[WX.kind]}`);
+  return {
+    level: G.level, super: G.super, look: G.newsLook || {}, lastSeen: seen, kills: G.kills, day: Math.min(G.day, CFG.days),
+    clock: hud.clock.textContent.slice(0, 5), weather: WX_NAMES[WX.kind], city: G.locale || 'PORT HALDEN',
+    festival: WX.festival ? FESTIVALS[WX.festival.city] : null, festivalCity: WX.festival ? WX.festival.city : '', dark, crawl: bits.join('   ·   '),
+  };
+}
 function simulate(dt, t) {
   if (G.mode === 'playing') {
     G.elapsed += dt; G.shotT = (G.shotT ?? 99) + dt;
@@ -2193,6 +2210,7 @@ function simulate(dt, t) {
     updateGetUps(dt); updateDrops(dt, t); updateLaser(dt); updateBubbles(dt); updateContract(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
+    updateNews(dt, newsState());
     if (!player.alive) { G.overT -= dt; if (G.overT <= 0 && G.mode === 'playing') endGame(false); }
     updateHUD(dt);
     if (G.sleepT > 0) { G.sleepT -= dt; if (G.sleepT <= 0) sleepEl.classList.remove('show'); }
@@ -2217,4 +2235,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
