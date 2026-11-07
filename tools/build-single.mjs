@@ -18,7 +18,7 @@ const entries = list.split(',').map((s) => {
 });
 
 // modules in dependency order; strip imports/exports so they share one scope
-const MODULES = ['core', 'world', 'interiors', 'audio', 'fx', 'people', 'parkour', 'game'];
+const MODULES = ['core', 'world', 'interiors', 'audio', 'fx', 'people', 'parkour', 'shops', 'allies', 'game'];
 const game = MODULES.map((m) => read(`src/${m}.js`)
   .replace(/^import [\s\S]*? from '[^']+';$/gm, '')
   .replace(/^export (const|let|function|class) /gm, '$1 ')

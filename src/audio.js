@@ -41,6 +41,13 @@ export const sfx = {
 };
 sfx.drone = () => { tone(1400, 0.06, 'square', 0.04); tone(1800, 0.06, 'square', 0.04, 1, 0.08); };
 sfx.cash = () => { tone(1046, 0.08, 'square', 0.08); tone(1318, 0.15, 'square', 0.08, 1, 0.08); };
+sfx.bonk = () => { tone(190, 0.09, 'square', 0.13, 0.6); noise(0.07, 0.35, 1800, 1.2); tone(620, 0.05, 'triangle', 0.08, 1.4); };
+sfx.whoosh = () => noise(0.25, 0.22, 700, 0.5);
+sfx.homerun = () => { noise(0.12, 0.6, 2400, 1.4); tone(160, 0.12, 'square', 0.15, 0.5); tone(300, 0.7, 'triangle', 0.12, 4, 0.08); tone(1250, 0.35, 'sine', 0.06, 0.5, 0.75); };
+sfx.swap = () => { tone(420, 0.04, 'square', 0.05); tone(260, 0.05, 'square', 0.05, 1, 0.05); };
+sfx.pump = () => { noise(0.08, 0.25, 900, 1); noise(0.08, 0.25, 600, 1, 0.12); };
+sfx.shotgun = () => { noise(0.3, 0.75, 500, 0.5); tone(90, 0.2, 'square', 0.16, 0.4); };
+sfx.smg = () => { noise(0.08, 0.38, 1300, 0.7); tone(180, 0.05, 'square', 0.07, 0.5); };
 sfx.explode = () => { noise(0.9, 0.6, 180, 0.4); tone(60, 0.7, 'sawtooth', 0.2, 0.4); };
 
 // continuous rotor / propeller hum, volume driven by distance to the nearest aircraft

@@ -31,7 +31,7 @@ const floorTex = canvasTex(128, 128, (ctx, W, H) => {
   for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { ctx.fillStyle = (r + c) % 2 ? '#cfcac0' : '#e4e0d8'; ctx.fillRect(c * 32, r * 32, 32, 32); }
   ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.fillRect(0, 0, W, 6);
 }, true);
-const glassB = new GeoBuf(), ib = new GeoBuf(), tileB = new GeoBuf(), brickB = new GeoBuf(), floorB = new GeoBuf(), lightB = new GeoBuf();
+export const glassB = new GeoBuf(), ib = new GeoBuf(), tileB = new GeoBuf(), brickB = new GeoBuf(), floorB = new GeoBuf(), lightB = new GeoBuf();
 export const interiorFloorMats = [];
 worldHooks.afterBake.push(() => {
   ib.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
@@ -45,17 +45,17 @@ worldHooks.afterBake.push(() => {
 });
 
 // a solid block: drawn and collidable
-function solid(buf, x0, x1, y0, y1, z0, z1, color, extra) {
+export function solid(buf, x0, x1, y0, y1, z0, z1, color, extra) {
   buf.box(x0, x1, y0, y1, z0, z1, color, { bottom: true, uvW: 4, uvH: 4 });
   return addCollider(x0, x1, z0, z1, y1, Object.assign({ y0 }, extra || {}));
 }
 // a walkable slab: top face only plus edges, solid for collisions
-function slab(buf, x0, x1, yTop, z0, z1, color, th = 0.4, extra) {
+export function slab(buf, x0, x1, yTop, z0, z1, color, th = 0.4, extra) {
   buf.box(x0, x1, yTop - th, yTop, z0, z1, color, { bottom: true });
   return addCollider(x0, x1, z0, z1, yTop, Object.assign({ y0: yTop - th }, extra || {}));
 }
 // straight stairs. (ax, az) is the centre of the top edge, dir is the way down ('px','nx','pz','nz')
-function stairs(ax, az, dir, width, yTop, yBot, color, opt = {}) {
+export function stairs(ax, az, dir, width, yTop, yBot, color, opt = {}) {
   const n = Math.round((yTop - yBot) / 0.35), rise = (yTop - yBot) / n, run = opt.run ?? 0.5;
   const dx = dir === 'px' ? 1 : dir === 'nx' ? -1 : 0, dz = dir === 'pz' ? 1 : dir === 'nz' ? -1 : 0;
   for (let i = 0; i < n; i++) {
@@ -70,9 +70,9 @@ function stairs(ax, az, dir, width, yTop, yBot, color, opt = {}) {
   links.push({ a: { x: ax - dx * 0.6, y: yTop, z: az - dz * 0.6 }, b: { x: ax + dx * (L + 0.8), y: yBot, z: az + dz * (L + 0.8) }, kind: 'stairs' });
   return L;
 }
-function shade(hex, k) { const c = new THREE.Color(hex); c.multiplyScalar(k); return c.getHex(); }
-function lamp(x0, x1, y, z0, z1, color = 0xfff4dc) { lightB.box(x0, x1, y - 0.06, y, z0, z1, color, { bottom: true, top: false }); }
-function sign(text, x, y, z, ry, w = 4, h = 0.9, bg = '#1f4a8a', fg = '#fff') {
+export function shade(hex, k) { const c = new THREE.Color(hex); c.multiplyScalar(k); return c.getHex(); }
+export function lamp(x0, x1, y, z0, z1, color = 0xfff4dc) { lightB.box(x0, x1, y - 0.06, y, z0, z1, color, { bottom: true, top: false }); }
+export function sign(text, x, y, z, ry, w = 4, h = 0.9, bg = '#1f4a8a', fg = '#fff') {
   const t = textTex(512, Math.round(512 * h / w), bg, fg, [text], `bold ${Math.round(300 * h / w)}px Arial, sans-serif`);
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.1), [edgeMat, edgeMat, edgeMat, edgeMat, new THREE.MeshBasicMaterial({ map: t }), new THREE.MeshBasicMaterial({ map: t })]);
   m.position.set(x, y, z); m.rotation.y = ry; m.matrixAutoUpdate = false; m.updateMatrix(); scene.add(m); return m;
