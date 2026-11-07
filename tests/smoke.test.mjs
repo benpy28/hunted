@@ -17,7 +17,10 @@ test('page loads with no script errors and shows the menu', async () => {
 
 test('WebGL renders a real image (not a blank canvas)', async () => {
   await g.page.waitForTimeout(500);
-  const png = await g.page.locator('canvas').first().screenshot();
+  // a page screenshot clipped to the canvas: an element screenshot first waits for two animation frames with
+  // the same box, and with software WebGL a single frame of the full town can take longer than its timeout
+  const box = await g.page.locator('canvas').first().boundingBox();
+  const png = await g.page.screenshot({ clip: box, timeout: 90000 });
   assert.ok(png.length > 8000, `screenshot looks blank (${png.length} bytes)`);
 });
 
