@@ -221,3 +221,12 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 .is-touch #hud-slots .slot-hint { bottom: auto; top: 100%; margin: 4px 0 0; }
 #hud-banner small { white-space: normal; max-width: min(680px, 86vw); margin: 6px auto; line-height: 1.4; }
 .vbar { display: block; width: 180px; height: 8px; margin-top: 5px; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.4); } .vbar i { display: block; height: 100%; }
+
+/* hiding in a dumpster: black, with a strip of street visible under the lid */
+#hidecrack { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 1; }
+#hidecrack.show { display: block; }
+#hidecrack .lid { position: absolute; left: 0; right: 0; top: 0; height: 41%; background: linear-gradient(#050505 85%, #1a1a14); }
+#hidecrack .tin { position: absolute; left: 0; right: 0; bottom: 0; height: 47%; background: linear-gradient(#1c1c16, #050505 20%); }
+#hud-junk { position: absolute; right: calc(20px + env(safe-area-inset-right)); bottom: calc(118px + env(safe-area-inset-bottom)); font: bold 13px Arial, sans-serif; color: #d8f0d0; text-shadow: 0 1px 2px #000; letter-spacing: 1px; }
+#btn-throw { right: calc(120px + env(safe-area-inset-right)); bottom: calc(220px + env(safe-area-inset-bottom)); background: rgba(90,170,90,.55); }
+.is-touch #hud-junk { bottom: auto; top: calc(210px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); }
