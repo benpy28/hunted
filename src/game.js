@@ -8,8 +8,10 @@ import {
   CITIES, HIGHWAYS, WORLD, RIVER, colliders, blockRects, parkedSpots, beacons, animated, waterRects, lanes, emissiveFacades,
   generateWorld, cityAt, localeName, resolveCircle, pointBlocked, maxHeightNear, groundY,
   navRecenter, computeFlow, navTarget, los, los3D, blockedAt, randomOpenPoint, raycastWorld,
+  floorAt, resolveBody, stackTop, ladders, ziplines, zipNear, ladderNear,
 } from './world.js';
-import { initAudio, sfx, setAircraftVolume } from './audio.js';
+import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
+import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
 
@@ -33,9 +35,10 @@ const player = {
   lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, mag: 12, reserve: 48, reloadT: 0, fireCd: 0,
   bob: 0, dragT: 0, carHitCd: 0, recoil: 0, shoveAnim: 0, camOff: 0, sprinting: false,
 };
+resetParkour(player);
 const dayMult = () => 1 + (G.day - 1) * 0.016;
 const targetPos = () => (player.car ? { x: player.car.x, z: player.car.z } : { x: player.x, z: player.z });
-const playerEyeY = () => (player.car ? 1.2 : groundY(player.x, player.z) + player.y + 1.3);
+const playerEyeY = () => (player.car ? 1.2 : player.y + eyeHeight(player) - 0.3);
 
 // ---------------------------------------------------------------------
 // Profile ("how wanted you are")
@@ -114,6 +117,7 @@ class Hunter {
     this.wt = null; this.progT = 0; this.lx = x; this.lz = z; this.alertT = -1; this.strafe = Math.random() < 0.5 ? 1 : -1;
     this.dead = false;
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
+    this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
     this.spdMul = mr(0.82, 1.1); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
   }
   alert(delay = 0) {
@@ -125,7 +129,7 @@ class Hunter {
   die(impulse, hitY, byPlayer = false) {
     if (this.dead) return;
     this.dead = true; this.marker.visible = false;
-    this.g.position.set(this.x, groundY(this.x, this.z), this.z);
+    this.g.position.set(this.x, this.y, this.z);
     addRagdoll(this.p, this.T.scale, { x: this.vx + this.kx, y: 0, z: this.vz + this.kz }, impulse, hitY);
     if (byPlayer) { G.kills++; addHeat(this.type === 'cop' ? 22 : 14); }
   }
@@ -137,13 +141,15 @@ class Hunter {
   update(dt) {
     const T = this.T, tp = targetPos();
     const dx = tp.x - this.x, dz = tp.z - this.z, d = Math.hypot(dx, dz);
+    const dy = player.car ? 0 : player.y - this.y;
+    if (this.climb || this.ladder) { this.updateClimb(dt); return; }
     this.attackCd -= dt; this.fireCd -= dt;
     if (this.alertT >= 0) { this.alertT -= dt; if (this.alertT < 0) this.alert(); }
 
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
-      const see = d < 90 && los(this.x, this.z, tp.x, tp.z);
+      const see = d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
       this.hasLOS = see;
       if (this.state !== 'chase') {
         const noisy = player.car ? 30 : (player.sprinting ? 16 : 7);
@@ -169,8 +175,17 @@ class Hunter {
         const fx3 = -Math.sin(player.yaw), fz3 = -Math.cos(player.yaw), facing = ((this.x - tp.x) * fx3 + (this.z - tp.z) * fz3) / (d || 1);
         if (facing > 0.3 || player.car) hold = 15; else spdK = 1.15;
       } else if (this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
+      // you're up high: head for a ladder if there's one handy, otherwise to the wall below you
+      let goLadder = null;
+      if (dy > 1.4 && this.y < 1 && d < 45 && this.type !== 'brute') {
+        let bd = 30;
+        for (const L of ladders) { const ld = Math.abs(L.x - this.x) + Math.abs(L.z - this.z); if (ld < bd && L.y1 > player.y - 2 && Math.abs(L.x - tp.x) + Math.abs(L.z - tp.z) < 40) { bd = ld; goLadder = L; } }
+        if (goLadder) { tx = goLadder.x + goLadder.nx * 0.3; tz = goLadder.z + goLadder.nz * 0.3; hold = 0; }
+        if (goLadder && Math.hypot(tx - this.x, tz - this.z) < 0.9) { this.ladder = goLadder; this.stun = 0; return; }
+      }
       const ex0 = tx - this.x, ez0 = tz - this.z;
-      if (!(this.hasLOS || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z); if (n) { tx = n.x; tz = n.z; } }
+      if (this.y > 1) { /* on a roof: straight at you */ }
+      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && los(this.x, this.z, tx, tz))) { tx = n.x; tz = n.z; } }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
       const spd = T.speed * dayMult() * this.spdMul * spdK;
       if (this.noticeT > 0) { this.noticeT -= dt; tvx = 0; tvz = 0; }
@@ -189,7 +204,7 @@ class Hunter {
         if (this.fireCd <= 0) { this.aimT += dt; if (this.aimT > 0.35) { this.aimT = 0; this.fireCd = mr(1.3, 2.3) / Math.min(1.6, dayMult()); hunterShoot(this, d); } }
       } else { tvx = (ex / ed) * spd; tvz = (ez / ed) * spd; }
       const reach = player.car ? 2.7 : 1.25 + (this.type === 'brute' ? 0.25 : 0);
-      if (d < reach && this.attackCd <= 0 && player.alive) {
+      if (d < reach && Math.abs(dy) < 1.3 && this.attackCd <= 0 && player.alive) {
         this.attackCd = this.type === 'runner' ? 0.7 : 1.0;
         if (player.car) player.car.damage(T.dmg * 0.6);
         else hurtPlayer(T.dmg, this.x, this.z, this.type === 'brute' ? 9 : 3);
@@ -202,6 +217,7 @@ class Hunter {
         const guess = Math.random() < 0.6 ? G.lkp : { x: this.x, z: this.z };
         this.wt = randomOpenPoint(guess.x, guess.z, 5, 45) || { x: this.x, z: this.z };
       }
+      if (!this.wt) this.wt = { x: this.x, z: this.z };
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
       if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
@@ -214,9 +230,27 @@ class Hunter {
     const acc = Math.min(1, dt * (this.stun > 0 ? 2 : 8));
     this.vx = lerp(this.vx, tvx, acc); this.vz = lerp(this.vz, tvz, acc);
     this.kx *= Math.max(0, 1 - dt * 5); this.kz *= Math.max(0, 1 - dt * 5);
+    const ox = this.x, oz = this.z;
     this.x += (this.vx + this.kx) * dt; this.z += (this.vz + this.kz) * dt;
-    resolveCircle(this, 0.35 * T.scale);
-    for (const c of G.cars) if (Math.abs(c.x - this.x) < 4 && Math.abs(c.z - this.z) < 4) resolveCircleCar(this, 0.35, c);
+    const wall = resolveBody(this, 0.35 * T.scale, this.y, 1.8);
+    if (this.y < 0.5) for (const c of G.cars) if (Math.abs(c.x - this.x) < 4 && Math.abs(c.z - this.z) < 4) resolveCircleCar(this, 0.35, c);
+    // scramble up walls to get at you (runners are good at it, brutes hopeless)
+    if (wall && this.state === 'chase' && dy > 0.8 && d < 9 && this.stun <= 0 && this.noticeT <= 0 && Math.hypot(this.x - ox, this.z - oz) < dt * 1.5) {
+      const ux = dx / (d || 1), uz = dz / (d || 1), top = stackTop(this.x + ux * 0.7, this.z + uz * 0.7, this.y);
+      const maxUp = { runner: 4.3, cop: 3.1, civ: 2.5, brute: 1.4 }[this.type];
+      if (top > 0 && top - this.y <= maxUp && floorAt(this.x + ux * 1.2, this.z + uz * 1.2, top + 0.02) >= top - 0.05) {
+        this.climb = { t: 0, dur: 0.5 + (top - this.y) * 0.3, fx: this.x, fy: this.y, fz: this.z, tx: this.x + ux * 1.2, ty: top, tz: this.z + uz * 1.2 };
+      }
+    }
+    // gravity: people who run off roofs fall, and a long fall knocks them out cold
+    const prevY = this.y;
+    this.vy -= 22 * dt; this.y += this.vy * dt;
+    const floor = floorAt(this.x, this.z, Math.max(prevY, this.y));
+    if (this.y <= floor) {
+      if (this.peakY - floor > 6) { this.y = floor; this.die({ x: this.vx, y: 1, z: this.vz }, 0.5, false); return; }
+      this.y = floor; this.vy = 0; this.peakY = floor;
+    } else if (prevY - floor < 0.45 && this.vy <= 0 && this.y - floor < 0.45) { this.y = floor; this.vy = 0; }
+    else this.peakY = Math.max(this.peakY, this.y);
 
     const sp = Math.hypot(this.vx, this.vz);
     if (sp > 0.3) this.face += angDiff(this.face, Math.atan2(this.vx, this.vz)) * Math.min(1, dt * 10);
@@ -231,10 +265,28 @@ class Hunter {
       else if (d < 2.6) { p.armL.rotation.x = -1.35 + sw * 0.25; p.armR.rotation.x = -1.35 - sw * 0.25; } // grabbing
       else { p.armL.rotation.x = -0.35 - sw * 1.1; p.armR.rotation.x = -0.35 + sw * 1.1; } // sprinting
     } else { p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
-    this.g.position.set(this.x, groundY(this.x, this.z) + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08, this.z);
+    this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08, this.z);
     this.g.rotation.y = this.face;
     this.marker.visible = this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12);
     this.marker.material = this.noticeT > 0 ? qMarkerMat : markerMat;
+  }
+  updateClimb(dt) {
+    const p = this.p;
+    if (this.ladder) {
+      const L = this.ladder;
+      this.x = L.x + L.nx * 0.1; this.z = L.z + L.nz * 0.1; this.y += (this.type === 'runner' ? 3.6 : 2.6) * dt;
+      this.face = Math.atan2(-L.nx, -L.nz);
+      p.armL.rotation.x = -2.6 + Math.sin(this.y * 4) * 0.4; p.armR.rotation.x = -2.6 - Math.sin(this.y * 4) * 0.4;
+      p.legL.rotation.x = Math.sin(this.y * 4) * 0.5; p.legR.rotation.x = -Math.sin(this.y * 4) * 0.5;
+      if (this.y >= L.y1 - 1) { this.ladder = null; this.climb = { t: 0, dur: 0.5, fx: this.x, fy: this.y, fz: this.z, tx: L.x - L.nx * 1.1, ty: L.y1, tz: L.z - L.nz * 1.1 }; }
+    } else {
+      const C = this.climb; C.t += dt;
+      const k = Math.min(1, C.t / C.dur), e = k * k * (3 - 2 * k);
+      this.x = lerp(C.fx, C.tx, e); this.z = lerp(C.fz, C.tz, e); this.y = lerp(C.fy, C.ty, Math.min(1, e * 1.5));
+      p.armL.rotation.x = p.armR.rotation.x = -2.8 + k * 2;
+      if (k >= 1) { this.climb = null; this.vy = 0; this.peakY = this.y; }
+    }
+    this.g.position.set(this.x, this.y, this.z); this.g.rotation.y = this.face;
   }
   navTo(t) {
     const a = Math.atan2(t.x - this.x, t.z - this.z);
@@ -270,7 +322,7 @@ function shootAtPlayer(from, pHit, dmg, color, dist) {
 }
 function hunterShoot(h, d) {
   const s = h.T.scale;
-  _from.set(h.x + Math.cos(h.face) * 0.4 * s + Math.sin(h.face) * 0.6, 1.45 * s, h.z - Math.sin(h.face) * 0.4 * s + Math.cos(h.face) * 0.6);
+  _from.set(h.x + Math.cos(h.face) * 0.4 * s + Math.sin(h.face) * 0.6, h.y + 1.45 * s, h.z - Math.sin(h.face) * 0.4 * s + Math.cos(h.face) * 0.6);
   shootAtPlayer(_from, (0.3 + G.day * 0.008) * clamp(1.4 - d / 30, 0.4, 1.2), 7, 0xffa060, d);
 }
 
@@ -447,7 +499,7 @@ function carInteractions() {
     if (!player.car && player.alive && c.driver !== 'player') {
       const p = { x: player.x, z: player.z };
       if (resolveCircleCar(p, 0.4, c)) {
-        if (sp > 5 && player.carHitCd <= 0 && player.y < 0.9) {
+        if (sp > 5 && player.carHitCd <= 0 && player.y - groundY(player.x, player.z) < 0.9) {
           player.carHitCd = 1.2;
           hurtPlayer(Math.min(55, sp * 2.4), c.x - c.fx * 3, c.z - c.fz * 3, 6 + sp * 0.5);
           sfx.thud(); c.speed *= 0.5;
@@ -477,6 +529,18 @@ function enterCar() {
   player.yaw = c.heading + Math.PI;
   sfx.pickup();
 }
+function zipStartNear() {
+  if (player.car || player.mode !== 'move') return null;
+  for (const Z of ziplines) if (Math.abs(Z.a.x - player.x) < 2.6 && Math.abs(Z.a.z - player.z) < 2.6 && Math.abs(Z.a.y - 3.3 - player.y) < 1.2) return Z;
+  return null;
+}
+function useAction() {
+  if (player.car) { exitCar(); return; }
+  if (player.mode === 'zip') { input.jumpEdge = true; return; }
+  const Z = zipStartNear();
+  if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
+  enterCar();
+}
 function exitCar(forced = false) {
   const c = player.car; if (!c) return;
   if (!forced && Math.abs(c.speed) > 6) return;
@@ -484,7 +548,7 @@ function exitCar(forced = false) {
   const p = { x: c.x - rx * 2.2, z: c.z - rz * 2.2 };
   resolveCircle(p, 0.4);
   if (resolveCircleCar(p, 0.4, c)) { p.x = c.x + rx * 2.2; p.z = c.z + rz * 2.2; resolveCircle(p, 0.4); }
-  player.x = p.x; player.z = p.z; player.y = 0; player.vy = 0;
+  player.x = p.x; player.z = p.z; player.y = groundY(p.x, p.z); player.vy = 0; resetParkour(player);
   player.yaw = c.heading + Math.PI; player.pitch = 0;
   if (!c.wrecked) c.driver = null;
   player.car = null;
@@ -774,7 +838,7 @@ function playerShoot() {
   let tHit = raycastWorld(o, _camDir, 160).t, target = null, carHit = null, airHit = null;
   for (const h of G.hunters) {
     if (h.dead || Math.abs(h.x - o.x) > 160 || Math.abs(h.z - o.z) > 160) continue;
-    const s = h.T.scale, t = rayCylinder(o, _camDir, h.x, h.z, 0.36 * s, 0, 1.95 * s, tHit);
+    const s = h.T.scale, t = rayCylinder(o, _camDir, h.x, h.z, 0.36 * s, h.y, h.y + 1.95 * s, tHit);
     if (t > 0 && t < tHit) { tHit = t; target = h; carHit = null; }
   }
   for (const c of G.cars) { if (c.far) continue; const t = rayCar(o, _camDir, c, tHit); if (t > 0 && t < tHit) { tHit = t; carHit = c; target = null; } }
@@ -782,7 +846,7 @@ function playerShoot() {
   const hitP = o.clone().addScaledVector(_camDir, tHit);
   spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
   if (target) {
-    const head = hitP.y > 1.5 * target.T.scale, dl = Math.hypot(_camDir.x, _camDir.z) || 1;
+    const head = hitP.y > target.y + 1.5 * target.T.scale, dl = Math.hypot(_camDir.x, _camDir.z) || 1;
     target.damage(head ? 3 : 1, _camDir.x / dl, _camDir.z / dl, hitP.y);
     sfx.hit();
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.25, vy: 0.3, size0: 0.15, size1: 0.6, alpha: 0.9, color: 0xffffff });
@@ -805,29 +869,31 @@ function playerShove() {
   for (const h of G.hunters) {
     if (h.dead) continue;
     const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
-    if (d < 2.8 && (dx * fx + dz * fz) / (d || 1) > 0.25) { h.kx += (dx / d) * 13 * h.T.knock; h.kz += (dz / d) * 13 * h.T.knock; h.stun = Math.max(h.stun, h.T.stun); h.alert(); }
+    if (d < 2.8 && Math.abs(h.y - player.y) < 1.2 && (dx * fx + dz * fz) / (d || 1) > 0.25) { h.kx += (dx / d) * 13 * h.T.knock; h.kz += (dz / d) * 13 * h.T.knock; h.stun = Math.max(h.stun, h.T.stun); h.alert(); }
   }
 }
 
 // =====================================================================
 // Input
 // =====================================================================
-const input = { fwd: 0, side: 0, sprint: false, jump: false, runToggle: false };
+const input = { fwd: 0, side: 0, sprint: false, jump: false, runToggle: false, crouch: false, jumpEdge: false };
 const keys = new Set();
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const stick = { id: null, cx: 0, cy: 0 };
-let touchJump = false, lookTouch = null;
+let touchJump = false, touchCrouch = false, lookTouch = null;
 function recomputeKeys() {
   if (isTouch && stick.id !== null) return;
   input.fwd = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
   input.side = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
   input.sprint = keys.has('ShiftLeft') || keys.has('ShiftRight') || input.runToggle;
   input.jump = keys.has('Space') || touchJump;
+  input.crouch = keys.has('KeyC') || keys.has('ControlLeft') || touchCrouch;
 }
 window.addEventListener('keydown', (e) => {
   if (G.mode !== 'playing') return;
+  if (e.code === 'Space' && !e.repeat) input.jumpEdge = true;
   keys.add(e.code); recomputeKeys();
-  if (e.code === 'KeyE') { player.car ? exitCar() : enterCar(); }
+  if (e.code === 'KeyE') useAction();
   if (e.code === 'KeyR') startReload();
   if (e.code === 'KeyF') playerShove();
   if (e.code === 'KeyM') G.bigMap = !G.bigMap;
@@ -901,9 +967,10 @@ if (isTouch) {
   let fireHeld = null;
   btn('btn-fire', () => { playerShoot(); clearInterval(fireHeld); fireHeld = setInterval(playerShoot, 220); }, () => clearInterval(fireHeld));
   btn('btn-shove', playerShove);
-  btn('btn-jump', () => { touchJump = true; input.jump = true; }, () => { touchJump = false; input.jump = false; });
+  btn('btn-jump', () => { touchJump = true; input.jump = true; input.jumpEdge = true; }, () => { touchJump = false; input.jump = false; });
+  btn('btn-slide', () => { touchCrouch = true; input.crouch = true; }, () => { touchCrouch = false; input.crouch = false; });
   btn('btn-run', (el) => { input.runToggle = !input.runToggle; input.sprint = input.runToggle; el.classList.toggle('on', input.runToggle); });
-  btn('btn-car', () => (player.car ? exitCar() : enterCar()));
+  btn('btn-car', useAction);
   btn('btn-reload', startReload);
   btn('btn-pause', pauseGame);
   btn('btn-map', () => (G.bigMap = !G.bigMap));
@@ -945,6 +1012,9 @@ function drawMinimap() {
   for (const b of blockRects) if (inR(b.x0, b.z0, b.x1, b.z1, 60)) mm.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0);
   if (!big) { mm.fillStyle = '#57535e'; for (const c of colliders) if (c.x1 - c.x0 > 2 && c.z1 - c.z0 > 2 && c.h > 2 && inR(c.x0, c.z0, c.x1, c.z1, 20)) mm.fillRect(c.x0, c.z0, c.x1 - c.x0, c.z1 - c.z0); }
   if (big) { mm.fillStyle = '#fff'; mm.font = `bold ${14 / sc}px Arial`; mm.textAlign = 'center'; for (const c of CITIES) { mm.save(); mm.translate(c.cx, c.cz); mm.fillText(c.name, 0, 0); mm.restore(); } }
+  mm.strokeStyle = '#ffd23a'; mm.lineWidth = 1.6 / sc;
+  for (const Z of ziplines) if (inR(Math.min(Z.a.x, Z.b.x), Math.min(Z.a.z, Z.b.z), Math.max(Z.a.x, Z.b.x), Math.max(Z.a.z, Z.b.z), 10)) { mm.beginPath(); mm.moveTo(Z.a.x, Z.a.z); mm.lineTo(Z.b.x, Z.b.z); mm.stroke(); }
+  if (!big) { mm.fillStyle = '#ffd23a'; for (const L of ladders) if (inR(L.x, L.z, L.x, L.z, 5)) mm.fillRect(L.x - 1.2, L.z - 1.2, 2.4, 2.4); }
   for (const p of G.pickups) if (p.active) { mm.fillStyle = p.kind === 'health' ? '#3cff6a' : '#ffc83a'; mm.fillRect(p.x - 1.5 / sc * 1.2, p.z - 1.5 / sc * 1.2, 3 / sc * 1.2, 3 / sc * 1.2); }
   for (const c of G.cars) {
     if (c.far) continue;
@@ -1001,9 +1071,12 @@ function updateHUD(dt) {
   hud.cross.classList.toggle('hidden', !!player.car);
   let prompt = '';
   if (player.car) prompt = Math.abs(player.car.speed) > 6 ? '' : (isTouch ? 'Tap CAR to get out' : 'Press E to get out');
-  else if (nearestCar(3.6)) prompt = isTouch ? 'Tap CAR to steal it' : 'Press E to steal this car';
+  else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
+  else if (player.mode === 'ladder') prompt = isTouch ? 'Push forward to climb, JUMP to let go' : 'W / S to climb, Space to let go';
+  else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
+  else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
-  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6)));
+  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip'));
 }
 
 // =====================================================================
@@ -1077,6 +1150,7 @@ function spawnTraffic(count) {
 }
 function resetGame() {
   clearWorld();
+  resetParkour(player);
   Object.assign(player, { x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: Math.PI / 4, pitch: 0, hp: 100, stam: 100, exhausted: false, lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, mag: 12, reserve: 48, reloadT: 0, fireCd: 0, dragT: 0, carHitCd: 0, camOff: 0 });
   Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false });
   G.lkp = { x: 0, z: 0 };
@@ -1156,24 +1230,28 @@ function updatePlayer(dt) {
   if (player.exhausted && player.stam > 30) player.exhausted = false;
   player.sprinting = sprint;
   const speed = sprint ? 10 : 5.8;
-  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-  let mx = fx * input.fwd + rx * input.side, mz = fz * input.fwd + rz * input.side; const ml = Math.hypot(mx, mz);
-  if (ml > 1) { mx /= ml; mz /= ml; }
-  const acc = Math.min(1, dt * (player.y > 0.05 ? 3 : 12));
-  player.vx = lerp(player.vx, mx * speed, acc); player.vz = lerp(player.vz, mz * speed, acc);
   player.kx *= Math.max(0, 1 - dt * 6); player.kz *= Math.max(0, 1 - dt * 6);
-  player.x += (player.vx + player.kx) * dt; player.z += (player.vz + player.kz) * dt;
-  resolveCircle(player, 0.4);
-  if (input.jump && player.y <= 0.001) player.vy = 7.2;
-  player.vy -= 22 * dt; player.y = Math.max(0, player.y + player.vy * dt);
-  if (player.y === 0) player.vy = 0;
+  parkourMove(dt, player, input, sprint, speed, parkourCb);
+  input.jumpEdge = false;
   for (const h of G.hunters) {
-    if (h.dead) continue;
+    if (h.dead || Math.abs(h.y - player.y) > 1.2) continue;
     const dx = player.x - h.x, dz = player.z - h.z, d = Math.hypot(dx, dz), m = 0.4 + 0.35 * h.T.scale;
     if (d < m && d > 1e-4) { const k = ((m - d) / d) * 0.5; player.x += dx * k; player.z += dz * k; h.x -= dx * k; h.z -= dz * k; }
   }
-  player.bob += Math.hypot(player.vx, player.vz) * dt * 1.6;
+  if (player.grounded && player.mode === 'move') {
+    const ob = player.bob;
+    player.bob += Math.hypot(player.vx, player.vz) * dt * 1.6 * (player.slideT > 0 ? 0 : 1);
+    if (Math.floor(ob / Math.PI) !== Math.floor(player.bob / Math.PI)) sfx.step();
+  }
 }
+let stepAcc = 0;
+const parkourCb = {
+  hurt: (dmg, rolled) => { hurtPlayer(dmg, player.x, player.z); showMsg(rolled ? 'ROLLED IT' : 'HARD LANDING', 1.2); },
+  stamina: () => player.stam,
+  useStamina: (n) => { player.stam = Math.max(0, player.stam - n); },
+  stepSound: (k) => { stepAcc += k; if (stepAcc > 1) { stepAcc = 0; sfx.climb(); } },
+  zipSound: (v) => setZipSound(v),
+};
 function separateHunters() {
   const hs = G.hunters;
   for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) {
@@ -1201,17 +1279,29 @@ function updateCamera(dt, t) {
     camera.position.x += sx; camera.position.y += sy;
     vm.visible = false; return;
   }
-  const bobY = Math.sin(player.bob * 2) * 0.05 * (player.y > 0 ? 0 : 1);
-  let eye = 1.65;
+  const bobY = Math.sin(player.bob * 2) * 0.05 * (player.grounded ? 1 : 0) * (player.sprinting ? 1.6 : 1);
+  let eye = eyeHeight(player);
   if (!player.alive) { G.deathT = (G.deathT || 0) + dt; eye = Math.max(0.3, 1.65 - G.deathT * 1.5); } else G.deathT = 0;
-  camera.position.set(player.x + sx, groundY(player.x, player.z) + player.y + eye + bobY + sy, player.z);
-  camera.rotation.set(player.pitch + player.recoil * 0.03, player.yaw, player.alive ? 0 : Math.min(1.2, G.deathT * 1.4));
+  camera.position.set(player.x + sx, player.y + eye + bobY + sy, player.z);
+  // adrenaline: the view widens with speed, tilts on the zipline and dips through vaults and mantles
+  const hs = Math.hypot(player.vx, player.vz);
+  const wantFov = 72 + clamp((hs - 5.8) * 1.4, 0, 8) + (player.slideT > 0 ? 6 : 0) + (player.mode === 'zip' ? clamp(player.zipV * 0.6, 0, 14) : 0) + (player.mode === 'vault' ? 5 : 0);
+  if (Math.abs(camera.fov - wantFov) > 0.05) { camera.fov = lerp(camera.fov, wantFov, Math.min(1, dt * 6)); camera.updateProjectionMatrix(); }
+  G.camRoll = lerp(G.camRoll || 0, player.mode === 'zip' ? 0.07 * Math.sin(G.elapsed * 2) + 0.05 : player.slideT > 0 ? 0.06 : -input.side * 0.012 * (player.sprinting ? 1 : 0.4), Math.min(1, dt * 6));
+  const mantleDip = player.mode === 'mantle' ? -0.25 * Math.sin(clamp(player.anim.t / player.anim.dur, 0, 1) * Math.PI) : 0;
+  camera.rotation.set(player.pitch + player.recoil * 0.03 + mantleDip - player.landDip * 0.08, player.yaw, player.alive ? G.camRoll : Math.min(1.2, G.deathT * 1.4));
   vm.visible = player.alive;
   const b = player.bob;
   vm.position.set(Math.cos(b) * 0.012, Math.abs(Math.sin(b)) * -0.015 - (player.reloadT > 0 ? 0.25 : 0), player.recoil * 0.06);
   armR.rotation.x = 0.05 + player.recoil * 0.25;
   const sh = Math.sin(player.shoveAnim * Math.PI);
   armL.position.z = -0.42 - sh * 0.25; armR.position.z = -0.42 - sh * 0.2;
+  // hands reach up for ladders, ledges and the zipline handle
+  const reach = player.mode === 'zip' || player.mode === 'ladder' ? 1 : player.mode === 'mantle' ? 0.7 : 0;
+  G.vmReach = lerp(G.vmReach || 0, reach, Math.min(1, dt * 10));
+  armL.rotation.x = 0.1 + G.vmReach * 0.7; armL.position.y = -0.27 + G.vmReach * 0.6; armL.position.x = -0.08 - G.vmReach * 0.12;
+  if (player.mode === 'ladder') armL.position.y += Math.sin(player.y * 3) * 0.06;
+  vm.position.y -= G.vmReach * 0.12;
 }
 function updateDirector(dt) {
   G.hour = hourAt(G.elapsed);
@@ -1335,4 +1425,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

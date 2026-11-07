@@ -82,6 +82,7 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #btn-shove { right: calc(24px + env(safe-area-inset-right)); bottom: calc(120px + env(safe-area-inset-bottom)); width: 86px; height: 86px; background: rgba(190,30,40,.5); }
 #btn-fire { right: calc(118px + env(safe-area-inset-right)); bottom: calc(150px + env(safe-area-inset-bottom)); width: 86px; height: 86px; background: rgba(230,170,30,.5); }
 #btn-jump { right: calc(122px + env(safe-area-inset-right)); bottom: calc(60px + env(safe-area-inset-bottom)); }
+#btn-slide { right: calc(210px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }
 #btn-run { right: calc(30px + env(safe-area-inset-right)); bottom: calc(26px + env(safe-area-inset-bottom)); }
 #btn-car { right: calc(30px + env(safe-area-inset-right)); bottom: calc(220px + env(safe-area-inset-bottom)); background: rgba(46,155,224,.55); }
 #btn-reload { right: calc(210px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }
@@ -164,9 +165,10 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
   <div id="stick"><div id="stick-knob"></div></div>
   <button id="btn-fire" class="tbtn">FIRE</button>
   <button id="btn-run" class="tbtn">RUN</button>
-  <button id="btn-car" class="tbtn hidden">CAR</button>
+  <button id="btn-car" class="tbtn hidden">USE</button>
   <button id="btn-reload" class="tbtn small">R</button>
   <button id="btn-jump" class="tbtn">JUMP</button>
+  <button id="btn-slide" class="tbtn small">SLIDE</button>
   <button id="btn-shove" class="tbtn">SHOVE</button>
   <button id="btn-pause" class="tbtn small">II</button>
   <button id="btn-map" class="tbtn small">MAP</button>
@@ -181,9 +183,10 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
     <button id="btn-play" class="big">PLAY</button>
     <div id="controls-desktop" class="controls">
       <div><b>WASD</b> move</div><div><b>Mouse</b> look</div>
-      <div><b>Shift</b> sprint</div><div><b>Space</b> jump</div>
+      <div><b>Shift</b> sprint</div><div><b>Space</b> jump, climb, vault</div>
+      <div><b>C / Ctrl</b> crouch, slide, roll</div><div><b>Run into a wall + Space</b> scramble up</div>
       <div><b>Click</b> shoot</div><div><b>R</b> reload</div>
-      <div><b>F / Right click</b> shove</div><div><b>E</b> steal / leave car</div>
+      <div><b>F / Right click</b> shove</div><div><b>E</b> steal car, ride zipline</div>
       <div><b>M</b> big map</div><div><b>Esc</b> pause</div>
     </div>
     <div id="controls-touch" class="controls hidden">
@@ -372,6 +375,18 @@ class GeoBuf {
       const n = [Math.cos(am), slope, Math.sin(am)], l = Math.hypot(n[0], n[1], n[2]);
       this.quad(p(a1, r, y0), p(a0, r, y0), p(a0, rTop, y1), p(a1, rTop, y1), [n[0] / l, n[1] / l, n[2] / l], U, c);
       if (cap && rTop > 0) this.quad([cx, y1, cz], p(a1, rTop, y1), p(a0, rTop, y1), p(a0, rTop, y1), [0, 1, 0], U, c);
+    }
+  }
+  // square beam between two arbitrary points (cables, rails)
+  beam(a, b, t, color) {
+    const c = toCol(color), U = [0, 0, 1, 0, 1, 1, 0, 1];
+    const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]).normalize();
+    const up = Math.abs(d.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const s1 = new THREE.Vector3().crossVectors(d, up).normalize().multiplyScalar(t / 2), s2 = new THREE.Vector3().crossVectors(s1, d).normalize().multiplyScalar(t / 2);
+    const P = (o, k1, k2) => [o[0] + s1.x * k1 + s2.x * k2, o[1] + s1.y * k1 + s2.y * k2, o[2] + s1.z * k1 + s2.z * k2];
+    for (const [k1, k2, m1, m2] of [[1, 1, 1, -1], [1, -1, -1, -1], [-1, -1, -1, 1], [-1, 1, 1, 1]]) {
+      const n = new THREE.Vector3().addScaledVector(s1, (k1 + m1) / 2).addScaledVector(s2, (k2 + m2) / 2).normalize();
+      this.quad(P(a, k1, k2), P(a, m1, m2), P(b, m1, m2), P(b, k1, k2), [n.x, n.y, n.z], U, c);
     }
   }
   geometry() {
@@ -1336,6 +1351,115 @@ function generateWorld() {
   waterBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0a1a2a }));
   lanes.push(...laneMap.values());
   buildBuckets();
+  genParkour();
+}
+
+// ---------------------------------------------------------------------
+// Parkour routes: ladders up the sides of buildings and ziplines between rooftops
+// ---------------------------------------------------------------------
+function placeLadder(buf, L) {
+  const px = -L.nz, pz = L.nx; // along the wall
+  for (const s of [-0.28, 0.28]) { const x = L.x + px * s, z = L.z + pz * s; buf.box(x - 0.04, x + 0.04, L.y0, L.y1 + 1, z - 0.04, z + 0.04, 0x3a3c42); }
+  for (let y = L.y0 + 0.35; y < L.y1 + 0.9; y += 0.38) buf.beam([L.x - px * 0.28, y, L.z - pz * 0.28], [L.x + px * 0.28, y, L.z + pz * 0.28], 0.045, 0x5a5c62);
+  ladders.push(L);
+}
+function tryLadderOn(r, buf) {
+  for (let t = 0; t < 8; t++) {
+    const side = Math.floor(srand() * 4), w = r.x1 - r.x0, d = r.z1 - r.z0;
+    const nx = side === 0 ? 1 : side === 1 ? -1 : 0, nz = side === 2 ? 1 : side === 3 ? -1 : 0;
+    const len = nx ? d : w; if (len < 3.5) continue;
+    const a = sr(1.2, len - 1.2);
+    const x = nx ? (nx > 0 ? r.x1 + 0.3 : r.x0 - 0.3) : r.x0 + a, z = nz ? (nz > 0 ? r.z1 + 0.3 : r.z0 - 0.3) : r.z0 + a;
+    if (pointBlocked(x, z, 0.12) || pointBlocked(x + nx * 0.8, z + nz * 0.8, 0.2)) continue;
+    if (stackTop(x - nx * 0.6, z - nz * 0.6, r.h - 0.5) > r.h + 1.2) continue; // something tall right at the top
+    placeLadder(buf, { x, z, nx, nz, y0: 0, y1: r.h, roof: r });
+    return true;
+  }
+  return false;
+}
+function genParkour() {
+  const buf = new GeoBuf();
+  for (const f of forcedLadders) placeLadder(buf, { x: f.x, z: f.z, nx: f.nx, nz: f.nz, y0: f.y0, y1: f.roof.h, roof: f.roof });
+  const hasLadder = new Set(ladders.map((l) => l.roof));
+  for (const r of roofs) {
+    if (r.house || r.stack || r.landmark || r.crane || r.catwalk || r.h < 4.5 || r.h > 45 || !r.city) continue;
+    const chance = r.city.style === 'metro' ? 0.35 : r.city.style === 'industrial' ? 0.55 : 0.6;
+    if (srand() < chance && tryLadderOn(r, buf)) hasLadder.add(r);
+  }
+  // ziplines: from a higher roof to a lower one across a street or yard
+  const cap = { metro: 26, suburb: 9, industrial: 16 }, used = new Map();
+  for (const city of CITIES) {
+    const rs = roofs.filter((r) => r.city === city && !r.catwalk && r.h >= 3);
+    const pairs = [];
+    for (const A of rs) {
+      if (A.house || A.stack || A.h < 8 || A.h > 60) continue;
+      for (const B of rs) {
+        if (B === A || B.h > A.h - 4) continue;
+        const acx = (A.x0 + A.x1) / 2, acz = (A.z0 + A.z1) / 2, bcx = (B.x0 + B.x1) / 2, bcz = (B.z0 + B.z1) / 2;
+        const cd = Math.hypot(bcx - acx, bcz - acz); if (cd < 26 || cd > 90) continue;
+        pairs.push([A, B, srand()]);
+      }
+    }
+    pairs.sort((p, q) => p[2] - q[2]);
+    let n = 0;
+    for (const [A, B] of pairs) {
+      if (n >= cap[city.style]) break;
+      if ((used.get(A) || 0) >= 2 || (used.get(B) || 0) >= 2) continue;
+      const bcx = (B.x0 + B.x1) / 2, bcz = (B.z0 + B.z1) / 2, acx = (A.x0 + A.x1) / 2, acz = (A.z0 + A.z1) / 2;
+      const ax = clamp(bcx, A.x0 + 1.6, A.x1 - 1.6), az = clamp(bcz, A.z0 + 1.6, A.z1 - 1.6);
+      const bx = clamp(acx, B.x0 + 1.2, B.x1 - 1.2), bz = clamp(acz, B.z0 + 1.2, B.z1 - 1.2);
+      const a = { x: ax, y: A.h + 3.3, z: az }, b = { x: bx, y: B.h + 2.2, z: bz };
+      const len = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z), hd = Math.hypot(b.x - a.x, b.z - a.z);
+      const slope = (a.y - b.y) / hd;
+      if (hd < 22 || slope < 0.07 || slope > 0.5) continue;
+      if (stackTop(ax, az, A.h - 0.1, 0.8) > A.h + 0.8 || stackTop(bx, bz, B.h - 0.1, 0.8) > B.h + 0.8) continue;
+      let clear = true;
+      for (let s = 1.5; s < hd - 1.5 && clear; s += 1.5) {
+        const t = s / hd, x = lerp(a.x, b.x, t), y = lerp(a.y, b.y, t), z = lerp(a.z, b.z, t);
+        const inA = x > A.x0 && x < A.x1 && z > A.z0 && z < A.z1, inB = x > B.x0 && x < B.x1 && z > B.z0 && z < B.z1;
+        for (const c of bucketAt(x, z)) {
+          if (c.water || x < c.x0 - 0.6 || x > c.x1 + 0.6 || z < c.z0 - 0.6 || z > c.z1 + 0.6) continue;
+          if ((inA && (c === A || c.y0 >= A.h - 0.01) && c.h <= A.h + 0.75) || (inB && (c === B || c.y0 >= B.h - 0.01) && c.h <= B.h + 0.75)) continue;
+          if (c.h > y - 2.1 && c.y0 < y + 0.3) { clear = false; break; }
+        }
+      }
+      if (!clear) continue;
+      if (!hasLadder.has(A) && !A.crane && !tryLadderOn(A, buf)) continue;
+      hasLadder.add(A);
+      used.set(A, (used.get(A) || 0) + 1); used.set(B, (used.get(B) || 0) + 1); n++;
+      ziplines.push({ a, b, len, hd, dx: (b.x - a.x) / len, dy: (b.y - a.y) / len, dz: (b.z - a.z) / len, A, B });
+      buf.beam([a.x, a.y, a.z], [b.x, b.y, b.z], 0.05, 0x1c1c20);
+      for (const [p, base] of [[a, A.h], [b, B.h]]) {
+        buf.box(p.x - 0.1, p.x + 0.1, base, p.y + 0.25, p.z - 0.1, p.z + 0.1, 0xd0a020);
+        buf.box(p.x - 0.35, p.x + 0.35, base, base + 0.12, p.z - 0.35, p.z + 0.35, 0x3a3a40);
+        addCollider(p.x - 0.12, p.x + 0.12, p.z - 0.12, p.z + 0.12, p.y + 0.25, { y0: base, pole: true });
+      }
+    }
+  }
+  buf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  // anchor poles were added after bucketing
+  colliders.slice(-ziplines.length * 2).forEach((c) => { const b = bucketAt(c.x0, c.z0); if (!b.includes(c)) b.push(c); });
+}
+function ladderNear(x, z, y, r = 0.75) {
+  for (const L of ladders) {
+    const dx = x - L.x, dz = z - L.z;
+    if (Math.abs(dx) > 1.5 || Math.abs(dz) > 1.5) continue;
+    const along = Math.abs(dx * -L.nz + dz * L.nx), out = dx * L.nx + dz * L.nz;
+    if (along < 0.55 && out > -0.2 && out < r && y >= L.y0 - 0.6 && y < L.y1 - 0.3) return L;
+  }
+  return null;
+}
+// closest zipline whose cable passes near a hand position (x, y, z); returns {zip, s}
+function zipNear(x, y, z, maxD = 1.4) {
+  let best = null, bd = maxD;
+  for (const Z of ziplines) {
+    const px = x - Z.a.x, py = y - Z.a.y, pz = z - Z.a.z;
+    const s = px * Z.dx + py * Z.dy + pz * Z.dz;
+    if (s < -1 || s > Z.len - 4) continue;
+    const cx = Z.a.x + Z.dx * s - x, cy = Z.a.y + Z.dy * s - y, cz = Z.a.z + Z.dz * s - z, d = Math.hypot(cx, cy, cz);
+    if (d < bd) { bd = d; best = { zip: Z, s: Math.max(0, s) }; }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------
@@ -1622,6 +1746,28 @@ function setAircraftVolume(heli, drone) {
   rotorGain.gain.setTargetAtTime(clamp(heli, 0, 0.9), actx.currentTime, 0.2);
   droneGain.gain.setTargetAtTime(clamp(drone, 0, 0.05), actx.currentTime, 0.2);
 }
+sfx.vault = () => { noise(0.12, 0.18, 700, 0.6); tone(180, 0.08, 'sine', 0.06, 0.7); };
+sfx.climb = () => { noise(0.08, 0.15, 1100, 0.9); tone(240, 0.05, 'triangle', 0.05); };
+sfx.slide = () => noise(0.55, 0.16, 2400, 0.4);
+sfx.roll = () => { noise(0.3, 0.25, 400, 0.5); tone(90, 0.2, 'sine', 0.12, 0.6); };
+sfx.land = (k) => { noise(0.12, 0.12 + clamp(k, 0, 1) * 0.3, 260, 0.6); };
+sfx.step = () => noise(0.05, 0.05, 1600, 1.2);
+sfx.swoosh = () => { noise(0.25, 0.3, 900, 0.5); tone(300, 0.2, 'sine', 0.08, 0.5); };
+sfx.bonk = () => { tone(520, 0.08, 'square', 0.12, 0.4); tone(160, 0.25, 'sine', 0.2, 0.5); noise(0.1, 0.35, 900, 0.8); };
+// zipline whir: pitch and volume follow speed
+let zipOsc = null, zipGain = null;
+function setZipSound(v) {
+  if (!actx) return;
+  if (!zipOsc) {
+    if (!noiseBuf) noise(0.01, 0.0001);
+    const src = actx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    zipOsc = actx.createBiquadFilter(); zipOsc.type = 'bandpass'; zipOsc.Q.value = 6; zipOsc.frequency.value = 600;
+    zipGain = actx.createGain(); zipGain.gain.value = 0;
+    src.connect(zipOsc); zipOsc.connect(zipGain); zipGain.connect(master); src.start();
+  }
+  zipOsc.frequency.setTargetAtTime(400 + v * 90, actx.currentTime, 0.05);
+  zipGain.gain.setTargetAtTime(v > 0 ? clamp(0.1 + v / 60, 0, 0.5) : 0, actx.currentTime, 0.08);
+}
 
 // Effects: particles (steam, smoke, impact puffs) and bullet trails. No blood anywhere.
 
@@ -1772,10 +1918,10 @@ class Ragdoll {
       }
       for (let i = 0; i < this.p.length; i++) {
         const p = this.p[i], q = this.prev[i], r = 0.11 * this.scale;
-        const gy = groundY(p.x, p.z) + r;
+        const gy = floorAt(p.x, p.z, Math.max(p.y, q.y) - r, 0.05) + r;
         if (p.y < gy) { p.y = gy; q.x = lerp(q.x, p.x, 0.25); q.z = lerp(q.z, p.z, 0.25); }
         const before = { x: p.x, z: p.z };
-        resolveCircle(p, 0.15);
+        resolveBody(p, 0.15, p.y - r, 0.3);
         if (before.x !== p.x || before.z !== p.z) { q.x = lerp(q.x, p.x, 0.5); q.z = lerp(q.z, p.z, 0.5); }
       }
     }
@@ -1817,7 +1963,175 @@ function addRagdoll(person, scale, vel, impulse, hitY) {
   while (ragdolls.length > 18) ragdolls.shift().dispose();
 }
 
+// Parkour: running, jumping, sliding, vaulting low cover, mantling ledges, climbing walls and ladders,
+// and riding ziplines between rooftops. Works on a player-like body {x, y (feet), z, vx, vy, vz, yaw}.
+
+
+
+
+const GRAV = 22, JUMP_V = 7.4;
+
+function resetParkour(P) {
+  Object.assign(P, { mode: 'move', anim: null, ladder: null, zip: null, zipS: 0, zipV: 0, slideT: 0, slideCd: 0, landDip: 0, rollT: 0, grounded: true, crouch: 0, wallRunCd: 0, jumpHeld: false, airT: 0, peakY: 0 });
+}
+function eyeHeight(P) {
+  if (P.mode === 'zip') return -0.35 + 1.9; // hanging under the cable
+  return lerp(1.65, 1.0, P.crouch) - P.landDip * 0.35 - (P.rollT > 0 ? Math.sin((P.rollT / 0.5) * Math.PI) * 0.7 : 0);
+}
+
+function startAnim(P, kind, tx, ty, tz, dur, peak) {
+  P.mode = kind; P.anim = { t: 0, dur, fx: P.x, fy: P.y, fz: P.z, tx, ty, tz, peak: peak ?? Math.max(ty, P.y) };
+  P.vy = 0;
+}
+
+// Try to get up and over whatever is in front. Returns true if a move started.
+function tryLedge(P, fx, fz, inp, sprint, cb) {
+  const px = P.x + fx * 0.75, pz = P.z + fz * 0.75;
+  const top = stackTop(px, pz, P.y);
+  if (top < 0) return false;
+  const rel = top - P.y;
+  if (!headroom(px, pz, top, 1.7)) return false;
+  // reach depends on what you're doing: a running jump grabs higher, a sprint into a wall lets you scramble up it
+  let reach = P.grounded ? 1.3 : 2.45 + (P.vy > 0 ? 0.35 : 0);
+  if (P.grounded && inp.jump) reach = 2.45;
+  if (sprint && inp.jump && P.wallRunCd <= 0 && cb.stamina() > 15) reach = 4.3;
+  if (rel > reach || rel < 0.3) return false;
+  const far = stackTop(P.x + fx * 2.3, P.z + fz * 2.3, P.y);
+  const beyondX = P.x + fx * 2.7, beyondZ = P.z + fz * 2.7;
+  const thin = far < top - 0.5;
+  if (thin && rel <= 1.35 && Math.hypot(P.vx, P.vz) > 2.5) {
+    // vault: hop over and land on the far side
+    const land = floorAt(beyondX, beyondZ, top);
+    if (stackTop(beyondX, beyondZ, land) < 0 || stackTop(beyondX, beyondZ, land) <= land + 0.4) {
+      startAnim(P, 'vault', beyondX, land, beyondZ, 0.42, top + 0.45);
+      P.vaultSpeed = Math.max(6, Math.hypot(P.vx, P.vz));
+      sfx.vault(); return true;
+    }
+  }
+  const tx = P.x + fx * 1.25, tz = P.z + fz * 1.25;
+  if (floorAt(tx, tz, top + 0.02) < top - 0.05) {
+    // narrow top (a wall or fence): stand on it only if it's at least a foot wide, else vault if low
+    if (rel <= 1.35) { const land = floorAt(beyondX, beyondZ, top); startAnim(P, 'vault', beyondX, land, beyondZ, 0.45, top + 0.45); P.vaultSpeed = 6; sfx.vault(); return true; }
+    if (floorAt(px, pz, top + 0.02) < top - 0.05) return false;
+  }
+  const mx = floorAt(tx, tz, top + 0.02) >= top - 0.05 ? tx : px, mz = floorAt(tx, tz, top + 0.02) >= top - 0.05 ? tz : pz;
+  if (rel > 2.6) { cb.useStamina(18); P.wallRunCd = 1.2; }
+  startAnim(P, 'mantle', mx, top, mz, 0.2 + rel * 0.13);
+  sfx.climb(); return true;
+}
+
+function parkourMove(dt, P, inp, sprint, speed, cb) {
+  P.landDip = Math.max(0, P.landDip - dt * 3);
+  P.rollT = Math.max(0, P.rollT - dt);
+  P.slideCd -= dt; P.wallRunCd -= dt;
+  const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw), rx = Math.cos(P.yaw), rz = -Math.sin(P.yaw);
+
+  // ---- scripted moves
+  if (P.mode === 'mantle' || P.mode === 'vault') {
+    const A = P.anim; A.t += dt;
+    const k = clamp(A.t / A.dur, 0, 1), e = k * k * (3 - 2 * k);
+    P.x = lerp(A.fx, A.tx, P.mode === 'vault' ? k : e); P.z = lerp(A.fz, A.tz, P.mode === 'vault' ? k : e);
+    if (P.mode === 'vault') P.y = k < 0.5 ? lerp(A.fy, A.peak, Math.sin(k * Math.PI)) : lerp(A.ty, A.peak, Math.sin(k * Math.PI));
+    else P.y = lerp(A.fy, A.ty, Math.min(1, e * 1.4));
+    P.crouch = Math.max(P.crouch, Math.sin(k * Math.PI) * 0.45);
+    if (k >= 1) {
+      P.mode = 'move'; P.y = A.ty; P.grounded = true; P.peakY = P.y;
+      if (P.vaultSpeed) { P.vx = fx * P.vaultSpeed; P.vz = fz * P.vaultSpeed; P.vaultSpeed = 0; } else { P.vx *= 0.3; P.vz *= 0.3; }
+    }
+    return;
+  }
+  if (P.mode === 'ladder') {
+    const L = P.ladder;
+    P.x = L.x + L.nx * 0.05; P.z = L.z + L.nz * 0.05; P.vx = P.vz = 0;
+    P.y += inp.fwd * 4.2 * dt; P.crouch = Math.max(0, P.crouch - dt * 4);
+    if (inp.fwd) cb.stepSound(dt * 3);
+    if (inp.jumpEdge) { P.mode = 'move'; P.vy = 5; P.vx = L.nx * 5; P.vz = L.nz * 5; P.grounded = false; P.peakY = P.y; return; }
+    if (P.y >= L.y1 - 1.0) { startAnim(P, 'mantle', L.x - L.nx * 1.1, L.y1, L.z - L.nz * 1.1, 0.45); sfx.climb(); return; }
+    if (P.y <= L.y0 && inp.fwd < 0) { P.y = Math.max(L.y0, floorAt(P.x, P.z, L.y0 + 0.1)); P.mode = 'move'; }
+    return;
+  }
+  if (P.mode === 'zip') {
+    const Z = P.zip;
+    P.zipV = Math.min(24, P.zipV + (3 + 30 * -Z.dy) * dt - P.zipV * 0.03 * dt);
+    P.zipS += P.zipV * dt;
+    const s = Math.min(P.zipS, Z.len);
+    P.x = Z.a.x + Z.dx * s; P.z = Z.a.z + Z.dz * s; P.y = Z.a.y + Z.dy * s - 1.9;
+    cb.zipSound(P.zipV);
+    const hd = Math.hypot(Z.dx, Z.dz) || 1;
+    if (inp.jumpEdge || P.zipS >= Z.len - 1.0) {
+      const v = P.zipV * (P.zipS >= Z.len - 1.0 ? 0.55 : 0.9);
+      P.mode = 'move'; P.vx = (Z.dx / hd) * v; P.vz = (Z.dz / hd) * v; P.vy = 2.5; P.grounded = false; P.peakY = P.y;
+      cb.zipSound(0);
+    }
+    return;
+  }
+
+  // ---- free movement
+  const moving = inp.fwd !== 0 || inp.side !== 0;
+  let mx = fx * inp.fwd + rx * inp.side, mz = fz * inp.fwd + rz * inp.side; const ml = Math.hypot(mx, mz);
+  if (ml > 1) { mx /= ml; mz /= ml; }
+  // slide: crouch while sprinting
+  if (inp.crouch && sprint && P.grounded && P.slideT <= 0 && P.slideCd <= 0 && moving) { P.slideT = 0.85; P.slideCd = 1.1; const sp = Math.max(Math.hypot(P.vx, P.vz), 9); P.slideDX = mx; P.slideDZ = mz; P.vx = mx * (sp + 3.5); P.vz = mz * (sp + 3.5); sfx.slide(); }
+  const crouching = inp.crouch || !headroom(P.x, P.z, P.y, 1.8);
+  P.crouch = lerp(P.crouch, P.slideT > 0 ? 1.15 : crouching ? 1 : 0, Math.min(1, dt * 12));
+  if (P.slideT > 0) {
+    P.slideT -= dt;
+    const f = Math.max(0, 1 - dt * 1.6); P.vx *= f; P.vz *= f;
+    if (!P.grounded || P.slideT <= 0) P.slideT = 0;
+  } else {
+    const spd = crouching ? Math.min(speed, 3.2) : speed;
+    const acc = Math.min(1, dt * (P.grounded ? 12 : 2.6));
+    P.vx = lerp(P.vx, mx * spd, acc); P.vz = lerp(P.vz, mz * spd, acc);
+  }
+  const ox = P.x, oz = P.z;
+  P.x += (P.vx + P.kx) * dt; P.z += (P.vz + P.kz) * dt;
+  const tall = P.crouch > 0.5 ? 1.1 : 1.8;
+  const hit = resolveBody(P, 0.4, P.y, tall);
+  if (hit && inp.fwd > 0) {
+    const moved = Math.hypot(P.x - ox, P.z - oz) / Math.max(dt, 1e-4);
+    if (moved < Math.hypot(P.vx, P.vz) * 0.85 && tryLedge(P, fx, fz, inp, sprint, cb)) return;
+  }
+  // ladders: walk into one to grab it
+  if (inp.fwd > 0) {
+    const L = ladderNear(P.x, P.z, P.y);
+    if (L && fx * -L.nx + fz * -L.nz > 0.35) { P.mode = 'ladder'; P.ladder = L; P.vy = 0; P.slideT = 0; sfx.climb(); return; }
+  }
+  // grab a zipline cable you jump at
+  if (!P.grounded && P.vy < 3) {
+    const g = zipNear(P.x, P.y + 2.0, P.z, 0.9);
+    if (g) { P.mode = 'zip'; P.zip = g.zip; P.zipS = g.s; P.zipV = Math.max(4, Math.hypot(P.vx, P.vz) * 0.7); sfx.climb(); return; }
+  }
+  // jump
+  if (P.grounded && inp.jump && P.slideT <= 0) { P.vy = JUMP_V; P.grounded = false; P.peakY = P.y; }
+  // vertical
+  const prevY = P.y;
+  P.vy -= GRAV * dt;
+  P.y += P.vy * dt;
+  if (P.vy > 0 && !headroom(P.x, P.z, prevY, 1.85)) { P.vy = 0; P.y = prevY; }
+  const floor = floorAt(P.x, P.z, Math.max(prevY, P.y));
+  if (P.grounded && floor < P.y && P.y - floor < 0.5 && P.vy <= 0) { P.y = floor; } // walk down small steps
+  if (P.y <= floor) {
+    const impact = -P.vy, drop = P.peakY - floor;
+    P.y = floor; P.vy = 0;
+    if (!P.grounded) {
+      P.landDip = Math.min(1, impact / 16);
+      if (drop > 5.5 && impact > 13) {
+        const rolled = inp.crouch;
+        const dmg = Math.round((impact - 12) * (rolled ? 1.6 : 4.5));
+        if (rolled) { P.rollT = 0.5; sfx.roll(); } else sfx.land(1);
+        if (dmg > 0) cb.hurt(dmg, rolled);
+      } else if (impact > 6) sfx.land(impact / 16);
+    }
+    P.grounded = true; P.peakY = P.y; P.airT = 0;
+  } else {
+    if (P.grounded && P.vy <= 0 && P.y - floor > 0.5) P.peakY = P.y; // walked off an edge
+    P.grounded = false; P.airT += dt; P.peakY = Math.max(P.peakY, P.y);
+  }
+  if (P.y < groundY(P.x, P.z) - 0.5) P.y = groundY(P.x, P.z);
+}
+
 // HUNTED — survive 30 days while everyone in three towns hunts you.
+
 
 
 
@@ -1845,9 +2159,10 @@ const player = {
   lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, mag: 12, reserve: 48, reloadT: 0, fireCd: 0,
   bob: 0, dragT: 0, carHitCd: 0, recoil: 0, shoveAnim: 0, camOff: 0, sprinting: false,
 };
+resetParkour(player);
 const dayMult = () => 1 + (G.day - 1) * 0.016;
 const targetPos = () => (player.car ? { x: player.car.x, z: player.car.z } : { x: player.x, z: player.z });
-const playerEyeY = () => (player.car ? 1.2 : groundY(player.x, player.z) + player.y + 1.3);
+const playerEyeY = () => (player.car ? 1.2 : player.y + eyeHeight(player) - 0.3);
 
 // ---------------------------------------------------------------------
 // Profile ("how wanted you are")
@@ -1926,6 +2241,7 @@ class Hunter {
     this.wt = null; this.progT = 0; this.lx = x; this.lz = z; this.alertT = -1; this.strafe = Math.random() < 0.5 ? 1 : -1;
     this.dead = false;
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
+    this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
     this.spdMul = mr(0.82, 1.1); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
   }
   alert(delay = 0) {
@@ -1937,7 +2253,7 @@ class Hunter {
   die(impulse, hitY, byPlayer = false) {
     if (this.dead) return;
     this.dead = true; this.marker.visible = false;
-    this.g.position.set(this.x, groundY(this.x, this.z), this.z);
+    this.g.position.set(this.x, this.y, this.z);
     addRagdoll(this.p, this.T.scale, { x: this.vx + this.kx, y: 0, z: this.vz + this.kz }, impulse, hitY);
     if (byPlayer) { G.kills++; addHeat(this.type === 'cop' ? 22 : 14); }
   }
@@ -1949,13 +2265,15 @@ class Hunter {
   update(dt) {
     const T = this.T, tp = targetPos();
     const dx = tp.x - this.x, dz = tp.z - this.z, d = Math.hypot(dx, dz);
+    const dy = player.car ? 0 : player.y - this.y;
+    if (this.climb || this.ladder) { this.updateClimb(dt); return; }
     this.attackCd -= dt; this.fireCd -= dt;
     if (this.alertT >= 0) { this.alertT -= dt; if (this.alertT < 0) this.alert(); }
 
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
-      const see = d < 90 && los(this.x, this.z, tp.x, tp.z);
+      const see = d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
       this.hasLOS = see;
       if (this.state !== 'chase') {
         const noisy = player.car ? 30 : (player.sprinting ? 16 : 7);
@@ -1981,8 +2299,17 @@ class Hunter {
         const fx3 = -Math.sin(player.yaw), fz3 = -Math.cos(player.yaw), facing = ((this.x - tp.x) * fx3 + (this.z - tp.z) * fz3) / (d || 1);
         if (facing > 0.3 || player.car) hold = 15; else spdK = 1.15;
       } else if (this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
+      // you're up high: head for a ladder if there's one handy, otherwise to the wall below you
+      let goLadder = null;
+      if (dy > 1.4 && this.y < 1 && d < 45 && this.type !== 'brute') {
+        let bd = 30;
+        for (const L of ladders) { const ld = Math.abs(L.x - this.x) + Math.abs(L.z - this.z); if (ld < bd && L.y1 > player.y - 2 && Math.abs(L.x - tp.x) + Math.abs(L.z - tp.z) < 40) { bd = ld; goLadder = L; } }
+        if (goLadder) { tx = goLadder.x + goLadder.nx * 0.3; tz = goLadder.z + goLadder.nz * 0.3; hold = 0; }
+        if (goLadder && Math.hypot(tx - this.x, tz - this.z) < 0.9) { this.ladder = goLadder; this.stun = 0; return; }
+      }
       const ex0 = tx - this.x, ez0 = tz - this.z;
-      if (!(this.hasLOS || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z); if (n) { tx = n.x; tz = n.z; } }
+      if (this.y > 1) { /* on a roof: straight at you */ }
+      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && los(this.x, this.z, tx, tz))) { tx = n.x; tz = n.z; } }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
       const spd = T.speed * dayMult() * this.spdMul * spdK;
       if (this.noticeT > 0) { this.noticeT -= dt; tvx = 0; tvz = 0; }
@@ -2001,7 +2328,7 @@ class Hunter {
         if (this.fireCd <= 0) { this.aimT += dt; if (this.aimT > 0.35) { this.aimT = 0; this.fireCd = mr(1.3, 2.3) / Math.min(1.6, dayMult()); hunterShoot(this, d); } }
       } else { tvx = (ex / ed) * spd; tvz = (ez / ed) * spd; }
       const reach = player.car ? 2.7 : 1.25 + (this.type === 'brute' ? 0.25 : 0);
-      if (d < reach && this.attackCd <= 0 && player.alive) {
+      if (d < reach && Math.abs(dy) < 1.3 && this.attackCd <= 0 && player.alive) {
         this.attackCd = this.type === 'runner' ? 0.7 : 1.0;
         if (player.car) player.car.damage(T.dmg * 0.6);
         else hurtPlayer(T.dmg, this.x, this.z, this.type === 'brute' ? 9 : 3);
@@ -2014,6 +2341,7 @@ class Hunter {
         const guess = Math.random() < 0.6 ? G.lkp : { x: this.x, z: this.z };
         this.wt = randomOpenPoint(guess.x, guess.z, 5, 45) || { x: this.x, z: this.z };
       }
+      if (!this.wt) this.wt = { x: this.x, z: this.z };
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
       if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
@@ -2026,9 +2354,27 @@ class Hunter {
     const acc = Math.min(1, dt * (this.stun > 0 ? 2 : 8));
     this.vx = lerp(this.vx, tvx, acc); this.vz = lerp(this.vz, tvz, acc);
     this.kx *= Math.max(0, 1 - dt * 5); this.kz *= Math.max(0, 1 - dt * 5);
+    const ox = this.x, oz = this.z;
     this.x += (this.vx + this.kx) * dt; this.z += (this.vz + this.kz) * dt;
-    resolveCircle(this, 0.35 * T.scale);
-    for (const c of G.cars) if (Math.abs(c.x - this.x) < 4 && Math.abs(c.z - this.z) < 4) resolveCircleCar(this, 0.35, c);
+    const wall = resolveBody(this, 0.35 * T.scale, this.y, 1.8);
+    if (this.y < 0.5) for (const c of G.cars) if (Math.abs(c.x - this.x) < 4 && Math.abs(c.z - this.z) < 4) resolveCircleCar(this, 0.35, c);
+    // scramble up walls to get at you (runners are good at it, brutes hopeless)
+    if (wall && this.state === 'chase' && dy > 0.8 && d < 9 && this.stun <= 0 && this.noticeT <= 0 && Math.hypot(this.x - ox, this.z - oz) < dt * 1.5) {
+      const ux = dx / (d || 1), uz = dz / (d || 1), top = stackTop(this.x + ux * 0.7, this.z + uz * 0.7, this.y);
+      const maxUp = { runner: 4.3, cop: 3.1, civ: 2.5, brute: 1.4 }[this.type];
+      if (top > 0 && top - this.y <= maxUp && floorAt(this.x + ux * 1.2, this.z + uz * 1.2, top + 0.02) >= top - 0.05) {
+        this.climb = { t: 0, dur: 0.5 + (top - this.y) * 0.3, fx: this.x, fy: this.y, fz: this.z, tx: this.x + ux * 1.2, ty: top, tz: this.z + uz * 1.2 };
+      }
+    }
+    // gravity: people who run off roofs fall, and a long fall knocks them out cold
+    const prevY = this.y;
+    this.vy -= 22 * dt; this.y += this.vy * dt;
+    const floor = floorAt(this.x, this.z, Math.max(prevY, this.y));
+    if (this.y <= floor) {
+      if (this.peakY - floor > 6) { this.y = floor; this.die({ x: this.vx, y: 1, z: this.vz }, 0.5, false); return; }
+      this.y = floor; this.vy = 0; this.peakY = floor;
+    } else if (prevY - floor < 0.45 && this.vy <= 0 && this.y - floor < 0.45) { this.y = floor; this.vy = 0; }
+    else this.peakY = Math.max(this.peakY, this.y);
 
     const sp = Math.hypot(this.vx, this.vz);
     if (sp > 0.3) this.face += angDiff(this.face, Math.atan2(this.vx, this.vz)) * Math.min(1, dt * 10);
@@ -2043,10 +2389,28 @@ class Hunter {
       else if (d < 2.6) { p.armL.rotation.x = -1.35 + sw * 0.25; p.armR.rotation.x = -1.35 - sw * 0.25; } // grabbing
       else { p.armL.rotation.x = -0.35 - sw * 1.1; p.armR.rotation.x = -0.35 + sw * 1.1; } // sprinting
     } else { p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
-    this.g.position.set(this.x, groundY(this.x, this.z) + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08, this.z);
+    this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08, this.z);
     this.g.rotation.y = this.face;
     this.marker.visible = this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12);
     this.marker.material = this.noticeT > 0 ? qMarkerMat : markerMat;
+  }
+  updateClimb(dt) {
+    const p = this.p;
+    if (this.ladder) {
+      const L = this.ladder;
+      this.x = L.x + L.nx * 0.1; this.z = L.z + L.nz * 0.1; this.y += (this.type === 'runner' ? 3.6 : 2.6) * dt;
+      this.face = Math.atan2(-L.nx, -L.nz);
+      p.armL.rotation.x = -2.6 + Math.sin(this.y * 4) * 0.4; p.armR.rotation.x = -2.6 - Math.sin(this.y * 4) * 0.4;
+      p.legL.rotation.x = Math.sin(this.y * 4) * 0.5; p.legR.rotation.x = -Math.sin(this.y * 4) * 0.5;
+      if (this.y >= L.y1 - 1) { this.ladder = null; this.climb = { t: 0, dur: 0.5, fx: this.x, fy: this.y, fz: this.z, tx: L.x - L.nx * 1.1, ty: L.y1, tz: L.z - L.nz * 1.1 }; }
+    } else {
+      const C = this.climb; C.t += dt;
+      const k = Math.min(1, C.t / C.dur), e = k * k * (3 - 2 * k);
+      this.x = lerp(C.fx, C.tx, e); this.z = lerp(C.fz, C.tz, e); this.y = lerp(C.fy, C.ty, Math.min(1, e * 1.5));
+      p.armL.rotation.x = p.armR.rotation.x = -2.8 + k * 2;
+      if (k >= 1) { this.climb = null; this.vy = 0; this.peakY = this.y; }
+    }
+    this.g.position.set(this.x, this.y, this.z); this.g.rotation.y = this.face;
   }
   navTo(t) {
     const a = Math.atan2(t.x - this.x, t.z - this.z);
@@ -2082,7 +2446,7 @@ function shootAtPlayer(from, pHit, dmg, color, dist) {
 }
 function hunterShoot(h, d) {
   const s = h.T.scale;
-  _from.set(h.x + Math.cos(h.face) * 0.4 * s + Math.sin(h.face) * 0.6, 1.45 * s, h.z - Math.sin(h.face) * 0.4 * s + Math.cos(h.face) * 0.6);
+  _from.set(h.x + Math.cos(h.face) * 0.4 * s + Math.sin(h.face) * 0.6, h.y + 1.45 * s, h.z - Math.sin(h.face) * 0.4 * s + Math.cos(h.face) * 0.6);
   shootAtPlayer(_from, (0.3 + G.day * 0.008) * clamp(1.4 - d / 30, 0.4, 1.2), 7, 0xffa060, d);
 }
 
@@ -2259,7 +2623,7 @@ function carInteractions() {
     if (!player.car && player.alive && c.driver !== 'player') {
       const p = { x: player.x, z: player.z };
       if (resolveCircleCar(p, 0.4, c)) {
-        if (sp > 5 && player.carHitCd <= 0 && player.y < 0.9) {
+        if (sp > 5 && player.carHitCd <= 0 && player.y - groundY(player.x, player.z) < 0.9) {
           player.carHitCd = 1.2;
           hurtPlayer(Math.min(55, sp * 2.4), c.x - c.fx * 3, c.z - c.fz * 3, 6 + sp * 0.5);
           sfx.thud(); c.speed *= 0.5;
@@ -2289,6 +2653,18 @@ function enterCar() {
   player.yaw = c.heading + Math.PI;
   sfx.pickup();
 }
+function zipStartNear() {
+  if (player.car || player.mode !== 'move') return null;
+  for (const Z of ziplines) if (Math.abs(Z.a.x - player.x) < 2.6 && Math.abs(Z.a.z - player.z) < 2.6 && Math.abs(Z.a.y - 3.3 - player.y) < 1.2) return Z;
+  return null;
+}
+function useAction() {
+  if (player.car) { exitCar(); return; }
+  if (player.mode === 'zip') { input.jumpEdge = true; return; }
+  const Z = zipStartNear();
+  if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
+  enterCar();
+}
 function exitCar(forced = false) {
   const c = player.car; if (!c) return;
   if (!forced && Math.abs(c.speed) > 6) return;
@@ -2296,7 +2672,7 @@ function exitCar(forced = false) {
   const p = { x: c.x - rx * 2.2, z: c.z - rz * 2.2 };
   resolveCircle(p, 0.4);
   if (resolveCircleCar(p, 0.4, c)) { p.x = c.x + rx * 2.2; p.z = c.z + rz * 2.2; resolveCircle(p, 0.4); }
-  player.x = p.x; player.z = p.z; player.y = 0; player.vy = 0;
+  player.x = p.x; player.z = p.z; player.y = groundY(p.x, p.z); player.vy = 0; resetParkour(player);
   player.yaw = c.heading + Math.PI; player.pitch = 0;
   if (!c.wrecked) c.driver = null;
   player.car = null;
@@ -2586,7 +2962,7 @@ function playerShoot() {
   let tHit = raycastWorld(o, _camDir, 160).t, target = null, carHit = null, airHit = null;
   for (const h of G.hunters) {
     if (h.dead || Math.abs(h.x - o.x) > 160 || Math.abs(h.z - o.z) > 160) continue;
-    const s = h.T.scale, t = rayCylinder(o, _camDir, h.x, h.z, 0.36 * s, 0, 1.95 * s, tHit);
+    const s = h.T.scale, t = rayCylinder(o, _camDir, h.x, h.z, 0.36 * s, h.y, h.y + 1.95 * s, tHit);
     if (t > 0 && t < tHit) { tHit = t; target = h; carHit = null; }
   }
   for (const c of G.cars) { if (c.far) continue; const t = rayCar(o, _camDir, c, tHit); if (t > 0 && t < tHit) { tHit = t; carHit = c; target = null; } }
@@ -2594,7 +2970,7 @@ function playerShoot() {
   const hitP = o.clone().addScaledVector(_camDir, tHit);
   spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
   if (target) {
-    const head = hitP.y > 1.5 * target.T.scale, dl = Math.hypot(_camDir.x, _camDir.z) || 1;
+    const head = hitP.y > target.y + 1.5 * target.T.scale, dl = Math.hypot(_camDir.x, _camDir.z) || 1;
     target.damage(head ? 3 : 1, _camDir.x / dl, _camDir.z / dl, hitP.y);
     sfx.hit();
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.25, vy: 0.3, size0: 0.15, size1: 0.6, alpha: 0.9, color: 0xffffff });
@@ -2617,29 +2993,31 @@ function playerShove() {
   for (const h of G.hunters) {
     if (h.dead) continue;
     const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
-    if (d < 2.8 && (dx * fx + dz * fz) / (d || 1) > 0.25) { h.kx += (dx / d) * 13 * h.T.knock; h.kz += (dz / d) * 13 * h.T.knock; h.stun = Math.max(h.stun, h.T.stun); h.alert(); }
+    if (d < 2.8 && Math.abs(h.y - player.y) < 1.2 && (dx * fx + dz * fz) / (d || 1) > 0.25) { h.kx += (dx / d) * 13 * h.T.knock; h.kz += (dz / d) * 13 * h.T.knock; h.stun = Math.max(h.stun, h.T.stun); h.alert(); }
   }
 }
 
 // =====================================================================
 // Input
 // =====================================================================
-const input = { fwd: 0, side: 0, sprint: false, jump: false, runToggle: false };
+const input = { fwd: 0, side: 0, sprint: false, jump: false, runToggle: false, crouch: false, jumpEdge: false };
 const keys = new Set();
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const stick = { id: null, cx: 0, cy: 0 };
-let touchJump = false, lookTouch = null;
+let touchJump = false, touchCrouch = false, lookTouch = null;
 function recomputeKeys() {
   if (isTouch && stick.id !== null) return;
   input.fwd = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
   input.side = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
   input.sprint = keys.has('ShiftLeft') || keys.has('ShiftRight') || input.runToggle;
   input.jump = keys.has('Space') || touchJump;
+  input.crouch = keys.has('KeyC') || keys.has('ControlLeft') || touchCrouch;
 }
 window.addEventListener('keydown', (e) => {
   if (G.mode !== 'playing') return;
+  if (e.code === 'Space' && !e.repeat) input.jumpEdge = true;
   keys.add(e.code); recomputeKeys();
-  if (e.code === 'KeyE') { player.car ? exitCar() : enterCar(); }
+  if (e.code === 'KeyE') useAction();
   if (e.code === 'KeyR') startReload();
   if (e.code === 'KeyF') playerShove();
   if (e.code === 'KeyM') G.bigMap = !G.bigMap;
@@ -2713,9 +3091,10 @@ if (isTouch) {
   let fireHeld = null;
   btn('btn-fire', () => { playerShoot(); clearInterval(fireHeld); fireHeld = setInterval(playerShoot, 220); }, () => clearInterval(fireHeld));
   btn('btn-shove', playerShove);
-  btn('btn-jump', () => { touchJump = true; input.jump = true; }, () => { touchJump = false; input.jump = false; });
+  btn('btn-jump', () => { touchJump = true; input.jump = true; input.jumpEdge = true; }, () => { touchJump = false; input.jump = false; });
+  btn('btn-slide', () => { touchCrouch = true; input.crouch = true; }, () => { touchCrouch = false; input.crouch = false; });
   btn('btn-run', (el) => { input.runToggle = !input.runToggle; input.sprint = input.runToggle; el.classList.toggle('on', input.runToggle); });
-  btn('btn-car', () => (player.car ? exitCar() : enterCar()));
+  btn('btn-car', useAction);
   btn('btn-reload', startReload);
   btn('btn-pause', pauseGame);
   btn('btn-map', () => (G.bigMap = !G.bigMap));
@@ -2757,6 +3136,9 @@ function drawMinimap() {
   for (const b of blockRects) if (inR(b.x0, b.z0, b.x1, b.z1, 60)) mm.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0);
   if (!big) { mm.fillStyle = '#57535e'; for (const c of colliders) if (c.x1 - c.x0 > 2 && c.z1 - c.z0 > 2 && c.h > 2 && inR(c.x0, c.z0, c.x1, c.z1, 20)) mm.fillRect(c.x0, c.z0, c.x1 - c.x0, c.z1 - c.z0); }
   if (big) { mm.fillStyle = '#fff'; mm.font = `bold ${14 / sc}px Arial`; mm.textAlign = 'center'; for (const c of CITIES) { mm.save(); mm.translate(c.cx, c.cz); mm.fillText(c.name, 0, 0); mm.restore(); } }
+  mm.strokeStyle = '#ffd23a'; mm.lineWidth = 1.6 / sc;
+  for (const Z of ziplines) if (inR(Math.min(Z.a.x, Z.b.x), Math.min(Z.a.z, Z.b.z), Math.max(Z.a.x, Z.b.x), Math.max(Z.a.z, Z.b.z), 10)) { mm.beginPath(); mm.moveTo(Z.a.x, Z.a.z); mm.lineTo(Z.b.x, Z.b.z); mm.stroke(); }
+  if (!big) { mm.fillStyle = '#ffd23a'; for (const L of ladders) if (inR(L.x, L.z, L.x, L.z, 5)) mm.fillRect(L.x - 1.2, L.z - 1.2, 2.4, 2.4); }
   for (const p of G.pickups) if (p.active) { mm.fillStyle = p.kind === 'health' ? '#3cff6a' : '#ffc83a'; mm.fillRect(p.x - 1.5 / sc * 1.2, p.z - 1.5 / sc * 1.2, 3 / sc * 1.2, 3 / sc * 1.2); }
   for (const c of G.cars) {
     if (c.far) continue;
@@ -2813,9 +3195,12 @@ function updateHUD(dt) {
   hud.cross.classList.toggle('hidden', !!player.car);
   let prompt = '';
   if (player.car) prompt = Math.abs(player.car.speed) > 6 ? '' : (isTouch ? 'Tap CAR to get out' : 'Press E to get out');
-  else if (nearestCar(3.6)) prompt = isTouch ? 'Tap CAR to steal it' : 'Press E to steal this car';
+  else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
+  else if (player.mode === 'ladder') prompt = isTouch ? 'Push forward to climb, JUMP to let go' : 'W / S to climb, Space to let go';
+  else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
+  else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
-  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6)));
+  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip'));
 }
 
 // =====================================================================
@@ -2889,6 +3274,7 @@ function spawnTraffic(count) {
 }
 function resetGame() {
   clearWorld();
+  resetParkour(player);
   Object.assign(player, { x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: Math.PI / 4, pitch: 0, hp: 100, stam: 100, exhausted: false, lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, mag: 12, reserve: 48, reloadT: 0, fireCd: 0, dragT: 0, carHitCd: 0, camOff: 0 });
   Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false });
   G.lkp = { x: 0, z: 0 };
@@ -2968,24 +3354,28 @@ function updatePlayer(dt) {
   if (player.exhausted && player.stam > 30) player.exhausted = false;
   player.sprinting = sprint;
   const speed = sprint ? 10 : 5.8;
-  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-  let mx = fx * input.fwd + rx * input.side, mz = fz * input.fwd + rz * input.side; const ml = Math.hypot(mx, mz);
-  if (ml > 1) { mx /= ml; mz /= ml; }
-  const acc = Math.min(1, dt * (player.y > 0.05 ? 3 : 12));
-  player.vx = lerp(player.vx, mx * speed, acc); player.vz = lerp(player.vz, mz * speed, acc);
   player.kx *= Math.max(0, 1 - dt * 6); player.kz *= Math.max(0, 1 - dt * 6);
-  player.x += (player.vx + player.kx) * dt; player.z += (player.vz + player.kz) * dt;
-  resolveCircle(player, 0.4);
-  if (input.jump && player.y <= 0.001) player.vy = 7.2;
-  player.vy -= 22 * dt; player.y = Math.max(0, player.y + player.vy * dt);
-  if (player.y === 0) player.vy = 0;
+  parkourMove(dt, player, input, sprint, speed, parkourCb);
+  input.jumpEdge = false;
   for (const h of G.hunters) {
-    if (h.dead) continue;
+    if (h.dead || Math.abs(h.y - player.y) > 1.2) continue;
     const dx = player.x - h.x, dz = player.z - h.z, d = Math.hypot(dx, dz), m = 0.4 + 0.35 * h.T.scale;
     if (d < m && d > 1e-4) { const k = ((m - d) / d) * 0.5; player.x += dx * k; player.z += dz * k; h.x -= dx * k; h.z -= dz * k; }
   }
-  player.bob += Math.hypot(player.vx, player.vz) * dt * 1.6;
+  if (player.grounded && player.mode === 'move') {
+    const ob = player.bob;
+    player.bob += Math.hypot(player.vx, player.vz) * dt * 1.6 * (player.slideT > 0 ? 0 : 1);
+    if (Math.floor(ob / Math.PI) !== Math.floor(player.bob / Math.PI)) sfx.step();
+  }
 }
+let stepAcc = 0;
+const parkourCb = {
+  hurt: (dmg, rolled) => { hurtPlayer(dmg, player.x, player.z); showMsg(rolled ? 'ROLLED IT' : 'HARD LANDING', 1.2); },
+  stamina: () => player.stam,
+  useStamina: (n) => { player.stam = Math.max(0, player.stam - n); },
+  stepSound: (k) => { stepAcc += k; if (stepAcc > 1) { stepAcc = 0; sfx.climb(); } },
+  zipSound: (v) => setZipSound(v),
+};
 function separateHunters() {
   const hs = G.hunters;
   for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) {
@@ -3013,17 +3403,29 @@ function updateCamera(dt, t) {
     camera.position.x += sx; camera.position.y += sy;
     vm.visible = false; return;
   }
-  const bobY = Math.sin(player.bob * 2) * 0.05 * (player.y > 0 ? 0 : 1);
-  let eye = 1.65;
+  const bobY = Math.sin(player.bob * 2) * 0.05 * (player.grounded ? 1 : 0) * (player.sprinting ? 1.6 : 1);
+  let eye = eyeHeight(player);
   if (!player.alive) { G.deathT = (G.deathT || 0) + dt; eye = Math.max(0.3, 1.65 - G.deathT * 1.5); } else G.deathT = 0;
-  camera.position.set(player.x + sx, groundY(player.x, player.z) + player.y + eye + bobY + sy, player.z);
-  camera.rotation.set(player.pitch + player.recoil * 0.03, player.yaw, player.alive ? 0 : Math.min(1.2, G.deathT * 1.4));
+  camera.position.set(player.x + sx, player.y + eye + bobY + sy, player.z);
+  // adrenaline: the view widens with speed, tilts on the zipline and dips through vaults and mantles
+  const hs = Math.hypot(player.vx, player.vz);
+  const wantFov = 72 + clamp((hs - 5.8) * 1.4, 0, 8) + (player.slideT > 0 ? 6 : 0) + (player.mode === 'zip' ? clamp(player.zipV * 0.6, 0, 14) : 0) + (player.mode === 'vault' ? 5 : 0);
+  if (Math.abs(camera.fov - wantFov) > 0.05) { camera.fov = lerp(camera.fov, wantFov, Math.min(1, dt * 6)); camera.updateProjectionMatrix(); }
+  G.camRoll = lerp(G.camRoll || 0, player.mode === 'zip' ? 0.07 * Math.sin(G.elapsed * 2) + 0.05 : player.slideT > 0 ? 0.06 : -input.side * 0.012 * (player.sprinting ? 1 : 0.4), Math.min(1, dt * 6));
+  const mantleDip = player.mode === 'mantle' ? -0.25 * Math.sin(clamp(player.anim.t / player.anim.dur, 0, 1) * Math.PI) : 0;
+  camera.rotation.set(player.pitch + player.recoil * 0.03 + mantleDip - player.landDip * 0.08, player.yaw, player.alive ? G.camRoll : Math.min(1.2, G.deathT * 1.4));
   vm.visible = player.alive;
   const b = player.bob;
   vm.position.set(Math.cos(b) * 0.012, Math.abs(Math.sin(b)) * -0.015 - (player.reloadT > 0 ? 0.25 : 0), player.recoil * 0.06);
   armR.rotation.x = 0.05 + player.recoil * 0.25;
   const sh = Math.sin(player.shoveAnim * Math.PI);
   armL.position.z = -0.42 - sh * 0.25; armR.position.z = -0.42 - sh * 0.2;
+  // hands reach up for ladders, ledges and the zipline handle
+  const reach = player.mode === 'zip' || player.mode === 'ladder' ? 1 : player.mode === 'mantle' ? 0.7 : 0;
+  G.vmReach = lerp(G.vmReach || 0, reach, Math.min(1, dt * 10));
+  armL.rotation.x = 0.1 + G.vmReach * 0.7; armL.position.y = -0.27 + G.vmReach * 0.6; armL.position.x = -0.08 - G.vmReach * 0.12;
+  if (player.mode === 'ladder') armL.position.y += Math.sin(player.y * 3) * 0.06;
+  vm.position.y -= G.vmReach * 0.12;
 }
 function updateDirector(dt) {
   G.hour = hourAt(G.elapsed);
@@ -3147,7 +3549,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>

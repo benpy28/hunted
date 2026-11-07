@@ -939,6 +939,115 @@ export function generateWorld() {
   waterBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0a1a2a }));
   lanes.push(...laneMap.values());
   buildBuckets();
+  genParkour();
+}
+
+// ---------------------------------------------------------------------
+// Parkour routes: ladders up the sides of buildings and ziplines between rooftops
+// ---------------------------------------------------------------------
+function placeLadder(buf, L) {
+  const px = -L.nz, pz = L.nx; // along the wall
+  for (const s of [-0.28, 0.28]) { const x = L.x + px * s, z = L.z + pz * s; buf.box(x - 0.04, x + 0.04, L.y0, L.y1 + 1, z - 0.04, z + 0.04, 0x3a3c42); }
+  for (let y = L.y0 + 0.35; y < L.y1 + 0.9; y += 0.38) buf.beam([L.x - px * 0.28, y, L.z - pz * 0.28], [L.x + px * 0.28, y, L.z + pz * 0.28], 0.045, 0x5a5c62);
+  ladders.push(L);
+}
+function tryLadderOn(r, buf) {
+  for (let t = 0; t < 8; t++) {
+    const side = Math.floor(srand() * 4), w = r.x1 - r.x0, d = r.z1 - r.z0;
+    const nx = side === 0 ? 1 : side === 1 ? -1 : 0, nz = side === 2 ? 1 : side === 3 ? -1 : 0;
+    const len = nx ? d : w; if (len < 3.5) continue;
+    const a = sr(1.2, len - 1.2);
+    const x = nx ? (nx > 0 ? r.x1 + 0.3 : r.x0 - 0.3) : r.x0 + a, z = nz ? (nz > 0 ? r.z1 + 0.3 : r.z0 - 0.3) : r.z0 + a;
+    if (pointBlocked(x, z, 0.12) || pointBlocked(x + nx * 0.8, z + nz * 0.8, 0.2)) continue;
+    if (stackTop(x - nx * 0.6, z - nz * 0.6, r.h - 0.5) > r.h + 1.2) continue; // something tall right at the top
+    placeLadder(buf, { x, z, nx, nz, y0: 0, y1: r.h, roof: r });
+    return true;
+  }
+  return false;
+}
+function genParkour() {
+  const buf = new GeoBuf();
+  for (const f of forcedLadders) placeLadder(buf, { x: f.x, z: f.z, nx: f.nx, nz: f.nz, y0: f.y0, y1: f.roof.h, roof: f.roof });
+  const hasLadder = new Set(ladders.map((l) => l.roof));
+  for (const r of roofs) {
+    if (r.house || r.stack || r.landmark || r.crane || r.catwalk || r.h < 4.5 || r.h > 45 || !r.city) continue;
+    const chance = r.city.style === 'metro' ? 0.35 : r.city.style === 'industrial' ? 0.55 : 0.6;
+    if (srand() < chance && tryLadderOn(r, buf)) hasLadder.add(r);
+  }
+  // ziplines: from a higher roof to a lower one across a street or yard
+  const cap = { metro: 26, suburb: 9, industrial: 16 }, used = new Map();
+  for (const city of CITIES) {
+    const rs = roofs.filter((r) => r.city === city && !r.catwalk && r.h >= 3);
+    const pairs = [];
+    for (const A of rs) {
+      if (A.house || A.stack || A.h < 8 || A.h > 60) continue;
+      for (const B of rs) {
+        if (B === A || B.h > A.h - 4) continue;
+        const acx = (A.x0 + A.x1) / 2, acz = (A.z0 + A.z1) / 2, bcx = (B.x0 + B.x1) / 2, bcz = (B.z0 + B.z1) / 2;
+        const cd = Math.hypot(bcx - acx, bcz - acz); if (cd < 26 || cd > 90) continue;
+        pairs.push([A, B, srand()]);
+      }
+    }
+    pairs.sort((p, q) => p[2] - q[2]);
+    let n = 0;
+    for (const [A, B] of pairs) {
+      if (n >= cap[city.style]) break;
+      if ((used.get(A) || 0) >= 2 || (used.get(B) || 0) >= 2) continue;
+      const bcx = (B.x0 + B.x1) / 2, bcz = (B.z0 + B.z1) / 2, acx = (A.x0 + A.x1) / 2, acz = (A.z0 + A.z1) / 2;
+      const ax = clamp(bcx, A.x0 + 1.6, A.x1 - 1.6), az = clamp(bcz, A.z0 + 1.6, A.z1 - 1.6);
+      const bx = clamp(acx, B.x0 + 1.2, B.x1 - 1.2), bz = clamp(acz, B.z0 + 1.2, B.z1 - 1.2);
+      const a = { x: ax, y: A.h + 3.3, z: az }, b = { x: bx, y: B.h + 2.2, z: bz };
+      const len = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z), hd = Math.hypot(b.x - a.x, b.z - a.z);
+      const slope = (a.y - b.y) / hd;
+      if (hd < 22 || slope < 0.07 || slope > 0.5) continue;
+      if (stackTop(ax, az, A.h - 0.1, 0.8) > A.h + 0.8 || stackTop(bx, bz, B.h - 0.1, 0.8) > B.h + 0.8) continue;
+      let clear = true;
+      for (let s = 1.5; s < hd - 1.5 && clear; s += 1.5) {
+        const t = s / hd, x = lerp(a.x, b.x, t), y = lerp(a.y, b.y, t), z = lerp(a.z, b.z, t);
+        const inA = x > A.x0 && x < A.x1 && z > A.z0 && z < A.z1, inB = x > B.x0 && x < B.x1 && z > B.z0 && z < B.z1;
+        for (const c of bucketAt(x, z)) {
+          if (c.water || x < c.x0 - 0.6 || x > c.x1 + 0.6 || z < c.z0 - 0.6 || z > c.z1 + 0.6) continue;
+          if ((inA && (c === A || c.y0 >= A.h - 0.01) && c.h <= A.h + 0.75) || (inB && (c === B || c.y0 >= B.h - 0.01) && c.h <= B.h + 0.75)) continue;
+          if (c.h > y - 2.1 && c.y0 < y + 0.3) { clear = false; break; }
+        }
+      }
+      if (!clear) continue;
+      if (!hasLadder.has(A) && !A.crane && !tryLadderOn(A, buf)) continue;
+      hasLadder.add(A);
+      used.set(A, (used.get(A) || 0) + 1); used.set(B, (used.get(B) || 0) + 1); n++;
+      ziplines.push({ a, b, len, hd, dx: (b.x - a.x) / len, dy: (b.y - a.y) / len, dz: (b.z - a.z) / len, A, B });
+      buf.beam([a.x, a.y, a.z], [b.x, b.y, b.z], 0.05, 0x1c1c20);
+      for (const [p, base] of [[a, A.h], [b, B.h]]) {
+        buf.box(p.x - 0.1, p.x + 0.1, base, p.y + 0.25, p.z - 0.1, p.z + 0.1, 0xd0a020);
+        buf.box(p.x - 0.35, p.x + 0.35, base, base + 0.12, p.z - 0.35, p.z + 0.35, 0x3a3a40);
+        addCollider(p.x - 0.12, p.x + 0.12, p.z - 0.12, p.z + 0.12, p.y + 0.25, { y0: base, pole: true });
+      }
+    }
+  }
+  buf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  // anchor poles were added after bucketing
+  colliders.slice(-ziplines.length * 2).forEach((c) => { const b = bucketAt(c.x0, c.z0); if (!b.includes(c)) b.push(c); });
+}
+export function ladderNear(x, z, y, r = 0.75) {
+  for (const L of ladders) {
+    const dx = x - L.x, dz = z - L.z;
+    if (Math.abs(dx) > 1.5 || Math.abs(dz) > 1.5) continue;
+    const along = Math.abs(dx * -L.nz + dz * L.nx), out = dx * L.nx + dz * L.nz;
+    if (along < 0.55 && out > -0.2 && out < r && y >= L.y0 - 0.6 && y < L.y1 - 0.3) return L;
+  }
+  return null;
+}
+// closest zipline whose cable passes near a hand position (x, y, z); returns {zip, s}
+export function zipNear(x, y, z, maxD = 1.4) {
+  let best = null, bd = maxD;
+  for (const Z of ziplines) {
+    const px = x - Z.a.x, py = y - Z.a.y, pz = z - Z.a.z;
+    const s = px * Z.dx + py * Z.dy + pz * Z.dz;
+    if (s < -1 || s > Z.len - 4) continue;
+    const cx = Z.a.x + Z.dx * s - x, cy = Z.a.y + Z.dy * s - y, cz = Z.a.z + Z.dz * s - z, d = Math.hypot(cx, cy, cz);
+    if (d < bd) { bd = d; best = { zip: Z, s: Math.max(0, s) }; }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------

@@ -65,3 +65,25 @@ export function setAircraftVolume(heli, drone) {
   rotorGain.gain.setTargetAtTime(clamp(heli, 0, 0.9), actx.currentTime, 0.2);
   droneGain.gain.setTargetAtTime(clamp(drone, 0, 0.05), actx.currentTime, 0.2);
 }
+sfx.vault = () => { noise(0.12, 0.18, 700, 0.6); tone(180, 0.08, 'sine', 0.06, 0.7); };
+sfx.climb = () => { noise(0.08, 0.15, 1100, 0.9); tone(240, 0.05, 'triangle', 0.05); };
+sfx.slide = () => noise(0.55, 0.16, 2400, 0.4);
+sfx.roll = () => { noise(0.3, 0.25, 400, 0.5); tone(90, 0.2, 'sine', 0.12, 0.6); };
+sfx.land = (k) => { noise(0.12, 0.12 + clamp(k, 0, 1) * 0.3, 260, 0.6); };
+sfx.step = () => noise(0.05, 0.05, 1600, 1.2);
+sfx.swoosh = () => { noise(0.25, 0.3, 900, 0.5); tone(300, 0.2, 'sine', 0.08, 0.5); };
+sfx.bonk = () => { tone(520, 0.08, 'square', 0.12, 0.4); tone(160, 0.25, 'sine', 0.2, 0.5); noise(0.1, 0.35, 900, 0.8); };
+// zipline whir: pitch and volume follow speed
+let zipOsc = null, zipGain = null;
+export function setZipSound(v) {
+  if (!actx) return;
+  if (!zipOsc) {
+    if (!noiseBuf) noise(0.01, 0.0001);
+    const src = actx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    zipOsc = actx.createBiquadFilter(); zipOsc.type = 'bandpass'; zipOsc.Q.value = 6; zipOsc.frequency.value = 600;
+    zipGain = actx.createGain(); zipGain.gain.value = 0;
+    src.connect(zipOsc); zipOsc.connect(zipGain); zipGain.connect(master); src.start();
+  }
+  zipOsc.frequency.setTargetAtTime(400 + v * 90, actx.currentTime, 0.05);
+  zipGain.gain.setTargetAtTime(v > 0 ? clamp(0.1 + v / 60, 0, 0.5) : 0, actx.currentTime, 0.08);
+}

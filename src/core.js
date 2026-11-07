@@ -147,6 +147,18 @@ export class GeoBuf {
       if (cap && rTop > 0) this.quad([cx, y1, cz], p(a1, rTop, y1), p(a0, rTop, y1), p(a0, rTop, y1), [0, 1, 0], U, c);
     }
   }
+  // square beam between two arbitrary points (cables, rails)
+  beam(a, b, t, color) {
+    const c = toCol(color), U = [0, 0, 1, 0, 1, 1, 0, 1];
+    const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]).normalize();
+    const up = Math.abs(d.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const s1 = new THREE.Vector3().crossVectors(d, up).normalize().multiplyScalar(t / 2), s2 = new THREE.Vector3().crossVectors(s1, d).normalize().multiplyScalar(t / 2);
+    const P = (o, k1, k2) => [o[0] + s1.x * k1 + s2.x * k2, o[1] + s1.y * k1 + s2.y * k2, o[2] + s1.z * k1 + s2.z * k2];
+    for (const [k1, k2, m1, m2] of [[1, 1, 1, -1], [1, -1, -1, -1], [-1, -1, -1, 1], [-1, 1, 1, 1]]) {
+      const n = new THREE.Vector3().addScaledVector(s1, (k1 + m1) / 2).addScaledVector(s2, (k2 + m2) / 2).normalize();
+      this.quad(P(a, k1, k2), P(a, m1, m2), P(b, m1, m2), P(b, k1, k2), [n.x, n.y, n.z], U, c);
+    }
+  }
   geometry() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
