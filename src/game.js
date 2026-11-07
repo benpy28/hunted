@@ -16,7 +16,7 @@ import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } f
 import { links } from './world.js';
 import { walkIns } from './streets.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
-import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
+import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
 import { shopRooms, atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
@@ -196,6 +196,8 @@ class Hunter {
     const T = this.T, tp = targetPos();
     const dx = tp.x - this.x, dz = tp.z - this.z, d = Math.hypot(dx, dz);
     const dy = player.car ? 0 : player.y - this.y;
+    // their face shows how they feel about you
+    setMood(this.p, this.held || this.cowerT > 0 || this.panicT > 0 || this.stun > 0 ? 'scared' : this.state === 'chase' ? 'angry' : this.sus > 0.5 || this.alertT >= 0 ? 'smug' : G.super && d < 20 ? 'happy' : 'neutral');
     if (this.climb || this.ladder) { this.updateClimb(dt); return; }
     if (this.held) { // dangling in front of you, legs going
       camera.getWorldDirection(_hd);
