@@ -36,18 +36,20 @@ test('climb into a bin unseen and the chase loses you; climb out again with E', 
     let spot = null;
     for (let x = -400; x < 900 && !spot; x += 3) { const T = H.hideSpotNear(x, 0.15, 0, 999); if (T && T.kind === 'dumpster') spot = T; }
     H.player.x = spot.stand.x; H.player.z = spot.stand.z; H.player.y = 0.15;
+    const why = { junk: !!H.junkNear(H.player.x, H.player.y, H.player.z), pram: !!H.pramNear(H.player.x, H.player.z), kid: !!H.kidNear(H.player.x, H.player.z), town: !!H.townUseTarget(H.TDK), md: !!H.mdUseTarget(H.TDK), ic: !!H.icHatchNear(H.TDK), gl: !!H.lorryRearNear(H.GJ), cars: H.G.cars.filter((c) => Math.hypot(c.x - H.player.x, c.z - H.player.z) < 4).map((c) => c.kind), mode: H.player.mode, y: H.player.y };
     H.useAction();
     const inBin = !!H.player.hide && H.player.hide === spot;
+    Object.assign(why, { hide: H.player.hide?.kind, car: H.player.car?.kind, ride: !!H.DL_STATE.ride, spot: [spot.x, spot.z] });
     // someone was chasing, but they're round the corner and didn't see you get in
     const a = Math.random() * 6.28, h = H.person(H, spot.stand.x + Math.sin(a) * 25, spot.stand.z + Math.cos(a) * 25, { waitT: 0 });
     h.state = 'chase'; h.lastSeen = 0; h.noticeT = 0;
     H.step(4);
-    const r = { inBin, still: !!H.player.hide, conspic: H.G.conspic, state: h.state, hp: H.player.hp, airHide: H.underRoof() };
+    const r = { why, inBin, still: !!H.player.hide, conspic: H.G.conspic, state: h.state, hp: H.player.hp, airHide: H.underRoof() };
     H.useAction();
     r.out = !H.player.hide; r.dist = Math.hypot(H.player.x - spot.stand.x, H.player.z - spot.stand.z);
     return r;
   });
-  assert.ok(s.inBin, 'E at a dumpster should put you in it');
+  assert.ok(s.inBin, `E at a dumpster should put you in it ${JSON.stringify(s.why)}`);
   assert.ok(s.still, 'you should still be hidden');
   assert.equal(s.conspic, 0, 'hidden in a bin you don\'t stand out at all');
   assert.equal(s.state, 'search', 'a chaser who never saw you go in should lose you');

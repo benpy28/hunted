@@ -64,7 +64,7 @@ test('at the next drop the driver opens up the back, and sometimes he finds you'
     const L = H.G.cars.find((c) => c.r9 && c.lane && c.lane.dir > 0);
     L.x = 300; L.z = L.lane.fixed; L.heading = Math.PI / 2; L.speed = 0; L.dl = { phase: null, cool: 99 };
     let caught = 0, kept = 0;
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 40; i++) {
       H.fresh(H);
       H.dlInternals.dlStart(L, { x: 302, z: L.z - 7, home: false }, H.TDK);
       const r = H.dlInternals.dlRear(L, 0.5); H.player.x = r.x; H.player.z = r.z;

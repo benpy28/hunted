@@ -19,7 +19,8 @@ before(async () => {
       for (const Ho of H.awInternals.awHorses) Ho.warnT = 0;
     };
     H.goTo = (H, x, z) => { H.player.x = x; H.player.z = z; H.player.y = H.floorAt(x, z, 1.5); H.player.vx = H.player.vz = 0; H.navRecenter(x, z, true); };
-    H.stepAt = (H, secs, hour = 10, each) => { for (let i = 0; i < secs * 30; i++) { H.G.hour = hour; H.step(1 / 30); if (each && each()) return true; } return false; };
+    // the player is only watching here: keep the run going (nobody arrests the spectator mid-test)
+    H.stepAt = (H, secs, hour = 10, each) => { for (let i = 0; i < secs * 30; i++) { H.G.hour = hour; H.G.mode = 'playing'; H.player.alive = true; H.player.hp = 80; H.G.heat = 0; H.step(1 / 30); if (each && each()) return true; } return false; };
   });
 });
 after(async () => { await g?.close(); });
@@ -36,19 +37,19 @@ test('match day: the away coach pulls up on Route 9, the fans walk round to the 
     // an away goal: their end goes up
     const R = H.mdInternals.matchRec(2); H.AW_STATE.lastAway[2] = R.away; const goals0 = H.AW_STATE.awayGoals; R.away++;
     H.stepAt(H, 3, 15.2, () => H.AW_STATE.awayGoals > goals0);
-    const awayGoals = Math.min(1, H.AW_STATE.awayGoals - goals0);
+    const awayGoals = Math.min(1, H.AW_STATE.awayGoals - goals0), goalWhy = { mode: H.G.mode, hour: H.G.hour, day: H.G.day, rec: [R.away, H.AW_STATE.lastAway[2]], phase: H.matchNow(2, 15.2)?.phase };
     // full time: back to the coach
     const boarded = H.stepAt(H, 70, 16.7, () => H.AW_STATE.boarded >= 6);
     const left = H.stepAt(H, 40, 16.9, () => !H.G.cars.some((c) => c.kind === 'coach'));
     const DD = H.awayDaysDebug(), FF = H.G.hunters.filter((h) => h.awFan && !h.dead).slice(0, 4).map((h) => `${h.x.toFixed(0)},${h.z.toFixed(0)} ${h.awFan} ${h.act ? h.act.kind + h.act.phase + h.act.ri : '-'} w${h.waitT.toFixed(1)} ${h.state}`);
-    return { F1, DD, FF, arrived, coach: D0.coaches, dropped: H.AW_STATE.dropped, horses: D0.horsesShown, cops, fans: fans.length, inEnd, lineCops, awayGoals, boarded, nBoarded: H.AW_STATE.boarded, left };
+    return { F1, DD, FF, arrived, coach: D0.coaches, dropped: H.AW_STATE.dropped, horses: D0.horsesShown, cops, fans: fans.length, inEnd, lineCops, awayGoals, goalWhy, boarded, nBoarded: H.AW_STATE.boarded, left };
   });
   assert.ok(s.arrived, `the coach came and dropped the fans off (${s.dropped})`);
   assert.equal(s.horses, 2, 'two mounted officers outside the ground');
   assert.ok(s.cops >= 3, `${s.cops} police on duty`);
   assert.ok(s.inEnd >= 5, `${s.inEnd} of ${s.fans} away fans made it to the away end ${JSON.stringify(s.F1)}`);
   assert.ok(s.lineCops >= 1, 'police holding the line at the south end');
-  assert.equal(s.awayGoals, 1);
+  assert.equal(s.awayGoals, 1, `an away goal is noticed ${JSON.stringify(s.goalWhy)}`);
   assert.ok(s.boarded, `away fans got back on the coach (${s.nBoarded}) ${JSON.stringify(s.DD)} ${JSON.stringify(s.FF)}`);
   assert.ok(s.left, `the coach drove off and left the road ${JSON.stringify(s.DD)}`);
 });
