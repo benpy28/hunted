@@ -1183,9 +1183,9 @@ function kickInFront(fx, fz, power, hydrantHits, range = 2.2) {
   if (!P) return false;
   if (P.kind === 'hydrant') {
     if (hydrantHits < 1 && !G.super) { showMsg(mpick(['OW. THAT\'S A HYDRANT', 'OW! MY TOE!', 'IT\'S BOLTED DOWN. OW.']), 1.2); sfx.clank(); hurtPlayer(2, P.x, P.z); return true; }
-    hitHydrant(P, hydrantHits, BK); if (P.burst) addHeat(3); return true;
+    P.byPlayer = true; hitHydrant(P, hydrantHits, BK); if (P.burst) addHeat(3); return true;
   }
-  kickProp(P, fx, fz, power, BK, 3 + power * 0.15);
+  P.byPlayer = true; kickProp(P, fx, fz, power, BK, 3 + power * 0.15);
   if (!G.super) { addHeat(0.5); alertAround(player.x, player.z, 6, 1.5); }
   return true;
 }
@@ -1274,7 +1274,7 @@ function heroSlam() {
   }
   for (const c of G.cars) { if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz); if (d < 8) { if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false); c.driver = null; c.lane = null; c.air = { vx: dx / (d || 1) * 10, vz: dz / (d || 1) * 10, vy: 9, y: 0, spin: mr(-3, 3), roll: 0 }; } }
   for (const V of villainsNear(player.x, player.y, player.z, 10)) { const dx = V.x - player.x, dz = V.z - player.z, d = Math.hypot(dx, dz) || 1; villainHit(V, 25, HC, dx / d * 18, dz / d * 18); }
-  for (const P of propsNear(player.x, player.z, 9)) { const dx = P.x - player.x, dz = P.z - player.z, d = Math.hypot(dx, dz) || 1; if (d < 9) kickProp(P, dx / d, dz / d, 18 - d, BK, 8); }
+  for (const P of propsNear(player.x, player.z, 9)) { P.byPlayer = true; const dx = P.x - player.x, dz = P.z - player.z, d = Math.hypot(dx, dz) || 1; if (d < 9) kickProp(P, dx / d, dz / d, 18 - d, BK, 8); }
   showMsg('SUPERHERO LANDING', 1.5); heroFun(0.12, HC, true); heroMenace(1);
 }
 // superpower mode: two red beams straight out of your eyes
@@ -1316,6 +1316,7 @@ function fireRay(dir, range, tracer) {
   const hitP = o.clone().addScaledVector(dir, tHit);
   if (propHit) {
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0.4, size0: 0.15, size1: 0.5, alpha: 0.9, color: 0xfff0c0 });
+    propHit.byPlayer = true;
     if (propHit.kind === 'hydrant') hitHydrant(propHit, 1, BK);
     else { const l = Math.hypot(dir.x, dir.z) || 1; kickProp(propHit, dir.x / l, dir.z / l, propHit.state === 'up' ? 4 : 3, BK, 2.5); sfx.clank(); }
     if (tracer) spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
@@ -1402,7 +1403,7 @@ function launchHunter(h, ux, uz, getsUp, imp) {
   { const kx = imp ? imp.x : ux, kz = imp ? imp.z : uz, kl = Math.hypot(kx, kz) || 1; knockFX(rag, hitKindNow(), h.y + 1.2 * h.T.scale, kx / kl, kz / kl); }
   rag.launchFrom = { x: h.x, z: h.z };
   if (h.rival) rivalDown(h);
-  else if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
+  else if (getsUp) G.getUps.push({ rag, calm: !!G.calmHit && h.state !== 'chase', type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
   else { G.kills++; addHeat(h.type === 'cop' ? 22 : 14); maybeDropCash(h); if (h.contract) contractTargetDown(h); }
 }
 function updateGetUps(dt) {
@@ -1423,7 +1424,7 @@ function updateGetUps(dt) {
     U.rag.dispose(); ragdolls.splice(idx, 1); G.getUps.splice(i, 1);
     const p = { x: hx, z: hz }; resolveCircle(p, 0.4);
     if (solidAt(p.x, Math.max(0, hy), p.z, 0) || pointBlocked(p.x, p.z, 0.1)) { const q = randomOpenPoint(p.x, p.z, 0, 10, 20); if (q) { p.x = q.x; p.z = q.z; } }
-    const nh = new Hunter(p.x, p.z, U.type, U.gunner, 'chase');
+    const nh = new Hunter(p.x, p.z, U.type, U.gunner, U.calm ? 'search' : 'chase'); // an accident that wasn't your doing: they just dust themselves off
     nh.y = floorAt(p.x, p.z, hy + 0.6); nh.hp = U.hp; nh.stun = 1.4; nh.noticeT = 0;
     if (U.contract) dressTarget(nh, U.contract); nh.guard = U.guard; nh.fleer = U.fleer;
     G.hunters.push(nh);

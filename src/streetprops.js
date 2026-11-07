@@ -143,7 +143,7 @@ function spUpdateGeysers(dt, C) {
       for (const hh of C.G.hunters) {
         if (hh.dead || hh.inside || Math.abs(hh.x - P.x) > 2.4 || Math.abs(hh.z - P.z) > 2.4) continue;
         const dx = hh.x - P.x, dz = hh.z - P.z, d = Math.hypot(dx, dz);
-        if (d < 0.8) { C.setHitKind('water'); C.launchHunter(hh, dx / (d || 1), dz / (d || 1), true, { x: dx * 2 + mr(-1, 1), y: 9 + h * 0.6, z: dz * 2 + mr(-1, 1) }); }
+        if (d < 0.8) { C.setHitKind('water'); C.G.calmHit = !P.byPlayer; C.launchHunter(hh, dx / (d || 1), dz / (d || 1), true, { x: dx * 2 + mr(-1, 1), y: 9 + h * 0.6, z: dz * 2 + mr(-1, 1) }); C.G.calmHit = false; }
         else if (d < 2.2 && (hh.state === 'chase' || Math.hypot(hh.vx || 0, hh.vz || 0) > 3) && !(hh.soakT > 0)) { // ran through the spray
           hh.soakT = 2.5; hh.stun = Math.max(hh.stun, 1.1); hh.kx += (dx / d) * 5; hh.kz += (dz / d) * 5; C.say(hh, mpick(SP_SOAK));
         }
@@ -194,7 +194,7 @@ export function updateStreetProps(dt, C) {
         if (h.dead || Math.abs(h.x - P.x) > 1 || Math.abs(h.z - P.z) > 1 || Math.abs(h.y + 0.6 - P.y) > 1.2) continue;
         if (Math.hypot(h.x - P.x, h.z - P.z) > 0.8) continue;
         C.setHitKind('shove');
-        if (sp > 8) C.launchHunter(h, P.vx / sp, P.vz / sp, true, { x: P.vx * 0.7, y: 5, z: P.vz * 0.7 });
+        if (sp > 8) { C.G.calmHit = !P.byPlayer; C.launchHunter(h, P.vx / sp, P.vz / sp, true, { x: P.vx * 0.7, y: 5, z: P.vz * 0.7 }); C.G.calmHit = false; }
         else { h.stun = Math.max(h.stun, 1); h.kx += P.vx * 0.8; h.kz += P.vz * 0.8; }
         comicWord('STRIKE!', h.x, h.y + 2.2, h.z); P.vx *= 0.5; P.vz *= 0.5;
         C.binHit && C.binHit(h);
@@ -225,6 +225,7 @@ export function updateStreetProps(dt, C) {
       if (P.state !== 'up') continue;
       const dx = P.x - c.x, dz = P.z - c.z, lf = dx * c.fx + dz * c.fz, lr = dx * c.fz - dz * c.fx;
       if (Math.abs(lf) > c.hl + 0.6 || Math.abs(lr) > c.hw + 0.4) continue;
+      P.byPlayer = c.driver === 'player';
       if (P.kind === 'hydrant') { if (sp > 5) hitHydrant(P, 3, C); continue; }
       kickProp(P, c.fx * sg, c.fz * sg, sp * 1.15, C, 3);
     }
