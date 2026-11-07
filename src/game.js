@@ -2,7 +2,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import {
   clamp, lerp, smoothstep, angDiff, mr, mpick, fmtTime, $, canvas, renderer, scene, camera, hemi, sun,
-  vmScene, vmCamera, puffTex, GeoBuf, canvasTex,
+  vmScene, vmCamera, puffTex, GeoBuf, canvasTex, cullChunks,
 } from './core.js';
 import {
   CITIES, HIGHWAYS, WORLD, RIVER, colliders, blockRects, parkedSpots, beacons, animated, waterRects, lanes, emissiveFacades,
@@ -14,6 +14,7 @@ import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
 import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
+import { walkIns } from './streets.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
 import { shopRooms, atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
@@ -2400,6 +2401,7 @@ function frame() {
   const zn = player.car ? null : zoneAt(player.x, player.y, player.z);
   const indoor = playing && !player.car && (!!zn || !!G.inSafe || camera.position.y < -1);
   if (player.grounded) G.floorY = player.y;
+  cullChunks(camera.position.x, camera.position.z);
   renderFrame({ drawVM: vm.visible && G.mode !== 'menu', indoor, floorY: G.floorY ?? 0, speed: G.pfxSpeed, danger: G.pfxDanger, kick: clamp(G.fovKick / 8, 0, 1) });
 }
 // Channel 9: what the billboards and TVs are saying about you
@@ -2462,4 +2464,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
