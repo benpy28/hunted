@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { openGame } from './harness.mjs';
 
 let g;
-before(async () => { g = await openGame(); await g.run((H) => H.startGame(true)); });
+let home; // where the run starts: out on an open street
+before(async () => { g = await openGame(); home = await g.run((H) => { H.startGame(true); return { x: H.player.x, y: H.player.y, z: H.player.z }; }); });
 after(async () => { await g?.close(); });
 
 test('four original villains sit at their lairs on the map and leave you alone at a distance', async () => {
@@ -38,13 +39,17 @@ test('go to a villain and they fight; laser them down and they are beaten', asyn
 });
 
 test('boredom creeps up when nothing is happening', async () => {
-  const s = await g.run((H) => { H.HERO.bored = 0.1; H.G.villainFight = null; H.step(20); return H.HERO.bored; });
+  const s = await g.run((H) => { // the last test left us at a lair; send the villains home so nothing kicks off
+    for (const V of H.villains) { V.state = 'gone'; V.downT = 0; V.g.visible = false; }
+    H.HERO.bored = 0.1; H.G.villainFight = null; H.step(20); return H.HERO.bored; });
   assert.ok(s > 0.2, `bored: ${s}`);
 });
 
 test('stare at someone long enough and they crumble', async () => {
-  const s = await g.run((H) => {
+  const s = await g.run((H, home) => {
     for (const V of H.villains) { V.state = 'gone'; V.downT = 0; V.g.visible = false; }
+    // back to the open street the run started on (the lair from earlier tests is full of walls)
+    Object.assign(H.player, { x: home.x, y: home.y, z: home.z, flying: false });
     const x = H.player.x, z = H.player.z, y = H.player.y;
     for (const o of H.G.hunters) if (Math.hypot(o.x - x, o.z - z) < 45) o.remove();
     // pick a side with a clear view (the player may be standing next to a wall)
@@ -53,7 +58,7 @@ test('stare at someone long enough and they crumble', async () => {
     let crumbled = false;
     for (let i = 0; i < 120 && !crumbled; i++) { h.x = x + ox; h.z = z + oz; h.inside = false; H.camera.position.set(x, y + 1.6, z); H.camera.lookAt(h.x, h.y + 1.6, h.z); H.camera.updateMatrixWorld(); H.step(1 / 30); crumbled = !!h.crumbled; }
     return { crumbled, cower: h.cowerT };
-  });
+  }, home);
   assert.ok(s.crumbled, 'they should crumble under the stare');
 });
 
