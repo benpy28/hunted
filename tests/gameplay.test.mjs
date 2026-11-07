@@ -190,3 +190,29 @@ test('a rival runner can show up, and pinning them takes them out of the game', 
 });
 
 test('no script errors across the whole session', () => { assert.deepEqual(g.errors, []); });
+
+test('inside a shop you are under a roof (aircraft cannot see you) and its walls block walking routes', async () => {
+  const s = await g.run((H) => {
+    const r = H.shopRooms[0];
+    H.player.x = (r.x0 + r.x1) / 2; H.player.z = (r.z0 + r.z1) / 2; H.player.y = 0;
+    const inside = H.underRoof();
+    H.player.x = r.x0 - 30; const outside = H.underRoof();
+    return { inside, outside, rooms: H.shopRooms.length };
+  });
+  assert.ok(s.rooms > 0);
+  assert.equal(s.inside, true);
+  assert.equal(s.outside, false);
+});
+
+test('thin shop walls are solid on the walking grid', async () => {
+  const s = await g.run((H) => {
+    let blocked = 0, n = 0;
+    for (const r of H.shopRooms.slice(0, 6)) {
+      H.navRecenter(r.x0, (r.z0 + r.z1) / 2, true);
+      for (let z = r.z0 + 1; z < r.z1 - 1; z += 0.7) { n++; if (H.blockedAt(r.x0 + 0.15, z)) blocked++; }
+    }
+    return { blocked, n };
+  });
+  assert.ok(s.n > 0);
+  assert.equal(s.blocked, s.n, 'every point along the end walls is blocked');
+});

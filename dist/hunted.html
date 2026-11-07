@@ -1744,6 +1744,16 @@ function navRecenter(x, z, force = false) {
       const wx = gox + (gx + 0.5) * CELL, wz = goz + (gz + 0.5) * CELL;
       if (wx >= c.x0 - 0.3 && wx <= c.x1 + 0.3 && wz >= c.z0 - 0.3 && wz <= c.z1 + 0.3) blocked[gz * GN + gx] = 1;
     }
+    // thin walls can fall between cell centres and leave a gap people try to walk through:
+    // mark the cells along the wall's length too (ends pulled in so doorways stay open)
+    const w = c.x1 - c.x0, d = c.z1 - c.z0;
+    if (Math.min(w, d) < CELL && Math.max(w, d) > 1.2) {
+      const alongX = w >= d, a0 = (alongX ? c.x0 : c.z0) + 0.45, a1 = (alongX ? c.x1 : c.z1) - 0.45, mid = alongX ? (c.z0 + c.z1) / 2 : (c.x0 + c.x1) / 2;
+      for (let a = a0; a <= a1 + 1e-6; a += 0.5) {
+        const gx = Math.floor(((alongX ? a : mid) - gox) / CELL), gz = Math.floor(((alongX ? mid : a) - goz) / CELL);
+        if (gx >= 0 && gz >= 0 && gx < GN && gz < GN) blocked[gz * GN + gx] = 1;
+      }
+    }
   }
   for (let g = 0; g < GN; g++) for (let h = 0; h < GN; h++) {
     const wx = gox + (g + 0.5) * CELL, wz = goz + (h + 0.5) * CELL;
@@ -2914,6 +2924,7 @@ function parkourMove(dt, P, inp, sprint, speed, cb) {
 
 
 const shopSpots = []; // {x, z, y, r, kind, name, city, face}
+const shopRooms = []; // the inside of each shop strip: under a roof, out of sight of aircraft
 const atmSpots = [];  // {x, z, nx, nz} cash machines on the pavement (contracts)
 
 // one block per town turns into a shop strip facing the street on `face` ('pz' or 'nz')
@@ -2945,6 +2956,7 @@ for (const S of STRIPS) {
     roofBuf.flat(x0, x1, zLo, zHi, H, 0x3d3944);
     ib.box(x0, x1, H - 0.3, H - 0.29, zLo, zHi, 0xe8e2d6, { bottom: true, top: false, sides: false });
     addRoof(x0, x1, zLo, zHi, H, { y0: H - 0.3, city: S.city });
+    shopRooms.push({ x0, x1, z0: zLo, z1: zHi, h: H });
     parapet(x0, x1, zLo, zHi, H);
     // three units
     ['guns', 'hire', 'costume'].forEach((kind, k) => {
@@ -4966,7 +4978,7 @@ class Aircraft {
     // detection
     if (!this.leaving && player.alive) {
       const fromY = this.y - (heli ? 1.5 : 0.4);
-      const see = los3D(this.x, fromY, this.z, tp.x, py, tp.z);
+      const see = !underRoof() && los3D(this.x, fromY, this.z, tp.x, py, tp.z);
       const near = heli ? Math.hypot(this.bx - tp.x, this.bz - tp.z) < 9 : Math.hypot(this.x - tp.x, this.z - tp.z) < 17;
       if (this.state !== 'track') {
         if (near && see) { this.seeT += dt; if (this.seeT > 0.8 + player.disg * 1.2 + (player.car ? 0 : (1 - G.conspic) * 0.6)) { this.state = 'track'; this.lostT = 0; onSpotted(this.kind); } }
@@ -5006,6 +5018,14 @@ class Aircraft {
       this.disc.material.color.set(this.state === 'track' ? 0xff3030 : 0x60a0ff);
     }
   }
+}
+// indoors anywhere (shops, safehouses, the mall, the metro): nothing in the sky can see you through a roof
+function underRoof() {
+  if (player.car) return false;
+  const x = player.x, y = player.y, z = player.z;
+  if (safeAt(x, y, z) || zoneAt(x, y, z) || y < -1) return true;
+  for (const r of shopRooms) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
+  return false;
 }
 function onSpotted(kind) {
   addHeat(kind === 'heli' ? 6 : 3);
@@ -6571,7 +6591,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>
