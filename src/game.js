@@ -19,6 +19,8 @@ import { warehouses } from './docks.js';
 import { HERO, resetHero, heroFun, heroMenace, heroPoseCmd, heroOverheard, updateHero, heroPersonPose, heroHolds, heroNews, heroMapMarks, heroHud } from './hero.js';
 import { villains, henchmen, henchClap, resetVillains, updateVillains, villainHit, villainsNear, villainRay, villainMapMarks } from './villains.js';
 import { knockFX, hitFX, updateKnockFX, knockDebug } from './knockfx.js';
+import { bikes, riders, bikeRide, updateBikes, spawnCyclist, playerBikeAction, playerBikeSpeed, bikeNear, riderNear, clearBikes, bikeDebug } from './cyclists.js';
+import { streetPropObjs, geysers, buildStreetProps, updateStreetProps, kickProp, hitHydrant, propInFront, propsNear, rayProps, tidyStreetProps, resetStreetProps, streetPropDebug } from './streetprops.js';
 import { assignJob, releaseJob, lifeStart, lifeStep, lifePose, lifeInterrupt, updateCityLife, clearCityLife, cityLifeDebug } from './citylife.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
@@ -181,7 +183,7 @@ class Hunter {
     this.state = 'chase'; this.lastSeen = 0; this.sus = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
     if (player.disg > 0) wearDisguise(0.035);
   }
-  remove() { scene.remove(this.g); this.dead = true; releaseJob(this); lifeInterrupt(this); }
+  remove() { scene.remove(this.g); this.dead = true; this.gone = true; releaseJob(this); lifeInterrupt(this); }
   die(impulse, hitY, byPlayer = false, loot = byPlayer) {
     if (this.dead) return;
     lifeInterrupt(this); releaseJob(this);
@@ -216,6 +218,7 @@ class Hunter {
       this.begT = (this.begT ?? 0) - dt; if (this.begT <= 0) { this.begT = mr(1.6, 2.6); say(this, mpick(HELD_LINES)); }
       return;
     }
+    if (this.bike && bikeRide(this, dt, BK)) return; // pedalling along the bike lane (or after you)
     if (G.super && (this.state === 'chase' || this.alertT >= 0)) { this.state = 'search'; this.alertT = -1; this.panicT = mr(4, 7); this.wt = null; this.sus = 0; }
     this.attackCd -= dt; this.fireCd -= dt;
     if (this.alertT >= 0) { this.alertT -= dt; if (this.alertT < 0) this.alert(); }
@@ -611,6 +614,7 @@ class Car {
       return;
     }
     let throttle = 0, steer = 0, maxF = 14, brake = false;
+    this.preSpeed = this.speed; // what it hit things at, before a wall slowed it down this frame
     const tp = targetPos();
     if (this.wrecked || !this.driver) {
       brake = true;
@@ -623,6 +627,11 @@ class Car {
         if (Math.abs(ax) > 16 || Math.abs(az) > 16) continue;
         const ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx), gap = this.hl + o.hl;
         if (ahead > 0 && ahead < gap + 4.5 && side < 2.2) target = Math.min(target, ahead < gap + 1 ? 0 : o.speed * 0.9);
+      }
+      for (const r of riders) { // cyclists ahead (pulling out round something, or turning)
+        const ax = r.x - this.x, az = r.z - this.z; if (Math.abs(ax) > 14 || Math.abs(az) > 14) continue;
+        const ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx);
+        if (ahead > 0 && ahead < this.hl + 5 && side < this.hw + 0.7) target = Math.min(target, ahead < this.hl + 1.5 ? 0 : (r.bike ? r.bike.speed : 0) * 0.9);
       }
       if (!player.car) {
         const ax = player.x - this.x, az = player.z - this.z, ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx);
@@ -762,6 +771,7 @@ function nearestCar(maxD) {
 function enterCar() {
   const c = nearestCar(3.6);
   if (!c) return;
+  if (player.bike) playerBikeAction(BK);
   if (c.driver === 'traffic' || c.driver === 'hunter') { ejectHunter(c, false); showMsg('CAR STOLEN'); addHeat(10); }
   c.driver = 'player'; c.lane = null; player.car = c; player.dragT = 0; player.camOff = 0;
   player.yaw = c.heading + Math.PI;
@@ -774,6 +784,7 @@ function zipStartNear() {
 }
 function useAction() {
   if (player.car) { exitCar(); return; }
+  if (player.bike) { playerBikeAction(BK); return; }
   if (G.super && !player.car && heroGrab()) return;
   if (player.mode === 'zip') { input.jumpEdge = true; return; }
   const door = player.mode === 'move' ? safeDoorNear(player.x, player.y, player.z) : null;
@@ -788,6 +799,7 @@ function useAction() {
   if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
   const Z = zipStartNear();
   if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
+  if (!G.super && !nearestCar(2.6) && playerBikeAction(BK)) return;
   enterCar();
 }
 function exitCar(forced = false) {
@@ -1164,6 +1176,25 @@ function say(h, text) {
   h.g.add(b.s); b.life = 2.4; b.h = h;
 }
 // what the city-life module needs to know about the game
+// kick, whack or swat whatever bin or hydrant is right in front of you. Returns true if something was there
+function kickInFront(fx, fz, power, hydrantHits, range = 2.2) {
+  if (player.car || !player.alive) return false;
+  const P = propInFront(player.x, player.y, player.z, fx, fz, range);
+  if (!P) return false;
+  if (P.kind === 'hydrant') {
+    if (hydrantHits < 1 && !G.super) { showMsg(mpick(['OW. THAT\'S A HYDRANT', 'OW! MY TOE!', 'IT\'S BOLTED DOWN. OW.']), 1.2); sfx.clank(); hurtPlayer(2, P.x, P.z); return true; }
+    hitHydrant(P, hydrantHits, BK); if (P.burst) addHeat(3); return true;
+  }
+  kickProp(P, fx, fz, power, BK, 3 + power * 0.15);
+  if (!G.super) { addHeat(0.5); alertAround(player.x, player.z, 6, 1.5); }
+  return true;
+}
+const BK = {
+  G, player, get input() { return input; }, Hunter, launchHunter, setHitKind, sfx, say: (h, t) => say(h, t), showMsg: (t, d) => showMsg(t, d), addHeat: (n) => addHeat(n), alertAround: (x, z, r, d) => alertAround(x, z, r, d),
+  targetPos: () => targetPos(), dayMult: () => dayMult(), crowd: () => WX.crowd, chasers: () => G.hunters.filter((h) => !h.dead && h.state === 'chase').length,
+  binKicked: () => { G.binsKicked = (G.binsKicked || 0) + 1; },
+  hydrantBurst: () => { G.hydrantsBurst = (G.hydrantsBurst || 0) + 1; },
+};
 const LIFE = {
   say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b, HC),
   get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
@@ -1229,6 +1260,7 @@ function heroSwat() {
     }
   }
   for (const V of villainsNear(player.x + fx * 2.5, player.y + 1, player.z + fz * 2.5, 3)) { villainHit(V, 12, HC, fx * 14, fz * 14); any = true; }
+  if (kickInFront(fx, fz, 26, 3, 4)) any = true;
   if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); heroFun(0.06, HC); heroMenace(0.5); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
 }
 function heroSlam() {
@@ -1242,6 +1274,7 @@ function heroSlam() {
   }
   for (const c of G.cars) { if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz); if (d < 8) { if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false); c.driver = null; c.lane = null; c.air = { vx: dx / (d || 1) * 10, vz: dz / (d || 1) * 10, vy: 9, y: 0, spin: mr(-3, 3), roll: 0 }; } }
   for (const V of villainsNear(player.x, player.y, player.z, 10)) { const dx = V.x - player.x, dz = V.z - player.z, d = Math.hypot(dx, dz) || 1; villainHit(V, 25, HC, dx / d * 18, dz / d * 18); }
+  for (const P of propsNear(player.x, player.z, 9)) { const dx = P.x - player.x, dz = P.z - player.z, d = Math.hypot(dx, dz) || 1; if (d < 9) kickProp(P, dx / d, dz / d, 18 - d, BK, 8); }
   showMsg('SUPERHERO LANDING', 1.5); heroFun(0.12, HC, true); heroMenace(1);
 }
 // superpower mode: two red beams straight out of your eyes
@@ -1278,7 +1311,16 @@ function fireRay(dir, range, tracer) {
   }
   for (const c of G.cars) { if (c.far) continue; const t = rayCar(o, dir, c, tHit); if (t > 0 && t < tHit) { tHit = t; carHit = c; target = null; } }
   for (const a of [...G.helis, ...G.drones]) { if (a.dead) continue; const t = raySphere(o, dir, a.x, a.y, a.z, a.radius, tHit); if (t > 0 && t < tHit) { tHit = t; airHit = a; carHit = null; target = null; } }
+  const pr = rayProps(o, dir, tHit + 0.4); let propHit = null; // (+0.4: the world ray stops on the prop's own collision box)
+  if (pr) { tHit = pr.t; propHit = pr.P; target = null; carHit = null; airHit = null; }
   const hitP = o.clone().addScaledVector(dir, tHit);
+  if (propHit) {
+    emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0.4, size0: 0.15, size1: 0.5, alpha: 0.9, color: 0xfff0c0 });
+    if (propHit.kind === 'hydrant') hitHydrant(propHit, 1, BK);
+    else { const l = Math.hypot(dir.x, dir.z) || 1; kickProp(propHit, dir.x / l, dir.z / l, propHit.state === 'up' ? 4 : 3, BK, 2.5); sfx.clank(); }
+    if (tracer) spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
+    return null;
+  }
   if (tracer) spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
   if (target) {
     const head = hitP.y > target.y + 1.5 * target.T.scale;
@@ -1322,6 +1364,7 @@ function meleeTargets(range, cone) {
 }
 function crowbarImpact(heavy) {
   setHitKind('crowbar');
+  kickInFront(-Math.sin(player.yaw), -Math.cos(player.yaw), heavy ? 16 : 9, heavy ? 3 : 1.5);
   if (!heavy) {
     const t = meleeTargets(2.5, 0.45)[0];
     if (!t) return;
@@ -1664,6 +1707,7 @@ function playerShove() {
   if (player.car || player.shoveCd > 0 || !player.alive) return;
   player.shoveCd = 0.55; player.shoveAnim = 1; sfx.shove();
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  kickInFront(fx, fz, 7.5, 0.5);
   for (const h of G.hunters) {
     if (h.dead) continue;
     const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
@@ -1999,6 +2043,9 @@ function updateHUD(dt) {
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
   else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
+  else if (player.bike) prompt = isTouch ? 'Tap USE to hop off the bike' : 'Press E to hop off · Shift to pedal hard';
+  else if (!G.super && !nearestCar(2.6) && bikeNear(player.x, player.z)) prompt = isTouch ? 'Tap USE to ride the bike' : 'Press E to ride the bike';
+  else if (!G.super && !nearestCar(2.6) && riderNear(player.x, player.z)) prompt = isTouch ? 'Tap USE to nick their bike' : 'Press E to nick their bike';
   else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
   if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
@@ -2063,7 +2110,7 @@ const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min
 const maxChasers = () => Math.round((5 + G.level * 2 + G.day * 0.35) * (0.5 + MH.bountyMul * 0.5));
 
 function clearWorld() {
-  for (const h of G.hunters) h.remove(); G.hunters.length = 0; clearCityLife();
+  for (const h of G.hunters) h.remove(); G.hunters.length = 0; clearCityLife(); clearBikes(player); resetStreetProps();
   for (const r of ragdolls) r.dispose(); ragdolls.length = 0;
   for (const c of G.cars) scene.remove(c.g); G.cars.length = 0;
   for (const a of [...G.helis, ...G.drones]) a.remove(); G.helis.length = 0; G.drones.length = 0;
@@ -2083,7 +2130,8 @@ function spawnTraffic(count) {
       const x = lane.axis === 'z' ? lane.fixed : along, z = lane.axis === 'z' ? along : lane.fixed;
       if (Math.hypot(x - player.x, z - player.z) < 14) continue;
       if (G.cars.some((c) => Math.abs(c.x - x) < 12 && Math.abs(c.z - z) < 12)) continue;
-      const vr = Math.random(), kind = vr < 0.07 ? 'bus' : vr < 0.15 ? 'truck' : vr < 0.28 ? 'van' : vr < 0.42 ? 'hatch' : 'car';
+      const vr = Math.random(), buses = G.cars.filter((c) => c.kind === 'bus').length;
+      const kind = (vr < 0.07 || (buses < 3 && i >= count - 6)) ? 'bus' : vr < 0.15 ? 'truck' : vr < 0.28 ? 'van' : vr < 0.42 ? 'hatch' : 'car'; // always a few buses about
       if (kind === 'bus' && !cityAt(x, z, 10)) continue;
       G.cars.push(new Car(lane, along, null, kind)); break;
     }
@@ -2216,7 +2264,8 @@ function updatePlayer(dt) {
   else player.stam = Math.min(100, player.stam + (moving ? 10 : 18) * dt);
   if (player.exhausted && player.stam > 30) player.exhausted = false;
   player.sprinting = sprint;
-  const speed = sprint ? 10 : 5.8;
+  const speed = player.bike ? playerBikeSpeed(sprint) : sprint ? 10 : 5.8;
+  if (player.bike) { if (sprint) player.stam += 12 * dt; input.crouch = false; if (player.mode !== 'move' || G.super) playerBikeAction(BK); } // pedalling is easier than sprinting, and no sliding on a bike
   player.kx *= Math.max(0, 1 - dt * 6); player.kz *= Math.max(0, 1 - dt * 6);
   if (G.super && input.jumpEdge && !player.grounded && player.mode === 'move' && !player.flying) { player.flying = true; player.vy = 0; showMsg('FLYING. HOLD SPACE TO RISE, C TO DROP', 2); sfx.swoosh(); }
   if (player.flying) flyMove(dt); else parkourMove(dt, player, input, sprint, speed, parkourCb);
@@ -2469,6 +2518,7 @@ function updateDirector(dt) {
     if (G.day > CFG.days && !G.super) { endGame(true); return; }
     sfx.day();
     showBanner(manhuntNewDay(mhCtx()), 5);
+    tidyStreetProps(player.x, player.z);
   }
   const tp = targetPos();
   // locale
@@ -2613,6 +2663,7 @@ function simulate(dt, t) {
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
+    updateBikes(dt, BK); updateStreetProps(dt, BK);
     for (const a of G.helis) if (!a.dead) a.update(dt);
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
@@ -2636,6 +2687,7 @@ function simulate(dt, t) {
 
 player.x = 0; player.z = 0;
 spawnShopkeepers(scene);
+buildStreetProps();
 // the Galleria's novelty shops sell disguises too, each its own speciality
 {
   const MALL_CATS = { 'SPECS APPEAL': ['eyes'], 'BEARD BARN': ['face'], 'BIG HAT BARN': ['hat'], 'WIGS 4 U': ['wig'], 'SUIT YOURSELF': ['body', 'hat'] };
@@ -2646,4 +2698,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

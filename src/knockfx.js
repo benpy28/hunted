@@ -10,7 +10,7 @@ const ashMat = new THREE.MeshLambertMaterial({ color: 0x16130f });
 const sootMat = new THREE.MeshLambertMaterial({ color: 0x3a3632 });
 const crumbles = [], words = [], dizzies = [];
 const wordTex = new Map();
-const WORD_COLORS = { 'ZAP!': '#ff5a3a', 'BONK!': '#ffd23a', 'POW!': '#ff8a2a', 'BLAM!': '#ffe04a', 'RAT-A-TAT!': '#ffd23a', 'WHAM!': '#5ab4ff', 'WHOOSH!': '#9ad8ff', 'OOF!': '#ffffff', 'FWOOSH!': '#ff6a2a', 'KA-BOOM!': '#ff5a3a', 'THWACK!': '#ffd23a' };
+const WORD_COLORS = { 'ZAP!': '#ff5a3a', 'BONK!': '#ffd23a', 'POW!': '#ff8a2a', 'BLAM!': '#ffe04a', 'RAT-A-TAT!': '#ffd23a', 'WHAM!': '#5ab4ff', 'WHOOSH!': '#9ad8ff', 'OOF!': '#ffffff', 'FWOOSH!': '#ff6a2a', 'KA-BOOM!': '#ff5a3a', 'THWACK!': '#ffd23a', 'SPLOOSH!': '#7ad0ff', 'CLANG!': '#d8d8e0', 'CRASH!': '#ffb03a', 'STRIKE!': '#ff5a3a', 'DING!': '#ffe04a' };
 function wordMat(text) {
   if (!wordTex.has(text)) wordTex.set(text, new THREE.SpriteMaterial({ map: canvasTex(512, 160, (ctx, W, H) => {
     ctx.font = 'italic 900 92px Arial Black, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -72,6 +72,7 @@ export function knockFX(rag, kind, hitY, dx = 0, dz = 0) {
     for (let i = 0; i < 9; i++) kick(rag, mr(-3, 3), mr(0, 2), mr(-3, 3), i);
     at('RAT-A-TAT!'); dizzy(rag, 3);
   } else if (kind === 'car') { at('WHAM!'); dizzy(rag, 4); }
+  else if (kind === 'water') { at(mpick(['SPLOOSH!', 'WHOOSH!'])); dizzy(rag, 2.5); }
   else if (kind === 'super') { at(mpick(['WHOOSH!', 'POW!', 'WHAM!'])); dizzy(rag, 3); }
   else { at('OOF!', 0.5); dizzy(rag, 2.5); }
 }
