@@ -19,7 +19,7 @@ export const launderettes = []; // {W, washers:[{x,z,sx,sz,face}], dryers:[...],
 const lnHash = (x, z, k = 0) => { const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return s - Math.floor(s); };
 
 // rebuild a shop's local frame from its walk-in record: a runs along the street, b goes in from the front
-function lnFrame(W) {
+export function lnFrame(W) {
   const R = W.rect, alongZ = W.side[1] === 'x';
   const A0 = alongZ ? R.z0 : R.x0, A1 = alongZ ? R.z1 : R.x1, D = alongZ ? R.x1 - R.x0 : R.z1 - R.z0;
   const toXZ = (a, b) => {

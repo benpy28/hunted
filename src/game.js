@@ -31,6 +31,12 @@ import { mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchN
 import { CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUsePrompt, cnUse, cnConspic, cnSeatPlayer, cnSit, cnStand, updateCinema, cnPlan, resetCinema, cnDiaryBits, cinemaDebug, cnInternals } from './cinema.js';
 import { LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUsePrompt, lnUse, lnConspic, updateLaunderettes, resetLaunderettes, lnDiaryBits, launderetteDebug, lnInternals } from './launderette.js';
 import { AW_STATE, awayEnd, inAwayEnd, coachLogic, updateAwayDays, awConspic, awPlan, resetAwayDays, awayDaysDebug, awInternals } from './awaydays.js';
+import { pubTV } from './pubtv.js';
+import { bowling } from './bowling.js';
+import { baths } from './baths.js';
+import { buses } from './buses.js';
+// the newer venues all plug in the same way: E targets, how well you blend in, each frame, the diary...
+const XV = [pubTV, bowling, baths, buses];
 import { DL_STATE, deliveryLogic, dlRearNear, dlHopOn, updateDeliveries, dlRiding, resetDeliveries, deliveriesDebug, dlInternals } from './deliveries.js';
 import { IC_STATE, icLogic, icHatch, icHatchNear, icMenu, icDistracted, updateIceCream, icConspic, resetIceCream, iceCreamDebug, shopHours, shopOpenAt, shutLine, hoursLine } from './icecream.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
@@ -118,6 +124,7 @@ function conspicuous() {
   k += townDayConspic(TDK) + kidsConspic(TDK); // a runner in the fun run, a face at the fete, a tired parent with a pram
   k += mdConspic(TDK) + icConspic(TDK); // one of hundreds on the terrace, head bowed in a pew, licking a cone
   k += cnConspic(TDK) + lnConspic(TDK) + awConspic(TDK); // a face in the dark in row J, a bored person waiting for their wash
+  for (const V of XV) k += V.conspic(TDK); // a pub watching the match, a bowler, a swimmer, a bus passenger
   return Math.max(0, k);
 }
 const knownFace = () => (0.3 + G.level * 0.55) * (1 - 0.6 * player.disg) * (1 + 2.5 * localSus()) * (1 + (G.day - 1) * 0.015);
@@ -248,7 +255,7 @@ class Hunter {
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
       let see = !this.inside && d < 90 && (d > 50 ? los(this.x, this.z, tp.x, tp.z) : true) && losSolid(this.x, this.y + 1.6, this.z, tp.x, player.car ? 1.2 : playerEyeY(), tp.z);
-      this.hasLOS = see = see && (!player.hide || this.checkSpot === player.hide); // nobody can see into a closed bin (unless they watched you climb in)
+      this.hasLOS = see = see && (!player.hide || this.checkSpot === player.hide) && !(baths.unseen && baths.unseen(this)); // nobody can see into a closed bin (unless they watched you climb in)
       const tdt = Math.min(0.5, G.elapsed - this.thinkAt); this.thinkAt = G.elapsed;
       if (this.state !== 'chase' && !G.super) {
         // nobody clocks you instantly: they get suspicious first, faster the more you stand out
@@ -613,9 +620,9 @@ function resolveCircleCar(p, r, car) {
 }
 
 class Car {
-  constructor(lane, along, parked, kind = 'car') {
+  constructor(lane, along, parked, kind = 'car', color0) {
     this.kind = kind; const K = VKINDS[kind];
-    const color = kind === 'bus' ? BUS_COLORS[(lane && cityAt(lane.axis === 'z' ? lane.fixed : along, lane.axis === 'z' ? along : lane.fixed, 30) || {}).name] || 0xc8282a : kind === 'truck' ? mpick([0xd0d0d0, 0x2a5aa0, 0xb03020, 0xe0b020, 0x2a6a3a]) : kind === 'binlorry' ? 0x2a7a3a : kind === 'icecream' ? 0xf4ecd8 : kind === 'coach' ? 0xf2f2f4 : mpick(CAR_COLORS);
+    const color = color0 != null ? color0 : kind === 'bus' ? BUS_COLORS[(lane && cityAt(lane.axis === 'z' ? lane.fixed : along, lane.axis === 'z' ? along : lane.fixed, 30) || {}).name] || 0xc8282a : kind === 'truck' ? mpick([0xd0d0d0, 0x2a5aa0, 0xb03020, 0xe0b020, 0x2a6a3a]) : kind === 'binlorry' ? 0x2a7a3a : kind === 'icecream' ? 0xf4ecd8 : kind === 'coach' ? 0xf2f2f4 : mpick(CAR_COLORS);
     this.taxi = kind === 'car' && color === 0xe8c020;
     this.g = new THREE.Group();
     this.geo = vehicleGeometry(kind, color);
@@ -688,7 +695,7 @@ class Car {
         const ax = player.x - this.x, az = player.z - this.z, ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx);
         if (ahead > 2 && ahead < 11 && side < 1.8) { target = 0; this.honkT -= dt; if (this.honkT < 0 && ahead < 9) { this.honkT = 2.5; if (G.mode === 'playing') sfx.horn(); } }
       }
-      if (this.kind === 'bus') target = busStopLogic(this, dt, target);
+      if (this.kind === 'bus') target = buses.logic(this, dt, busStopLogic(this, dt, target), TDK);
       else if (this.kind === 'binlorry') target = lorryLogic(this, dt, target, GJ);
       else if (this.kind === 'icecream') target = icLogic(this, dt, target, TDK);
       else if (this.kind === 'coach') target = coachLogic(this, dt, target, TDK);
@@ -798,7 +805,7 @@ function carInteractions() {
         else { const hx0 = h.x, hz0 = h.z; h.x = before.x; h.z = before.z; moveBody(h, hx0, hz0, 0.35 * h.T.scale, h.y, 1.8); }
       }
     }
-    if (!player.car && player.alive && c.driver !== 'player') {
+    if (!player.car && player.alive && c.driver !== 'player' && !XV.some((V) => V.riding && V.riding(c))) {
       const p = { x: player.x, z: player.z };
       if (resolveCircleCar(p, 0.4, c)) {
         if (sp > 5 && player.carHitCd <= 0 && player.y - groundY(player.x, player.z) < 0.9) {
@@ -839,6 +846,7 @@ function zipStartNear() {
 }
 function useAction() {
   if (GJ_STATE.ride) { hopOffLorry(GJ, 'HOPPED OFF THE LORRY'); return; }
+  for (const V of XV) { const T = V.useTarget(TDK); if (T && T.first) { V.use(T, TDK); return; } } // (on a bus: ring the bell)
   if (player.hide) { leaveHide(SK); return; }
   if (player.car) { exitCar(); return; }
   if (player.bike) { playerBikeAction(BK); return; }
@@ -850,6 +858,7 @@ function useAction() {
     const MT = mdUseTarget(TDK); if (MT) { mdUse(MT, TDK); return; }
     const CT = cnUseTarget(TDK); if (CT) { cnUse(CT, TDK); return; }
     const LT = lnUseTarget(TDK); if (LT) { lnUse(LT, TDK); return; }
+    for (const V of XV) { const T = V.useTarget(TDK); if (T) { V.use(T, TDK); return; } }
     const VAN = icHatchNear(TDK); if (VAN) { tryOpenShop({ name: 'MR WHIPPLE\'S ICES', kind: 'ices', blurbs: ['"WHAT CAN I GET YOU, LOVE?"', '"SPRINKLES ARE EXTRA. ONLY JOKING."', '"QUICK, BEFORE THE KIDS SEE."'] }, icMenu(TDK)); return; }
     const P = !G.super && !player.bike ? pramNear(player.x, player.z) : null; if (P) { grabPram(P, TDK); return; }
   }
@@ -1083,6 +1092,7 @@ function underRoof() {
   for (const r of shopRooms) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
   for (const r of mdRoofs) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
   for (const r of cnRoofs) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
+  for (const V of XV) for (const r of V.roofs) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
   return false;
 }
 function onSpotted(kind) {
@@ -1347,7 +1357,7 @@ const TDK = {
   get festival() { return WX.festival ? FESTIVALS[WX.festival.city] : null; }, get festivalCity() { return WX.festival ? WX.festival.city : ''; },
   bumpLocal: (n) => bumpLocal(n), coolHeat: (n) => { G.heat = Math.max(heatFloor(), G.heat - n); },
   openMenu: (spot, ctx) => tryOpenShop(spot, ctx), distracted: (k) => icDistracted(k, TDK),
-  lanes: () => lanes, addCar: (lane, along, kind) => { const c = new Car(lane, along, null, kind); G.cars.push(c); return c; },
+  lanes: () => lanes, addCar: (lane, along, kind, color) => { const c = new Car(lane, along, null, kind, color); G.cars.push(c); return c; },
   removeCar: (c) => { if (player.car === c) return; scene.remove(c.g); const i = G.cars.indexOf(c); if (i >= 0) G.cars.splice(i, 1); },
   spawnTypeAt: (x, z, type) => { const p = randomOpenPoint(x, z, 0, 3, 10); if (!p) return null; const h = new Hunter(p.x, p.z, type, false, 'search'); G.hunters.push(h); return h; },
   report: () => reportSighting(player.x, player.z),
@@ -1362,7 +1372,7 @@ const LIFE = {
   get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
   near: (x, z, r) => Math.abs(x - camera.position.x) < r && Math.abs(z - camera.position.z) < r,
   // the town's calendar: everyone keeps their own hours, and the school run, market days and events pull people about
-  plan: (h, hr) => (G.super ? false : awPlan(h, hr, TDK) || mdPlan(h, hr, TDK) || cnPlan(h, hr, TDK) || tdPlan(h, hr, TDK)), wants: (h, hr) => tdWants(h, hr, TDK), visit: (h, want) => tdVisit(h, want, TDK),
+  plan: (h, hr) => (G.super ? false : awPlan(h, hr, TDK) || mdPlan(h, hr, TDK) || XV.some((V) => V.plan(h, hr, TDK)) || cnPlan(h, hr, TDK) || tdPlan(h, hr, TDK)), wants: (h, hr) => tdWants(h, hr, TDK), visit: (h, want) => tdVisit(h, want, TDK),
   isShut: (W) => !shopOpenAt(W.kind, W.city, G.day, G.hour), // shop hours: nobody pops into a shop that's shut
 };
 // what the hero and villain modules need from the game
@@ -2227,6 +2237,7 @@ function updateHUD(dt) {
   else if (mdUseTarget(TDK)) prompt = mdUsePrompt(mdUseTarget(TDK), TDK, useK);
   else if (cnUseTarget(TDK)) prompt = cnUsePrompt(cnUseTarget(TDK), TDK, useK);
   else if (lnUseTarget(TDK)) prompt = lnUsePrompt(lnUseTarget(TDK), TDK, useK);
+  else if (XV.some((V) => V.useTarget(TDK))) { const V = XV.find((q) => q.useTarget(TDK)); prompt = V.usePrompt(V.useTarget(TDK), TDK, useK); }
   else if (icHatchNear(TDK)) prompt = `${useK} to buy an ice cream`;
   else if (!G.super && !player.car && !player.bike && player.mode === 'move' && pramNear(player.x, player.z)) prompt = `${useK} to push the pram (you blend in, but you can't run)`;
   else if (safeDoorNear(player.x, player.y, player.z) && !safeDoorNear(player.x, player.y, player.z).owned) { const S = safeDoorNear(player.x, player.y, player.z); prompt = `${isTouch ? 'Tap USE' : 'Press E'} to rent ${S.name} for $${S.price}`; }
@@ -2354,7 +2365,7 @@ function resetGame() {
   G.lkp = { x: 0, z: 0 };
   for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
   resetManhunt(CFG.days);
-  player.hide = null; resetStealth(SK); resetGigs(); resetMarkets(); resetKids(TDK); resetTownDay(); resetMatchDay(); resetAwayDays(); resetDeliveries(); resetIceCream(); resetCinema(); resetLaunderettes();
+  player.hide = null; resetStealth(SK); resetGigs(); resetMarkets(); resetKids(TDK); resetTownDay(); resetMatchDay(); resetAwayDays(); resetDeliveries(); resetIceCream(); resetCinema(); resetLaunderettes(); for (const V of XV) V.reset(TDK);
   Object.assign(G, { airGapT: 0, shook: false, safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
   spawnTraffic(84);
   navRecenter(0, 0, true); computeFlow(0, 0);
@@ -2392,7 +2403,7 @@ function extraDiaryHTML() {
   const M = matchNow(G.day, G.hour) || matchNow(G.day + 1, 0);
   if (M) h += `<div class="drow"><span>FOOTBALL: HARRIERS v ${opponentOn(M === matchNow(G.day, G.hour) ? G.day : G.day + 1).full}${M === matchNow(G.day, G.hour) ? '' : ' (TOMORROW)'}</span></div>`;
   h += `<div class="drow"><span>PICTUREDROME: 1 · ${filmOn(0, G.day).title} · 2 · ${filmOn(1, G.day).title}</span></div>`;
-  const bits = [...mdDiaryBits(TDK), ...cnDiaryBits(TDK), ...lnDiaryBits(TDK)]; if (IC_STATE.coneT > 0) bits.push('AN ICE CREAM');
+  const bits = [...mdDiaryBits(TDK), ...cnDiaryBits(TDK), ...lnDiaryBits(TDK), ...XV.flatMap((V) => V.diary(TDK))]; if (IC_STATE.coneT > 0) bits.push('AN ICE CREAM');
   if (bits.length) h += `<div class="drow"><span>${bits.join(' · ')}</span></div>`;
   return h;
 }
@@ -2479,6 +2490,7 @@ function updatePlayer(dt) {
   }
   if (!player.alive) return;
   if (gigRidePlayer(dt, GJ)) { input.jumpEdge = false; return; }
+  for (const V of XV) if (V.ride(dt, TDK)) { input.jumpEdge = false; return; } // on a bus, in the pool, lining up a bowl
   if (cnSeatPlayer(dt, TDK)) { input.jumpEdge = false; return; } // sat in a cinema seat or a launderette chair
   if (player.hide) { player.vx = player.vz = 0; player.sprinting = false; player.stam = Math.min(100, player.stam + 18 * dt); input.jumpEdge = false; return; }
   const moving = input.fwd !== 0 || input.side !== 0;
@@ -2886,7 +2898,7 @@ function simulate(dt, t) {
     updatePlayer(dt);
     for (const h of G.hunters) if (!h.dead) h.update(dt);
     separateHunters();
-    updateKids(dt, TDK); updateTownDay(dt, TDK); updateMatchDay(dt, TDK); updateAwayDays(dt, TDK); updateDeliveries(dt, TDK); updateIceCream(dt, TDK); updateCinema(dt, TDK); updateLaunderettes(dt, TDK);
+    updateKids(dt, TDK); updateTownDay(dt, TDK); updateMatchDay(dt, TDK); updateAwayDays(dt, TDK); updateDeliveries(dt, TDK); updateIceCream(dt, TDK); updateCinema(dt, TDK); updateLaunderettes(dt, TDK); for (const V of XV) V.update(dt, TDK);
     G.keeperT = (G.keeperT || 0) - dt; if (G.keeperT <= 0) { G.keeperT = 1; showShopkeepers((kind, city) => shopOpenAt(kind, city, G.day, G.hour)); }
     updateCityLife(dt, LIFE); updateKnockFX(dt);
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
@@ -2929,4 +2941,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { XV, pubTV, bowling, baths, buses, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

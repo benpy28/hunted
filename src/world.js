@@ -250,6 +250,19 @@ export const roofBuf = new ChunkBuf(128), propBuf = new ChunkBuf(96, 520), glowB
 // The countryside is still generated in full, drawing the same random numbers, so nothing else in the seeded
 // world moves; whatever would have landed in a clearing (trees, hedges, crops, bales) is just thrown away.
 export const clearings = []; // {x0,x1,z0,z1}
+// openings in the highway guard rails (for bus stops and driveways): {road: 'ROUTE 9', side: -1|1, a0, a1}
+// (the rails use no random numbers, so cutting them doesn't move anything else in the seeded world)
+export const railGaps = [];
+function railCut(h, s, a, b) {
+  let segs = [[a, b]];
+  for (const g of railGaps) {
+    if (g.road !== h.name || g.side !== s || (g.axis && g.axis !== h.axis)) continue;
+    const out = [];
+    for (const [p, q] of segs) { if (g.a1 <= p || g.a0 >= q) { out.push([p, q]); continue; } if (g.a0 > p + 1) out.push([p, g.a0]); if (g.a1 < q - 1) out.push([g.a1, q]); }
+    segs = out;
+  }
+  return segs;
+}
 let clearOn = false, clearMute = 0;
 const inClearing = (x, z) => clearOn && clearings.some((q) => x > q.x0 && x < q.x1 && z > q.z0 && z < q.z1);
 const clearTrash = new GeoBuf();
@@ -1212,10 +1225,10 @@ function genHighway(h) {
   // guard rails with gaps so you can get off the road on foot
   for (let a = h.a0 + 20; a < h.a1 - 20; a += 90) {
     const b = Math.min(a + 80, h.a1 - 20);
-    for (const s of [-1, 1]) {
-      alongBox(a, b, s * 8.6 - 0.1, s * 8.6 + 0.1, 0.45, 0.8, 0xb8bcc4);
-      for (let p = a; p <= b; p += 4) { const [x, z] = pt(p, s * 8.6); propBuf.box(x - 0.08, x + 0.08, 0, 0.8, z - 0.08, z + 0.08, 0x8a8e96); }
-      const [x0, z0] = pt(a, s * 8.6 - 0.15), [x1, z1] = pt(b, s * 8.6 + 0.15);
+    for (const s of [-1, 1]) for (const [ra, rb] of railCut(h, s, a, b)) {
+      alongBox(ra, rb, s * 8.6 - 0.1, s * 8.6 + 0.1, 0.45, 0.8, 0xb8bcc4);
+      for (let p = ra; p <= rb; p += 4) { const [x, z] = pt(p, s * 8.6); propBuf.box(x - 0.08, x + 0.08, 0, 0.8, z - 0.08, z + 0.08, 0x8a8e96); }
+      const [x0, z0] = pt(ra, s * 8.6 - 0.15), [x1, z1] = pt(rb, s * 8.6 + 0.15);
       addCollider(Math.min(x0, x1), Math.max(x0, x1), Math.min(z0, z1), Math.max(z0, z1), 0.8);
     }
   }
