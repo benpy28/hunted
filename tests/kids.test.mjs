@@ -34,7 +34,9 @@ test('a kid holds their grown-up\'s hand and keeps up with them as they walk abo
     const PG = H.playgrounds[0]; H.goTo(H, PG.x + 60, PG.z + 60);
     const p = H.randomOpenPoint(PG.x + 60, PG.z + 60, 20, 40);
     const h = H.family(H, p.x, p.z), k = h.kid;
+    k.hushDay = H.G.day; // this one's about walking together: if they wander near you the kid keeps quiet, so the grown-up doesn't run off chasing you
     h.wt = H.randomOpenPoint(p.x, p.z, 12, 20); h.waitT = 0;
+    for (const c of H.G.cars) if (Math.hypot(c.x - p.x, c.z - p.z) < 200) { c.x += 2000; c.lane = null; c.driver = null; } // and no car knocking the grown-up flat as they cross the road
     let far = 0;
     H.stepAt(H, 12, 11, () => { if (Math.hypot(k.x - h.x, k.z - h.z) > 3.5) far++; });
     return { moved: Math.hypot(h.x - p.x, h.z - p.z), gap: Math.hypot(k.x - h.x, k.z - h.z), far, kids: H.kids.length, inHunters: H.G.hunters.includes(k) };
