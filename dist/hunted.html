@@ -8866,12 +8866,12 @@ function tdPlan(h, hr, K) {
   for (const M of markets) {
     if (Math.abs(M.x - h.x) > 140 || Math.abs(M.z - h.z) > 140 || !marketOpen(hr)) continue;
     const big = !!eventOn('market', M.city, day, hr);
-    if (Math.random() < (big ? 0.45 : 0.07)) {
+    if (Math.random() < (big ? 0.6 : 0.07)) { // the whole town turns up on a big market day
       const st = mpick(M.stalls); if (!st || !st.front) continue;
       const ux = st.front.x - st.back.x, uz = st.front.z - st.back.z, l = Math.hypot(ux, uz) || 1, a = mr(-1, 1);
       const x = st.front.x + (uz / l) * a + (ux / l) * mr(0, 0.6), z = st.front.z - (ux / l) * a + (uz / l) * mr(0, 0.6);
       if (blockedAt(x, z)) continue;
-      return K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), mr(8, 22), { stall: st });
+      return K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), big ? mr(15, 35) : mr(8, 22), { stall: st }); // and they take their time about it
     }
   }
   // cheering on the runners
