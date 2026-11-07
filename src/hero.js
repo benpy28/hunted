@@ -49,6 +49,7 @@ export function heroMenace(n) { HERO.real = clamp(HERO.real - n, 3, 99); }
 export function heroPoseCmd(C) {
   if (HERO.poseCd > 0) return;
   HERO.poseCd = 6; HERO.poseT = 3.5; sfx.cheer();
+  if (C.onPose) C.onPose();
   let n = 0, slack = 0;
   for (const h of C.G.hunters) {
     if (h.dead || h.held || h.inside) continue;

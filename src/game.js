@@ -15,8 +15,9 @@ import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
 import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
 import { walkIns, lifeSpots } from './streets.js';
+import { warehouses } from './docks.js';
 import { HERO, resetHero, heroFun, heroMenace, heroPoseCmd, heroOverheard, updateHero, heroPersonPose, heroHolds, heroNews, heroMapMarks, heroHud } from './hero.js';
-import { villains, resetVillains, updateVillains, villainHit, villainsNear, villainRay, villainMapMarks } from './villains.js';
+import { villains, henchmen, henchClap, resetVillains, updateVillains, villainHit, villainsNear, villainRay, villainMapMarks } from './villains.js';
 import { knockFX, hitFX, updateKnockFX, knockDebug } from './knockfx.js';
 import { assignJob, releaseJob, lifeStart, lifeStep, lifePose, lifeInterrupt, updateCityLife, clearCityLife, cityLifeDebug } from './citylife.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
@@ -281,7 +282,7 @@ class Hunter {
       }
       const ex0 = tx - this.x, ez0 = tz - this.z;
       if (this.y > 1 || this.y < -1) { /* on a roof or underground: straight at it */ }
-      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && los(this.x, this.z, tx, tz))) { tx = n.x; tz = n.z; } }
+      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && (los(this.x, this.z, tx, tz)))) { tx = n.x; tz = n.z; } }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
       const spd = T.speed * dayMult() * this.spdMul * spdK;
       if (this.noticeT > 0) { this.noticeT -= dt; tvx = 0; tvz = 0; }
@@ -1173,6 +1174,8 @@ const HC = {
   dropCash: (h) => maybeDropCash(h), shake: (k) => { G.shake = Math.max(G.shake, k); },
   spawnAt: (x, z, type, o = {}) => { const p = randomOpenPoint(x, z, 0, 6, 10); if (!p) return null; const h = new Hunter(p.x, p.z, type, false); Object.assign(h, o); G.hunters.push(h); return h; },
   hurt: (dmg, V, knock = 4) => villainHurtPlayer(dmg, V, knock),
+  onHenchDown: () => heroFun(0.08, HC, true),
+  onPose: () => henchClap(player.x, player.z, HC),
   onBeaten: (V) => { HERO.saves++; HERO.approval = 99; heroFun(1, HC, true); G.villainsBeaten = (G.villainsBeaten || 0) + 1; },
 };
 // villains can actually hurt the hero (nothing else in town can)
@@ -1182,6 +1185,7 @@ function villainHurtPlayer(dmg, V, knock) {
   if (!player.car) { const dx = player.x - V.x, dz = player.z - V.z, d = Math.hypot(dx, dz) || 1; player.kx += (dx / d) * knock; player.kz += (dz / d) * knock; }
   if (player.hp > 0) return;
   // the unthinkable: the hero goes down. Nobody saw anything.
+  if (V.hench) V = V.boss; // knocked out by the crew: the boss takes the credit
   player.hp = 100; G.villainFight = null; V.state = 'lair'; V.hp = V.def.hp;
   const p = randomOpenPoint(player.x, player.z, 70, 120, 30) || { x: 0, z: 0 };
   player.x = p.x; player.z = p.z; player.y = floorAt(p.x, p.z, 1); player.flying = false; player.vx = player.vz = player.vy = 0;
@@ -1806,6 +1810,7 @@ applyTouchMode();
   btn('btn-reload', startReload);
   btn('btn-pause', pauseGame);
   btn('btn-map', () => (G.bigMap = !G.bigMap));
+  btn('btn-pose', () => { if (G.super && G.mode === 'playing') heroPoseCmd(HC); });
 }
 
 // =====================================================================
@@ -1815,7 +1820,7 @@ const hud = {
   city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'), wx: $('hud-wx'),
   time: $('hud-time'), kills: $('hud-kills'), alert: $('hud-alert'), msg: $('hud-msg'), banner: $('hud-banner'),
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
-  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
+  pose: $('btn-pose'), carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
 };
 function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
 let bannerT = 0;
@@ -1931,6 +1936,7 @@ function drawMapTarget(T, tp, range, yaw, W, big, sc) {
 
 let hudT = 0;
 function updateHUD(dt) {
+  if (G.super) hud.pose.classList.toggle('cooling', HERO.poseCd > 0);
   hudT -= dt;
   if (G.msgT > 0) { G.msgT -= dt; if (G.msgT <= 0) hud.msg.classList.remove('show'); }
   if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) hud.banner.classList.remove('show'); }
@@ -2107,6 +2113,7 @@ function startGame(sup = G.super) {
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
   updateSlots();
+  $('btn-pose').classList.toggle('hidden', !G.super); // strike a pose by touch, same as G on a keyboard
   player.flying = false; player.slamming = false;
   G.mode = 'playing';
   for (const id of ['menu', 'over', 'pause']) $(id).classList.add('hidden');
@@ -2638,4 +2645,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

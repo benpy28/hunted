@@ -3,7 +3,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { clamp, lerp, mr, mpick, angDiff, scene, canvasTex, puffTex } from './core.js';
 import { CITIES, floorAt, randomOpenPoint, resolveBody, moveBody } from './world.js';
-import { buildPerson, setMood } from './people.js';
+import { buildPerson, setMood, SKINS, HAIRS } from './people.js';
 import { emitPuff } from './fx.js';
 import { sfx } from './audio.js';
 
@@ -52,14 +52,153 @@ function spawnVillain(def, lair) {
   V.tag = villainNameTag(V); g.add(V.tag);
   villains.push(V); return V;
 }
+// ---------------------------------------------------------------------
+// HENCHMEN: every villain keeps a crew in matching outfits. They loaf about the lair doing odd jobs,
+// pile in when their boss starts a fight, go down after a few hits, and scarper when the boss is beaten.
+// ---------------------------------------------------------------------
+export const HENCH_DEFS = {
+  COLDSNAP: { name: 'FROSTBITE', crew: 'FROSTBITES', n: 5, color: 0xd8f0ff, css: '#d8f0ff', attack: 'throw', hat: 'bobble',
+    look: { shirt: 0x6ab0e8, pants: 0xe8f4ff, hairStyle: 'short' },
+    lines: ['SNOWBALL FIGHT!', 'FOR THE BOSS!', 'BRRR, GET HIM!', 'COLD SHOULDER, INCOMING'], hurt: ['MY TOES!', 'NOT THE FACE!', 'OOF!'], flee: 'THE BOSS IS MELTING! RUN!', clap: '...WHY ARE WE CLAPPING?',
+    jobs: ['SHOVELLING SNOW', 'ICING THE BENCHES', 'PAINTING ICICLES'] },
+  SLAGHEAP: { name: 'CINDER', crew: 'CINDERS', n: 4, color: 0xff9a3a, css: '#ff9a3a', attack: 'punch', hat: 'hardhat',
+    look: { shirt: 0x3a2a24, pants: 0x2a2220, hairStyle: 'buzz' },
+    lines: ['HOT HANDS COMING THROUGH', 'STAND STILL, SHINY', 'BOSS SAYS HIT YOU', 'FOR SLAGHEAP!'], hurt: ['OW, HOT!', 'MY HARD HAT!', 'OOF!'], flee: 'BOSS IS DOWN! LEG IT!', clap: 'NICE POSE. I HATE IT.',
+    jobs: ['STOKING THE FIRE', 'CARRYING ROCKS', 'ON A TEA BREAK'] },
+  HEXWIRE: { name: 'GLITCH', crew: 'GLITCHES', n: 5, color: 0xd09aff, css: '#d09aff', attack: 'zap', hat: 'visor',
+    look: { shirt: 0x5a2a8a, pants: 0x2a2a3a, hairStyle: 'bob' },
+    lines: ['RUNNING HERO.EXE... DELETE', 'ZAP ZAP!', 'TURN IT OFF AND ON AGAIN', 'FOR THE QUEEN!'], hurt: ['ERROR!', 'CTRL-ALT-OW!', 'OOF!'], flee: 'QUEEN OFFLINE! LOG OUT!', clap: 'APPLAUSE.WAV PLAYING...',
+    jobs: ['SKIMMING CASHPOINTS', 'TYPING VERY FAST', 'UNPLUGGING THINGS'] },
+  'THE UNDERTOW': { name: 'BILGE RAT', crew: 'BILGE RATS', n: 5, color: 0xf0d030, css: '#f0d030', attack: 'splash', hat: 'souwester',
+    look: { shirt: 0xf0d030, pants: 0x1a3a4a, hairStyle: 'long' },
+    lines: ['MAN THE BUCKETS!', 'YOU SMELL OF SOAP', 'SWAB HIM!', 'FOR THE UNDERTOW!'], hurt: ['GLUG!', 'ME KNEES!', 'OOF!'], flee: 'ABANDON SHIP! THE BOSS IS SUNK!', clap: 'CLAP... CLAP... ARR.',
+    jobs: ['BAILING WATER', 'MOPPING UP', 'TYING KNOTS'] },
+};
+export const henchmen = [];
+function spawnHench(V, k) {
+  const HD = HENCH_DEFS[V.def.name]; if (!HD) return;
+  const p = buildPerson(Object.assign({ skin: mpick(SKINS), hair: mpick(HAIRS) }, HD.look));
+  const g = p.group; scene.add(g);
+  const part = (w, h, d, x, y, z, col, parent) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color: col })); m.position.set(x, y, z); parent.add(m); return m; };
+  if (HD.hat === 'bobble') { part(0.42, 0.16, 0.42, 0, 0.24, 0, 0xffffff, p.head); part(0.14, 0.14, 0.14, 0, 0.38, 0, 0x6ab0e8, p.head); }
+  else if (HD.hat === 'hardhat') { part(0.44, 0.14, 0.44, 0, 0.24, 0, 0xff8a1a, p.head); part(0.5, 0.03, 0.5, 0, 0.18, 0.02, 0xff8a1a, p.head); }
+  else if (HD.hat === 'visor') part(0.42, 0.09, 0.08, 0, 0.04, 0.2, 0x1a1a1a, p.head);
+  else { part(0.46, 0.12, 0.46, 0, 0.24, 0, 0xf0d030, p.head); part(0.56, 0.03, 0.62, 0, 0.17, -0.04, 0xf0d030, p.head); }
+  part(0.5, 0.18, 0.02, 0, 1.25, 0.16, V.def.color, g); // the boss's colour on their chest
+  const a = (k / HD.n) * Math.PI * 2;
+  const H = { hench: true, boss: V, k, def: { name: HD.name, scale: 1, hp: 24, speed: 5.6 + Math.random(), color: HD.color, css: HD.css, hurt: HD.hurt }, HD, p, g,
+    x: V.lair.x + Math.sin(a) * 7, z: V.lair.z + Math.cos(a) * 7, y: 0, hp: 24, state: 'lair', face: a, atkT: mr(0.5, 2), vx: 0, vz: 0, phase: Math.random() * 9, flashT: 0, downT: 0, hurtLineT: 0, clapT: 0, sayT: mr(3, 9), job: mpick(HD.jobs), strafe: Math.random() < 0.5 ? -1 : 1 };
+  H.y = floorAt(H.x, H.z, 0.5);
+  henchmen.push(H); return H;
+}
+function resetHench(H) {
+  const a = (H.k / H.HD.n) * Math.PI * 2;
+  H.state = 'lair'; H.hp = H.def.hp; H.downT = 0; H.clapT = 0; H.g.visible = true; H.g.rotation.set(0, 0, 0);
+  H.x = H.boss.lair.x + Math.sin(a) * 7; H.z = H.boss.lair.z + Math.cos(a) * 7; H.y = floorAt(H.x, H.z, 0.5);
+}
+function henchHit(H, dmg, C, kx, kz) {
+  if (H.state === 'down' || H.state === 'gone') return;
+  if (H.state === 'lair') villainEngage(H.boss, C); // poke the crew and the boss comes too
+  H.hp -= dmg; H.flashT = 0.12; H.vx += kx; H.vz += kz;
+  H.hurtLineT -= dmg; if (H.hurtLineT <= 0) { H.hurtLineT = 12; C.sayAt(H, mpick(H.HD.hurt)); }
+  if (H.hp <= 0) {
+    H.state = 'down'; H.downT = 0; H.hp = 0; sfx.thud(); C.shake(0.1);
+    for (let i = 0; i < 8; i++) emitPuff(H.x, H.y + 1, H.z, { life: 0.8, vx: mr(-3, 3), vy: mr(1, 4), vz: mr(-3, 3), size0: 0.3, size1: 1.2, alpha: 0.6, color: H.def.color });
+    const left = henchmen.filter((o) => o.boss === H.boss && (o.state === 'fight' || o.state === 'lair')).length;
+    C.showMsg(left ? `${H.def.name} DOWN · ${left} ${H.HD.crew} LEFT` : `ALL THE ${H.HD.crew} ARE DOWN`, 1.4);
+    if (C.onHenchDown) C.onHenchDown(H);
+  }
+}
+// the hero strikes a pose: henchmen can't help themselves either
+export function henchClap(x, z, C) {
+  let n = 0;
+  for (const H of henchmen) if ((H.state === 'fight' || H.state === 'lair') && Math.hypot(H.x - x, H.z - z) < 32) { H.clapT = mr(2, 3); n++; if (n === 1) C.sayAt(H, H.HD.clap); }
+  return n;
+}
+export const henchmenNear = (x, z, r) => henchmen.filter((H) => (H.state === 'fight' || H.state === 'lair') && Math.hypot(H.x - x, H.z - z) < r);
+function henchFire(H, C) {
+  const P = C.player, ex = P.x - H.x, ez = P.z - H.z, d = Math.hypot(ex, ez) || 1;
+  const kind = H.HD.attack;
+  if (kind === 'throw' || kind === 'splash') { // a lobbed snowball or bucket of bilge water
+    const T = clamp(d / 14, 0.5, 1.2), tx = P.x + P.vx * T * 0.6, tz = P.z + P.vz * T * 0.6;
+    const m = new THREE.Mesh(vProjGeo, new THREE.MeshBasicMaterial({ color: kind === 'throw' ? 0xf4fbff : 0x4a9ab0 })); m.scale.setScalar(kind === 'throw' ? 0.6 : 0.9);
+    m.position.set(H.x, H.y + 1.7, H.z); scene.add(m);
+    vProj.push({ m, V: H, vx: (tx - H.x) / T, vz: (tz - H.z) / T, vy: (P.y + 1 - (H.y + 1.7)) / T + 6 * T, life: 3, dmg: kind === 'throw' ? 2 : 3, grav: 12, aoe: kind === 'splash' ? 2.2 : 0, small: true });
+    sfx.swoosh();
+  } else if (d < 2.2 && Math.abs(P.y - H.y) < 1.8) { // a punch or a little zap, up close
+    C.hurt(kind === 'zap' ? 3 : 4, H, kind === 'zap' ? 3 : 5);
+    if (kind === 'zap') { sfx.vzap(); for (let i = 0; i < 5; i++) emitPuff(P.x, P.y + 1.2, P.z, { life: 0.4, vx: mr(-3, 3), vy: mr(0, 3), vz: mr(-3, 3), size0: 0.2, size1: 0.7, alpha: 0.9, color: H.def.color }); }
+    else sfx.thud();
+  }
+}
+function updateHench(H, dt, C) {
+  const P = C.player, V = H.boss;
+  H.phase += dt;
+  if (H.state === 'gone') { H.g.visible = false; return; }
+  if (H.state === 'down') {
+    H.downT += dt; H.g.rotation.x = Math.min(1.45, H.downT * 3); H.g.position.set(H.x, H.y, H.z); setMood(H.p, 'scared');
+    if (H.downT > 10) { H.state = 'gone'; H.g.visible = false; }
+    return;
+  }
+  const dx = P.x - H.x, dz = P.z - H.z, d = Math.hypot(dx, dz);
+  const near = d < 400; H.g.visible = near; if (!near && H.state !== 'flee') return;
+  // follow the boss's lead
+  if (H.state === 'lair' && V.state === 'fight') { H.state = 'fight'; H.atkT = mr(0.6, 2); if (Math.random() < 0.5) C.sayAt(H, mpick(H.HD.lines)); }
+  if (H.state === 'fight' && V.state === 'lair') H.state = 'lair';
+  if ((H.state === 'fight' || H.state === 'lair') && (V.state === 'down' || V.state === 'gone')) { H.state = 'flee'; H.downT = 0; if (H.k === 0) C.sayAt(H, H.HD.flee); }
+  let tvx = 0, tvz = 0, spd = H.def.speed;
+  H.clapT -= dt;
+  if (H.clapT > 0) { // caught up in the applause
+    setMood(H.p, 'happy'); H.face += angDiff(H.face, Math.atan2(dx, dz)) * Math.min(1, dt * 6);
+    const c = Math.sin(H.phase * 18) * 0.35; H.p.armL.rotation.set(-1.3, 0, 0.5 + c); H.p.armR.rotation.set(-1.3, 0, -0.5 - c);
+  } else if (H.state === 'lair') { // odd jobs round the lair
+    setMood(H.p, 'neutral');
+    const a = (H.k / H.HD.n) * Math.PI * 2 + Math.sin(H.phase * 0.2) * 0.6, r = 6 + Math.sin(H.phase * 0.33 + H.k) * 3;
+    const lx = V.x + Math.sin(a) * r, lz = V.z + Math.cos(a) * r;
+    tvx = clamp((lx - H.x) * 0.6, -2, 2); tvz = clamp((lz - H.z) * 0.6, -2, 2);
+    H.face += angDiff(H.face, Math.atan2(tvx || 0.001, tvz)) * Math.min(1, dt * 3);
+    H.sayT -= dt; if (H.sayT <= 0) { H.sayT = mr(10, 22); if (d < 60) C.sayAt(H, H.job); }
+  } else if (H.state === 'fight') {
+    setMood(H.p, 'angry');
+    const ranged = H.HD.attack === 'throw' || H.HD.attack === 'splash';
+    const want = ranged ? (d > 14 ? 1 : d < 7 ? -1 : 0) : (d > 1.4 ? 1 : 0), px = -dz / (d || 1), pz = dx / (d || 1);
+    if (Math.random() < dt * 0.4) H.strafe *= -1;
+    const st = ranged || d < 4 ? 0.45 : 0.15;
+    tvx = (dx / (d || 1)) * want * spd + px * H.strafe * spd * st; tvz = (dz / (d || 1)) * want * spd + pz * H.strafe * spd * st;
+    H.face += angDiff(H.face, Math.atan2(dx, dz)) * Math.min(1, dt * 8);
+    H.atkT -= dt;
+    if (H.atkT <= 0 && (ranged ? d < 26 : d < 2.2)) { H.atkT = ranged ? mr(2, 3.4) : mr(1.3, 2.1); henchFire(H, C); }
+    H.sayT -= dt; if (H.sayT <= 0) { H.sayT = mr(6, 14); C.sayAt(H, P.y - H.y > 4 ? 'COME DOWN AND FIGHT FAIR!' : mpick(H.HD.lines)); }
+    if (d > 160) H.state = 'lair';
+  } else if (H.state === 'flee') { // scarper, then vanish
+    setMood(H.p, 'scared'); H.downT += dt;
+    tvx = (-dx / (d || 1)) * spd * 1.2; tvz = (-dz / (d || 1)) * spd * 1.2;
+    H.face += angDiff(H.face, Math.atan2(tvx, tvz)) * Math.min(1, dt * 8);
+    if (H.downT > 8) { H.state = 'gone'; H.g.visible = false; return; }
+  }
+  H.vx = lerp(H.vx, tvx, Math.min(1, dt * 4)); H.vz = lerp(H.vz, tvz, Math.min(1, dt * 4));
+  const ox = H.x, oz = H.z; H.x += H.vx * dt; H.z += H.vz * dt;
+  moveBody(H, ox, oz, 0.35, H.y, 1.8);
+  H.y = lerp(H.y, floorAt(H.x, H.z, H.y + 1), Math.min(1, dt * 10));
+  if (H.clapT <= 0) {
+    const sp = Math.hypot(H.vx, H.vz), sw = Math.sin(H.phase * 9) * Math.min(1, sp / 3) * 0.8, p = H.p;
+    p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
+    const swing = H.state === 'fight' && H.atkT > (H.HD.attack === 'throw' || H.HD.attack === 'splash' ? 1.7 : 1.0);
+    p.armL.rotation.set(-sw * 0.7, 0, 0); p.armR.rotation.set(swing ? -2.4 : sw * 0.7, 0, 0);
+  }
+  H.flashT -= dt;
+  H.g.position.set(H.x, H.y, H.z); H.g.rotation.y = H.face;
+}
+
 // one villain per town, plus one who roams the countryside
 export function resetVillains(C) {
   for (const V of villains) scene.remove(V.g); villains.length = 0;
+  for (const H of henchmen) scene.remove(H.g); henchmen.length = 0;
   for (const P of vProj) scene.remove(P.m); vProj.length = 0; for (const R of vRings) scene.remove(R.m); vRings.length = 0; for (const B of vBeams) scene.remove(B.m); vBeams.length = 0;
   if (!C.G.super) return;
   const spots = CITIES.map((c) => randomOpenPoint(c.cx, c.cz, 90, 150, 60)); // never right where you start
   spots.push(randomOpenPoint(350, 350, 0, 80, 40));
-  VILLAIN_DEFS.forEach((def, i) => { const s = spots[i] || spots[0]; if (s) spawnVillain(def, s); });
+  VILLAIN_DEFS.forEach((def, i) => { const s = spots[i] || spots[0]; if (s) { const V = spawnVillain(def, s); for (let k = 0; k < (HENCH_DEFS[def.name]?.n || 0); k++) spawnHench(V, k); } });
 }
 export function villainMapMarks() { return villains.filter((V) => V.state !== 'gone').map((V) => ({ x: V.x, z: V.z, color: V.def.css, name: V.def.name, villain: true, fighting: V.state === 'fight' })); }
 
@@ -95,18 +234,19 @@ function villainFire(V, C, kind) {
 }
 // the player hits a villain: lasers, swats, slams and flying cars
 export function villainHit(V, dmg, C, kx = 0, kz = 0) {
+  if (V.hench) { henchHit(V, dmg, C, kx, kz); return; }
   if (V.state === 'down' || V.state === 'gone') return;
   if (V.state === 'lair') villainEngage(V, C);
   V.hp -= dmg; V.flashT = 0.12; V.vx += kx; V.vz += kz;
   V.hurtLineT -= dmg; if (V.hurtLineT <= 0) { V.hurtLineT = 30; C.sayAt(V, mpick(V.def.hurt)); }
   if (V.hp <= 0) villainBeaten(V, C);
 }
-export function villainsNear(x, y, z, r) { return villains.filter((V) => (V.state === 'fight' || V.state === 'lair') && Math.hypot(V.x - x, V.z - z) < r + V.def.scale * 0.5 && y > V.y - 2 && y < V.y + 2 * V.def.scale + 2); }
+export function villainsNear(x, y, z, r) { return [...villains, ...henchmen].filter((V) => (V.state === 'fight' || V.state === 'lair') && Math.hypot(V.x - x, V.z - z) < r + V.def.scale * 0.5 && y > V.y - 2 && y < V.y + 2 * V.def.scale + 2); }
 // first villain hit by a ray from o along unit d (for laser eyes)
 export function villainRay(o, d, maxT) {
   let best = null, bt = maxT;
-  for (const V of villains) {
-    if (V.state === 'down' || V.state === 'gone') continue;
+  for (const V of villains.concat(henchmen)) {
+    if (V.state === 'down' || V.state === 'gone' || V.state === 'flee') continue;
     const cx = V.x, cy = V.y + V.def.scale, cz = V.z, r = V.def.scale * 0.65;
     const ox = o.x - cx, oy = o.y - cy, oz = o.z - cz, b = ox * d.x + oy * d.y + oz * d.z, c = ox * ox + oy * oy + oz * oz - r * r, disc = b * b - c;
     if (disc < 0) continue; const t = -b - Math.sqrt(disc);
@@ -117,7 +257,8 @@ export function villainRay(o, d, maxT) {
 function villainEngage(V, C) {
   if (V.state === 'fight') return;
   V.state = 'fight'; V.atkT = 1.5; C.G.villainFight = V; sfx.sting();
-  C.showBanner(`<small>SUPER VILLAIN</small>${V.def.name}`, 2.5); C.sayAt(V, mpick(V.def.taunts));
+  const crew = HENCH_DEFS[V.def.name], nCrew = henchmen.filter((H) => H.boss === V && H.state === 'lair').length;
+  C.showBanner(`<small>SUPER VILLAIN</small>${V.def.name}${crew && nCrew ? `<small>AND ${nCrew} ${crew.crew}</small>` : ''}`, 2.5); C.sayAt(V, mpick(V.def.taunts));
   for (const h of C.G.hunters) if (!h.dead && Math.hypot(h.x - V.x, h.z - V.z) < 50) h.panicT = mr(6, 10);
 }
 function villainBeaten(V, C) {
@@ -133,7 +274,7 @@ export function updateVillains(dt, C) {
   for (const V of villains) {
     const dx = P.x - V.x, dz = P.z - V.z, d = Math.hypot(dx, dz), dy = P.y - V.y;
     V.phase += dt;
-    if (V.state === 'gone') { V.downT += dt; if (V.downT > 180) { V.state = 'lair'; V.hp = V.def.hp; V.x = V.lair.x; V.z = V.lair.z; V.y = floorAt(V.x, V.z, 0.5); V.g.visible = true; } continue; }
+    if (V.state === 'gone') { V.downT += dt; if (V.downT > 180) { V.state = 'lair'; V.hp = V.def.hp; V.x = V.lair.x; V.z = V.lair.z; V.y = floorAt(V.x, V.z, 0.5); V.g.visible = true; for (const H of henchmen) if (H.boss === V) resetHench(H); } continue; }
     if (V.state === 'down') { // slumped, then carted off
       V.downT += dt; V.g.rotation.x = Math.min(1.4, V.downT * 2); V.g.position.set(V.x, V.y, V.z);
       setMood(V.p, 'scared');
@@ -175,6 +316,7 @@ export function updateVillains(dt, C) {
     const cp = V_capes.get(V.g); if (cp) cp.rotation.x = 0.12 + Math.min(0.9, sp * 0.12) + Math.sin(V.phase * 7) * 0.05;
     V.g.position.set(V.x, V.y + (V.def.name === 'HEXWIRE' ? 0.4 + Math.sin(V.phase * 2) * 0.2 : 0), V.z); V.g.rotation.y = V.face;
   }
+  for (const H of henchmen) updateHench(H, dt, C);
   // shards and boulders
   for (let i = vProj.length - 1; i >= 0; i--) {
     const Q = vProj[i]; Q.life -= dt; Q.vy -= Q.grav * dt;
