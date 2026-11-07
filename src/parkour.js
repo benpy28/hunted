@@ -21,6 +21,7 @@ function startAnim(P, kind, tx, ty, tz, dur, peak) {
 
 // Try to get up and over whatever is in front. Returns true if a move started.
 function tryLedge(P, fx, fz, inp, sprint, cb) {
+  if (cb.noLedges && cb.noLedges()) return false; // pushing a pram: no vaulting over walls with it
   const px = P.x + fx * 0.75, pz = P.z + fz * 0.75;
   const top = stackTop(px, pz, P.y);
   if (top < 0) return false;

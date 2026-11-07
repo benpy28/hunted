@@ -233,3 +233,18 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 #hud-junk { position: absolute; right: calc(20px + env(safe-area-inset-right)); bottom: calc(118px + env(safe-area-inset-bottom)); font: bold 13px Arial, sans-serif; color: #d8f0d0; text-shadow: 0 1px 2px #000; letter-spacing: 1px; }
 #btn-throw { right: calc(120px + env(safe-area-inset-right)); bottom: calc(220px + env(safe-area-inset-bottom)); background: rgba(90,170,90,.55); }
 .is-touch #hud-junk { bottom: auto; top: calc(210px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); }
+
+/* the diary on the pause screen: what's on, and your perks */
+.diary { text-align: left; max-height: 46vh; overflow-y: auto; margin: 14px auto 0; padding: 10px 14px; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.18); border-radius: 10px; font-size: 13px; }
+.diary:empty { display: none; }
+.diary .dhead { font-weight: 900; letter-spacing: 3px; font-size: 18px; color: #ffd24a; }
+.diary .dhead small { color: #bbb; font-size: 12px; letter-spacing: 2px; margin-left: 8px; }
+.diary .dsec { margin: 10px 0 4px; font-weight: 800; letter-spacing: 2px; color: #9ad0ff; font-size: 12px; }
+.diary .drow { margin: 3px 0 6px; line-height: 1.35; }
+.diary .drow b { display: block; letter-spacing: 1px; }
+.diary .drow span { color: #ddd; }
+.diary .drow em { display: block; color: #aaa; font-style: normal; font-size: 12px; }
+.diary .drow.now b { color: #7dff9a; }
+.diary .drow i { color: #7dff9a; font-style: normal; font-weight: 800; }
+.diary .dchip { display: inline-block; margin: 2px 4px 2px 0; padding: 1px 8px; border-radius: 10px; background: rgba(255,255,255,.1); font-size: 11px; }
+.diary .dchip.done { background: rgba(125,255,154,.25); }

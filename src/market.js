@@ -15,7 +15,7 @@ import { colliders, addCollider, propBuf, glowBuf, worldHooks, keepClear, blockR
 import { lifeSpots, hideSpots } from './streets.js';
 import { CATALOG } from './shops.js';
 
-export const MK_STATE = { bought: 0, nicked: 0, spent: 0, tips: 0, flowersT: 0, mapDay: 0, shedFinds: 0, lastStall: null };
+export const MK_STATE = { bought: 0, nicked: 0, spent: 0, tips: 0, flowersT: 0, mapDay: 0, shedFinds: 0, lastStall: null, sweets: 0 };
 export const markets = []; // {city, name, x, z, x0, x1, z0, z1, stalls, loos}
 export const marketStalls = []; // {kind, name, x, z, alongX, flip, front, back, market, spot, hide}
 const mkHash = (x, z, k = 0) => { const s = Math.sin(x * 12.9898 + z * 78.233 + k * 53.117) * 43758.5453; return s - Math.floor(s); };
@@ -55,6 +55,7 @@ const STALL_GOODS = {
     { id: 'mk_roll', name: 'SAUSAGE ROLL', price: 4, heal: 20, desc: 'Flaky pastry everywhere (+20).' },
     { id: 'mk_donut', name: 'JAM DOUGHNUT', price: 3, heal: 10, desc: 'Sugar. Jam on your chin (+10).' },
     { id: 'mk_tea', name: 'FLASK OF TEA', price: 5, heal: 15, desc: 'Hot, strong and sweet. Steadies the nerves (+15, lowers heat a little).' },
+    { id: 'mk_sweets', name: 'BAG OF PICK AND MIX', price: 3, sweets: 6, desc: 'Six sweets. Give one to a kid (E) who\'s staring at you and they\'ll keep your secret for the rest of the day.' },
   ],
   fish: [
     { id: 'mk_chips', name: 'CHIPS IN PAPER', price: 5, heal: 25, desc: 'Salt, vinegar, scalding (+25).' },
@@ -261,6 +262,7 @@ function giveGood(it, K, st) {
   if (it.heal && P.hp >= 100) return mpick(['NOT HUNGRY. YOU EAT IT ANYWAY', 'FOR LATER. (YOU EAT IT NOW)', 'WORTH EVERY PENNY']);
   if (it.heal) { P.hp = Math.min(100, P.hp + it.heal); if (it.id === 'mk_tea') K.coolHeat(6); return mpick(['DELICIOUS', 'LOVELY, THAT', 'MUCH BETTER', 'CRUMBS EVERYWHERE']); }
   if (it.junk) { for (const k of it.junk) K.addJunk(k); return `${it.name}: IN YOUR POCKETS. T TO THROW`; }
+  if (it.sweets) { MK_STATE.sweets += it.sweets; return `${MK_STATE.sweets} SWEETS IN YOUR POCKET. E NEXT TO A KID TO HAND ONE OVER`; }
   if (it.map) { MK_STATE.mapDay = K.G.day; return 'HIDING PLACES MARKED ON YOUR MAP (TODAY ONLY)'; }
   if (it.flowers) { MK_STATE.flowersT = Math.max(MK_STATE.flowersT, it.flowers); return it.id === 'mk_fern' ? 'YOU PEER OUT FROM BEHIND THE FERN' : 'FLOWERS IN HAND. YOU LOOK HARMLESS'; }
   if (it.tip) { fakeTipOff(K); return 'TIP-OFF PHONED IN. THEY\'RE OFF TO THE WRONG END OF TOWN'; }
@@ -303,7 +305,7 @@ export function marketConspic(K) {
   let k = 0;
   if (MK_STATE.flowersT > 0) k -= 0.15;
   const M = marketAt(K.player.x, K.player.z);
-  if (M && marketOpen(K.G.hour) && !K.player.car) k -= 0.12;
+  if (M && marketOpen(K.G.hour) && !K.player.car) k -= 0.12 + (K.bigDay && K.bigDay(M) ? 0.08 : 0); // bigger crowds on market day
   return k;
 }
 export function marketAt(x, z) { for (const M of markets) if (x > M.x0 && x < M.x1 && z > M.z0 && z < M.z1) return M; return null; }
@@ -317,6 +319,8 @@ export function updateMarkets(dt, K) {
     mkTraderT = 2;
     if (marketOpen(K.G.hour) && !K.G.super) for (const M of markets) {
       if (Math.abs(M.x - P.x) > 170 || Math.abs(M.z - P.z) > 170) continue;
+      const staffed = M.stalls.filter((s) => K.vendorOf(s.spot)).length, want = Math.ceil(M.stalls.length * (K.staffShare ? K.staffShare(M) : 1));
+      if (staffed >= want) continue; // quiet days: only some stalls are minded (the rest run on honesty boxes)
       const st = M.stalls.find((s) => !K.vendorOf(s.spot));
       if (st) { K.hireTrader(st.spot, st.back.x, st.back.z); break; }
     }
@@ -337,7 +341,7 @@ export function updateMarkets(dt, K) {
 // trader's lines while they're at the stall
 export function stallLines(spot) { return spot && spot.lines; }
 export function resetMarkets() {
-  MK_STATE.bought = 0; MK_STATE.nicked = 0; MK_STATE.spent = 0; MK_STATE.tips = 0; MK_STATE.flowersT = 0; MK_STATE.mapDay = 0; MK_STATE.shedFinds = 0; MK_STATE.lastStall = null;
+  MK_STATE.sweets = 0; MK_STATE.bought = 0; MK_STATE.nicked = 0; MK_STATE.spent = 0; MK_STATE.tips = 0; MK_STATE.flowersT = 0; MK_STATE.mapDay = 0; MK_STATE.shedFinds = 0; MK_STATE.lastStall = null;
   for (const S of hideSpots) if (S.kind === 'shed') S.lootDay = 0;
 }
 // what the minimap shows: markets, and (with the old map) every hiding place
