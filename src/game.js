@@ -81,6 +81,12 @@ const HTYPES = {
   brute: { speed: 4.0, walk: 1.3, dmg: 14, scale: 1.28, hp: 5, knock: 0.45, stun: 0.9 },
   cop: { speed: 5.6, walk: 1.8, dmg: 6, scale: 1.04, hp: 3, knock: 0.8, stun: 1.2 },
 };
+const qMarkerMat = new THREE.SpriteMaterial({
+  map: canvasTex(64, 64, (ctx) => { ctx.fillStyle = '#ffc23a'; ctx.beginPath(); ctx.arc(32, 32, 26, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#222'; ctx.font = 'bold 44px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', 32, 34); }),
+  depthTest: false, transparent: true,
+});
+// how each hunter goes about it, so a crowd doesn't move like one zombie horde
+const ROLES = ['rusher', 'rusher', 'rusher', 'flanker', 'flanker', 'hesitant', 'hesitant', 'stalker', 'coward'];
 const markerMat = new THREE.SpriteMaterial({
   map: canvasTex(64, 64, (ctx) => { ctx.fillStyle = '#ff2a2a'; ctx.beginPath(); ctx.arc(32, 32, 26, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold 44px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', 32, 34); }),
   depthTest: false, transparent: true,
@@ -107,8 +113,14 @@ class Hunter {
     this.stun = 0; this.kx = 0; this.kz = 0; this.phase = Math.random() * 10; this.hasLOS = false; this.lastSeen = 0;
     this.wt = null; this.progT = 0; this.lx = x; this.lz = z; this.alertT = -1; this.strafe = Math.random() < 0.5 ? 1 : -1;
     this.dead = false;
+    this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
+    this.spdMul = mr(0.82, 1.1); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
   }
-  alert(delay = 0) { if (this.state === 'chase') return; if (delay > 0) { if (this.alertT < 0) this.alertT = delay; } else { this.state = 'chase'; this.lastSeen = 0; } }
+  alert(delay = 0) {
+    if (this.state === 'chase') return;
+    if (delay > 0) { if (this.alertT < 0) this.alertT = delay; return; }
+    this.state = 'chase'; this.lastSeen = 0; this.noticeT = mr(0.35, 1.1); // a double-take before they commit
+  }
   remove() { scene.remove(this.g); this.dead = true; }
   die(impulse, hitY, byPlayer = false) {
     if (this.dead) return;
@@ -145,12 +157,30 @@ class Hunter {
       this.stun -= dt;
     } else if (this.state === 'chase') {
       this.lastSeen += dt;
-      if (this.lastSeen > 18 && d > 60) { this.state = 'search'; this.wt = null; }
-      let tx = tp.x, tz = tp.z;
-      if (!(this.hasLOS || d < 4)) { const n = navTarget(this.x, this.z); if (n) { tx = n.x; tz = n.z; } }
+      if (this.lastSeen > (this.role === 'coward' ? 7 : 14) && d > 35) { this.state = 'search'; this.wt = null; }
+      let tx = tp.x, tz = tp.z, spdK = 1, hold = 0;
+      const crowd = G.hunters.reduce((n, o) => n + (o !== this && !o.dead && o.state === 'chase' && Math.abs(o.x - tp.x) + Math.abs(o.z - tp.z) < 14 ? 1 : 0), 0);
+      if (this.role === 'flanker' && d > 7 && d < 60) { // swing wide and come in from the side
+        const px = -dz / (d || 1), pz = dx / (d || 1), off = Math.min(14, d * 0.6) * this.flankSide;
+        const fx2 = tp.x + px * off, fz2 = tp.z + pz * off;
+        if (!blockedAt(fx2, fz2) && los(this.x, this.z, fx2, fz2)) { tx = fx2; tz = fz2; }
+      } else if (this.role === 'hesitant' && crowd < 2 && d < 16) hold = 10; // won't go in alone
+      else if (this.role === 'stalker' && d > 6) { // keep a distance until you turn your back
+        const fx3 = -Math.sin(player.yaw), fz3 = -Math.cos(player.yaw), facing = ((this.x - tp.x) * fx3 + (this.z - tp.z) * fz3) / (d || 1);
+        if (facing > 0.3 || player.car) hold = 15; else spdK = 1.15;
+      } else if (this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
+      const ex0 = tx - this.x, ez0 = tz - this.z;
+      if (!(this.hasLOS || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z); if (n) { tx = n.x; tz = n.z; } }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
-      const spd = T.speed * dayMult();
-      if (this.gunner && this.hasLOS && d < 30) {
+      const spd = T.speed * dayMult() * this.spdMul * spdK;
+      if (this.noticeT > 0) { this.noticeT -= dt; tvx = 0; tvz = 0; }
+      else if (hold < 0) { tvx = (-dx / (d || 1)) * spd * 0.9; tvz = (-dz / (d || 1)) * spd * 0.9; }
+      else if (hold > 0 && this.hasLOS && d < hold + 4) {
+        const back = d < hold - 2 ? -0.6 : d > hold + 1 ? 0.6 : 0, px = -dz / (d || 1), pz = dx / (d || 1);
+        tvx = (dx / (d || 1)) * back * T.walk + px * 1.2 * this.strafe; tvz = (dz / (d || 1)) * back * T.walk + pz * 1.2 * this.strafe;
+        if (Math.random() < dt * 0.5) this.strafe *= -1;
+        this.shoutT -= dt; if (this.shoutT <= 0) { this.shoutT = mr(2.5, 4); shout(this); }
+      } else if (this.gunner && this.hasLOS && d < 30) {
         if (d < 13) {
           const px = -dz / (d || 1), pz = dx / (d || 1);
           tvx = px * 1.6 * this.strafe; tvz = pz * 1.6 * this.strafe;
@@ -166,14 +196,17 @@ class Hunter {
       }
       if (player.car && d < 3 && Math.abs(player.car.speed) < 4) player.dragT += dt;
     } else {
-      if (!this.wt || Math.hypot(this.wt.x - this.x, this.wt.z - this.z) < 1.5) {
+      if (this.waitT > 0) { this.waitT -= dt; this.face += Math.sin(G.elapsed * 1.3 + this.phase) * dt * 1.2; }
+      else if (!this.wt || Math.hypot(this.wt.x - this.x, this.wt.z - this.z) < 1.5) {
+        if (this.wt && Math.random() < 0.6) this.waitT = mr(1, 3.5); // stop and look around
         const guess = Math.random() < 0.6 ? G.lkp : { x: this.x, z: this.z };
         this.wt = randomOpenPoint(guess.x, guess.z, 5, 45) || { x: this.x, z: this.z };
       }
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
       if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
-      tvx = ox * T.walk; tvz = oz * T.walk;
+      const w = this.waitT > 0 ? 0 : T.walk * this.spdMul;
+      tvx = ox * w; tvz = oz * w;
       this.progT += dt;
       if (this.progT > 2) { if (Math.hypot(this.x - this.lx, this.z - this.lz) < 0.6) this.wt = null; this.progT = 0; this.lx = this.x; this.lz = this.z; }
     }
@@ -194,11 +227,14 @@ class Hunter {
     if (this.stun > 0) { p.armL.rotation.x = p.armR.rotation.x = -2.6; }
     else if (this.state === 'chase') {
       if (this.gunner && this.hasLOS && d < 30) { p.armR.rotation.x = -1.5; p.armL.rotation.x = -sw * 0.6; }
-      else { p.armL.rotation.x = -1.35 + sw * 0.25; p.armR.rotation.x = -1.35 - sw * 0.25; }
+      else if (this.noticeT > 0) { p.armR.rotation.x = -1.4; p.armL.rotation.x = 0; } // pointing: "it's them!"
+      else if (d < 2.6) { p.armL.rotation.x = -1.35 + sw * 0.25; p.armR.rotation.x = -1.35 - sw * 0.25; } // grabbing
+      else { p.armL.rotation.x = -0.35 - sw * 1.1; p.armR.rotation.x = -0.35 + sw * 1.1; } // sprinting
     } else { p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
     this.g.position.set(this.x, groundY(this.x, this.z) + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08, this.z);
     this.g.rotation.y = this.face;
-    this.marker.visible = this.state === 'chase' && d < 70;
+    this.marker.visible = this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12);
+    this.marker.material = this.noticeT > 0 ? qMarkerMat : markerMat;
   }
   navTo(t) {
     const a = Math.atan2(t.x - this.x, t.z - this.z);
@@ -210,7 +246,7 @@ class Hunter {
   }
 }
 function shout(h) {
-  for (const o of G.hunters) if (o !== h && o.state !== 'chase' && Math.abs(o.x - h.x) < 35 && Math.abs(o.z - h.z) < 35) o.alert(mr(0.4, 1.6));
+  for (const o of G.hunters) if (o !== h && o.state !== 'chase' && Math.abs(o.x - h.x) < 24 && Math.abs(o.z - h.z) < 24 && Math.random() < 0.55) o.alert(mr(0.6, 2.2));
 }
 function alertAround(x, z, r, maxDelay = 1.5) {
   for (const h of G.hunters) if (Math.abs(h.x - x) < r && Math.abs(h.z - z) < r) h.alert(mr(0, maxDelay));
@@ -630,7 +666,7 @@ class Aircraft {
 function onSpotted(kind) {
   addHeat(kind === 'heli' ? 12 : 6);
   if (G.spottedMsgT <= 0) { showMsg(kind === 'heli' ? 'SPOTTED BY A POLICE HELICOPTER' : 'A POLICE DRONE SPOTTED YOU', 2.5); sfx.alarm(); G.spottedMsgT = 6; }
-  const tp = targetPos(); alertAround(tp.x, tp.z, 110);
+  const tp = targetPos(); alertAround(tp.x, tp.z, 70, 2.5);
 }
 function manageAircraft(dt) {
   G.airT -= dt;
@@ -728,7 +764,7 @@ const _camDir = new THREE.Vector3();
 function playerShoot() {
   if (player.car || !player.alive || player.reloadT > 0 || player.fireCd > 0) return;
   if (player.mag <= 0) { if (player.reserve > 0) startReload(); else { sfx.empty(); showMsg('OUT OF AMMO'); } return; }
-  player.mag--; player.fireCd = 0.17; player.recoil = 1;
+  player.mag--; player.fireCd = 0.17; player.recoil = 1; G.shotT = 0;
   sfx.shot(); addHeat(2.5);
   flash.visible = true; flash.material.rotation = Math.random() * 6; setTimeout(() => (flash.visible = false), 45);
   camera.getWorldDirection(_camDir);
@@ -1001,7 +1037,7 @@ function updateLighting(t) {
 // =====================================================================
 // Game flow
 // =====================================================================
-function localeFactor(x, z) { const c = cityAt(x, z, 20); return c ? c.pop : 0.3; }
+function localeFactor(x, z) { const c = cityAt(x, z, 20); return c ? c.pop : 0.22; }
 function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   const tp = targetPos();
   let p = null;
@@ -1015,7 +1051,8 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   const gunner = type !== 'brute' && Math.random() < Math.min(0.08 + (G.day - 1) * 0.022, 0.5);
   G.hunters.push(new Hunter(p.x, p.z, type, gunner, state));
 }
-const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min(22 + G.day * 5, 85) * localeFactor(tp.x, tp.z)); };
+const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min(14 + G.day * 2.4 + G.level * 2, 46) * localeFactor(tp.x, tp.z)); };
+const maxChasers = () => Math.round(5 + G.level * 2 + G.day * 0.35);
 
 function clearWorld() {
   for (const h of G.hunters) h.remove(); G.hunters.length = 0;
@@ -1204,7 +1241,7 @@ function updateDirector(dt) {
   G.level = lvl; G.peak = Math.max(G.peak || 0, lvl);
   G.spottedMsgT -= dt;
   // air tracking alerts ground units
-  if (G.airTracking) { G.airAlertT -= dt; if (G.airAlertT <= 0) { G.airAlertT = 1; alertAround(tp.x, tp.z, 130); } }
+  if (G.airTracking) { G.airAlertT -= dt; if (G.airAlertT <= 0) { G.airAlertT = 2; alertAround(tp.x, tp.z, 60, 3); } }
   manageAircraft(dt);
   // population
   G.spawnT -= dt;
@@ -1214,6 +1251,12 @@ function updateDirector(dt) {
     if (alive.length < targetHunters()) spawnHunter();
     for (const h of alive) if (h.state !== 'chase' && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
     for (const h of alive) if (h.state === 'chase' && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
+    // not everyone joins in: past the cap, the furthest ones who can't see you go back to searching
+    const ch = alive.filter((h) => h.state === 'chase');
+    if (ch.length > maxChasers()) {
+      ch.sort((a, b) => Math.hypot(b.x - tp.x, b.z - tp.z) - Math.hypot(a.x - tp.x, a.z - tp.z));
+      for (let i = 0; i < ch.length - maxChasers(); i++) if (!ch[i].hasLOS || Math.hypot(ch[i].x - tp.x, ch[i].z - tp.z) > 30) { ch[i].state = 'search'; ch[i].wt = null; ch[i].alertT = -1; }
+    }
   }
   G.hunters = G.hunters.filter((h) => !h.dead);
   // location leak
@@ -1222,7 +1265,7 @@ function updateDirector(dt) {
     G.pingT = Math.max(14, 50 - G.day * 1.2 - G.level * 4);
     reportSighting(tp.x, tp.z);
     let n = 0;
-    for (const h of G.hunters) if (Math.hypot(h.x - tp.x, h.z - tp.z) < 110) { h.alert(mr(0, 2)); n++; }
+    for (const h of G.hunters) if (Math.hypot(h.x - tp.x, h.z - tp.z) < 80) { if (Math.random() < 0.45) h.alert(mr(0, 2.5)); else h.wt = randomOpenPoint(tp.x, tp.z, 4, 25); n++; }
     if (n || G.helis.length) { showMsg('YOUR LOCATION WAS LEAKED', 3); sfx.alarm(); }
   }
   // hunter drivers
@@ -1255,8 +1298,16 @@ const clock = new THREE.Clock();
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(clock.getDelta(), 0.05), t = performance.now() / 1000;
+  simulate(dt, t);
+  updateLighting(t);
+  updateCamera(dt, t);
+  renderer.clear();
+  renderer.render(scene, camera);
+  if (vm.visible && G.mode !== 'menu') { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
+}
+function simulate(dt, t) {
   if (G.mode === 'playing') {
-    G.elapsed += dt;
+    G.elapsed += dt; G.shotT = (G.shotT ?? 99) + dt;
     G.airTracking = 0;
     updatePlayer(dt);
     for (const h of G.hunters) if (!h.dead) h.update(dt);
@@ -1276,11 +1327,6 @@ function frame() {
   }
   for (let i = ragdolls.length - 1; i >= 0; i--) if (!ragdolls[i].update(G.mode === 'paused' ? 0 : dt)) { ragdolls[i].dispose(); ragdolls.splice(i, 1); }
   if (G.mode !== 'paused') { updatePuffs(dt); updateTracers(dt); updateAmbientSmoke(dt); }
-  updateLighting(t);
-  updateCamera(dt, t);
-  renderer.clear();
-  renderer.render(scene, camera);
-  if (vm.visible && G.mode !== 'menu') { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
 }
 
 player.x = 0; player.z = 0;
@@ -1289,4 +1335,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

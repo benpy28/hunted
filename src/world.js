@@ -7,8 +7,8 @@ export const RD = 14, SW = 3, BLK = 44, PITCH = BLK + RD;
 
 export const CITIES = [
   { name: 'PORT HALDEN', style: 'metro', cx: 0, cz: 0, n: 8, pop: 1 },
-  { name: 'ASHFORD', style: 'suburb', cx: 1220, cz: 0, n: 6, pop: 0.8 },
-  { name: 'SALTMARSH DOCKS', style: 'industrial', cx: 0, cz: 1220, n: 6, pop: 0.85 },
+  { name: 'ASHFORD', style: 'suburb', cx: 700, cz: 0, n: 6, pop: 0.8 },
+  { name: 'SALTMARSH DOCKS', style: 'industrial', cx: 0, cz: 700, n: 6, pop: 0.85 },
 ];
 for (const c of CITIES) {
   c.half = (c.n * PITCH) / 2;
@@ -21,12 +21,17 @@ const PH = CITIES[0], ASH = CITIES[1], DOCKS = CITIES[2];
 export const HIGHWAYS = [
   { name: 'ROUTE 9', axis: 'x', fixed: 0, a0: PH.maxX, a1: ASH.minX },
   { name: 'ROUTE 4', axis: 'z', fixed: 0, a0: PH.maxZ, a1: DOCKS.minZ },
+  { name: 'OLD FARM RD', axis: 'z', fixed: ASH.cx, a0: ASH.maxZ, a1: DOCKS.cz + 7, lane: true },
+  { name: 'OLD FARM RD', axis: 'x', fixed: DOCKS.cz, a0: DOCKS.maxX, a1: ASH.cx + 7, lane: true },
 ];
-export const RIVER = { z0: 650, z1: 672 };
+export const RIVER = { z0: 395, z1: 415 };
 export const SEA_Z = DOCKS.maxZ + 4;
-export const WORLD = { minX: -330, maxX: 1480, minZ: -330, maxZ: SEA_Z - 1 };
+export const WORLD = { minX: -300, maxX: ASH.maxX + 130, minZ: -300, maxZ: SEA_Z - 1 };
 
-export const colliders = [];   // {x0,x1,z0,z1,h}
+export const colliders = [];   // {x0,x1,z0,z1,h,y0} solid from y0 up to h
+export const roofs = [];       // walkable building tops {x0,x1,z0,z1,h,city}
+export const ladders = [];     // {x,z,nx,nz,y0,y1} climbable, (nx,nz) points out of the wall
+export const ziplines = [];    // {a:{x,y,z}, b:{x,y,z}, len} ride from a (high) to b (low)
 export const blockRects = [];  // sidewalk-ringed blocks (for pickups)
 export const vents = [];       // steam vents
 export const smokeStacks = []; // chimney tops
@@ -224,7 +229,10 @@ const HOUSE_COLORS = [0xe8d8b0, 0xb8d0e0, 0xe0b8b0, 0xc8e0c0, 0xf0e8d8, 0xd0c0e0
 const ROOF_COLORS = [0x6b2a22, 0x3a3a40, 0x4a3628, 0x2f4a3a, 0x5a5a60, 0x7a4a2a];
 const CONTAINER_COLORS = [0xb0302a, 0x2a5aa0, 0x2a8a4a, 0xd0902a, 0x6a6a70, 0xc85a1a, 0x2a7a8a, 0xe0d0b0];
 
-function addCollider(x0, x1, z0, z1, h) { colliders.push({ x0, x1, z0, z1, h }); }
+let curCity = null;
+const forcedLadders = []; // {roof, x, z, nx, nz}
+function addCollider(x0, x1, z0, z1, h, extra) { const c = { x0, x1, z0, z1, h, y0: 0 }; if (extra) Object.assign(c, extra); colliders.push(c); return c; }
+function addRoof(x0, x1, z0, z1, h, extra) { const c = addCollider(x0, x1, z0, z1, h, extra); roofs.push(c); return c; }
 
 function addTree(x, z, s = sr(1.1, 1.7), col = true) {
   propBuf.box(x - 0.2, x + 0.2, 0, 2.6, z - 0.2, z + 0.2, C.trunk);
@@ -284,8 +292,12 @@ function shopfronts(x0, x1, z0, z1, street, chance = 0.8, signChance = 0.3, h = 
 function parapet(x0, x1, z0, z1, h, col = C.parapet) {
   propBuf.box(x0, x1, h, h + 0.7, z0, z0 + 0.35, col); propBuf.box(x0, x1, h, h + 0.7, z1 - 0.35, z1, col);
   propBuf.box(x0, x0 + 0.35, h, h + 0.7, z0, z1, col); propBuf.box(x1 - 0.35, x1, h, h + 0.7, z0, z1, col);
+  const e = { y0: h, ledge: true };
+  addCollider(x0, x1, z0, z0 + 0.35, h + 0.7, e); addCollider(x0, x1, z1 - 0.35, z1, h + 0.7, e);
+  addCollider(x0, x0 + 0.35, z0, z1, h + 0.7, e); addCollider(x1 - 0.35, x1, z0, z1, h + 0.7, e);
 }
 function waterTank(x, z, h) {
+  addCollider(x - 1.8, x + 1.8, z - 1.8, z + 1.8, h + 6, { y0: h + 0.1 });
   for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) propBuf.box(x + dx * 1.1 - 0.1, x + dx * 1.1 + 0.1, h, h + 3, z + dz * 1.1 - 0.1, z + dz * 1.1 + 0.1, 0x3a2a20);
   propBuf.cyl(x, z, 1.7, 1.7, h + 3, h + 6, 0x7a5a3a, 10);
   propBuf.cyl(x, z, 1.8, 0, h + 6, h + 7.2, 0x4a3a2a, 10, false);
@@ -296,9 +308,12 @@ function building(key, x0, x1, z0, z1, h, street, opt = {}) {
   facadeBox(key, x0, x1, 0, h, z0, z1, opt.tint);
   roofBuf.flat(x0, x1, z0, z1, h, opt.roof ?? C.roof);
   if (opt.parapet !== false) parapet(x0, x1, z0, z1, h);
-  for (let i = 0; i < 2; i++) if (srand() < 0.6 && x1 - x0 > 6 && z1 - z0 > 6) { const ax = sr(x0 + 1.5, x1 - 4), az = sr(z0 + 1.5, z1 - 4); propBuf.box(ax, ax + sr(1.5, 3), h, h + sr(1, 2.2), az, az + sr(1.5, 3), 0x8d8f96); }
+  for (let i = 0; i < 2; i++) if (srand() < 0.6 && x1 - x0 > 6 && z1 - z0 > 6) {
+    const ax = sr(x0 + 1.5, x1 - 4), az = sr(z0 + 1.5, z1 - 4), aw = sr(1.5, 3), ah = sr(1, 2.2), ad = sr(1.5, 3);
+    propBuf.box(ax, ax + aw, h, h + ah, az, az + ad, 0x8d8f96); addCollider(ax, ax + aw, az, az + ad, h + ah, { y0: h });
+  }
   if (opt.tank && srand() < 0.35 && x1 - x0 > 8) waterTank(sr(x0 + 3, x1 - 3), sr(z0 + 3, z1 - 3), h);
-  addCollider(x0, x1, z0, z1, h + 1);
+  addRoof(x0, x1, z0, z1, h, { city: curCity });
   if (street) shopfronts(x0, x1, z0, z1, street, opt.shops ?? 0.8, opt.signs ?? 0.3, h);
 }
 
@@ -366,6 +381,7 @@ function citySkeleton(city, canalRow = -1) {
 // PORT HALDEN: dense metro — glass downtown, brick midtown, a canal, a landmark tower
 // ---------------------------------------------------------------------
 function genMetro(city) {
+  curCity = city;
   const canalRow = 2;
   citySkeleton(city, canalRow);
   const mid = city.n / 2;
@@ -421,7 +437,7 @@ function genMetro(city) {
         facadeBox(key, x0 + inset, x1 - inset, 12, h, z0 + inset, z1 - inset);
         roofBuf.flat(x0 + inset, x1 - inset, z0 + inset, z1 - inset, h, C.roof);
         parapet(x0 + inset, x1 - inset, z0 + inset, z1 - inset, h, 0x6a7080);
-        colliders[colliders.length - 1].h = h + 1;
+        addRoof(x0 + inset, x1 - inset, z0 + inset, z1 - inset, h, { city: curCity });
         if (srand() < 0.5) { propBuf.box((x0 + x1) / 2 - 0.15, (x0 + x1) / 2 + 0.15, h, h + sr(8, 18), (z0 + z1) / 2 - 0.15, (z0 + z1) / 2 + 0.15, 0x999999); beacons.push({ x: (x0 + x1) / 2, y: h + 18, z: (z0 + z1) / 2 }); }
       } else {
         building(key, x0, x1, z0, z1, h, s, { tank: !downtown, signs: downtown ? 0.05 : 0.35 });
@@ -448,7 +464,7 @@ function genMetro(city) {
     propBuf.box(x0, x1, 0.01, 0.12, zc - 7, zc - 5, 0x9a948a); propBuf.box(x0, x1, 0.01, 0.12, zc + 5, zc + 7, 0x9a948a);
     propBuf.box(x0, x1, 0.6, 1.0, zc - 5.2, zc - 5.0, 0x2a2a2e); propBuf.box(x0, x1, 0.6, 1.0, zc + 5.0, zc + 5.2, 0x2a2a2e);
     for (let x = x0; x <= x1; x += 4) { propBuf.box(x - 0.06, x + 0.06, 0, 1, zc - 5.2, zc - 5, 0x2a2a2e); propBuf.box(x - 0.06, x + 0.06, 0, 1, zc + 5, zc + 5.2, 0x2a2a2e); }
-    addCollider(x0, x1, zc - 5.1, zc + 5.1, 0.2);
+    addCollider(x0, x1, zc - 5.1, zc + 5.1, 0.2, { water: true });
     waterRects.push({ x0, x1, z0: zc - 5, z1: zc + 5 });
     if (srand() < 0.6) { const bx = sr(x0 + 6, x1 - 10); propBuf.box(bx, bx + 6, 0.05, 0.9, zc - 1.2, zc + 1.2, spick([0x8a2a2a, 0xe0e0e0, 0x2a4a8a])); propBuf.box(bx + 1.5, bx + 4, 0.9, 1.9, zc - 0.9, zc + 0.9, 0xeeeeee); }
   }
@@ -466,15 +482,15 @@ function house(x0, x1, z0, z1, frontSide) {
   const two = srand() < 0.35, h = two ? 6 : 3.2, col = spick(HOUSE_COLORS), roof = spick(ROOF_COLORS);
   facadeBox('siding', x0, x1, 0.15, h, z0, z1, col);
   const alongX = frontSide === 'pz' || frontSide === 'nz';
-  const ov = 0.4;
-  propBuf.prism(x0 - ov, x1 + ov, z0 - ov, z1 + ov, h, sr(1.8, 2.6), roof, alongX);
+  const ov = 0.4, rh = sr(1.8, 2.6);
+  propBuf.prism(x0 - ov, x1 + ov, z0 - ov, z1 + ov, h, rh, roof, alongX);
   // door + porch on the street side
   const { fixed, a0, a1, out } = sideInfo(frontSide, x0, x1, z0, z1), am = (a0 + a1) / 2;
   propBuf.face(frontSide, fixed + out * 0.05, am - 0.6, am + 0.6, 0.15, 2.3, 0x5a3a28);
   if (frontSide[1] === 'x') propBuf.box(Math.min(fixed, fixed + out * 1.6), Math.max(fixed, fixed + out * 1.6), 0.15, 0.4, am - 1.5, am + 1.5, 0xb8b0a0);
   else propBuf.box(am - 1.5, am + 1.5, 0.15, 0.4, Math.min(fixed, fixed + out * 1.6), Math.max(fixed, fixed + out * 1.6), 0xb8b0a0);
   if (srand() < 0.4) propBuf.box(x0 + 0.8, x0 + 1.4, h, h + 2.6, z0 + 0.8, z0 + 1.4, 0x7a4a3a); // chimney
-  addCollider(x0, x1, z0, z1, h + 2.5);
+  addRoof(x0, x1, z0, z1, h + rh * 0.55, { city: curCity, house: true });
 }
 function picketFence(x0, x1, z0, z1, gapSide) {
   const col = 0xf2f0ea;
@@ -485,6 +501,7 @@ function picketFence(x0, x1, z0, z1, gapSide) {
   }
 }
 function genSuburb(city) {
+  curCity = city;
   citySkeleton(city);
   const mainRow = city.n / 2; // horizontal road through the centre = Main St
   for (const r of blockRects.filter((b) => b.city === city)) {
@@ -524,6 +541,11 @@ function genSuburb(city) {
       const h = 22;
       for (const [dx, dz] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) { propBuf.box(bcx + dx - 0.25, bcx + dx + 0.25, 0, h, bcz + dz - 0.25, bcz + dz + 0.25, 0x8a9aa8); addCollider(bcx + dx - 0.35, bcx + dx + 0.35, bcz + dz - 0.35, bcz + dz + 0.35, h); }
       propBuf.cyl(bcx, bcz, 6, 6, h, h + 8, 0xb8c8d8, 16);
+      propBuf.box(bcx - 7, bcx + 7, h - 0.2, h, bcz - 7, bcz + 7, 0x6a7a88); // catwalk
+      addRoof(bcx - 7, bcx + 7, bcz - 7, bcz + 7, h, { city, y0: h - 0.3, catwalk: true });
+      const tank = addRoof(bcx - 4.2, bcx + 4.2, bcz - 4.2, bcz + 4.2, h + 8, { city, y0: h, landmark: true });
+      forcedLadders.push({ roof: { x0: bcx - 3.25, x1: bcx + 3.25, z0: bcz - 3.25, z1: bcz + 3.25, h }, x: bcx + 3.25 + 0.3, z: bcz - 3, nx: 1, nz: 0, y0: 0 });
+      forcedLadders.push({ roof: tank, x: bcx + 4.2 + 0.25, z: bcz + 0.5, nx: 1, nz: 0, y0: h });
       propBuf.cyl(bcx, bcz, 6.2, 0, h + 8, h + 11, 0x8a9aa8, 16, false);
       const t = textTex(512, 96, '#b8c8d8', '#2a4a6a', ['ASHFORD'], 'bold 80px Arial Black, Arial', false);
       const m = new THREE.Mesh(new THREE.CylinderGeometry(6.05, 6.05, 3.2, 24, 1, true, -0.9, 1.8), new THREE.MeshLambertMaterial({ map: t }));
@@ -582,6 +604,7 @@ function container(x, z, level, alongX, col) {
   else propBuf.box(x - 1.22, x + 1.22, y0, y0 + 2.55, z - 3, z + 3, col);
 }
 function genIndustrial(city) {
+  curCity = city;
   citySkeleton(city);
   for (const r of blockRects.filter((b) => b.city === city)) {
     const { i, j } = r, ix0 = r.x0 + SW, ix1 = r.x1 - SW, iz0 = r.z0 + SW, iz1 = r.z1 - SW;
@@ -596,7 +619,7 @@ function genIndustrial(city) {
         const h = Math.round(sr(8, 14));
         facadeBox('metal', x0, x1, 0, h, z0, z1, tint);
         propBuf.prism(x0, x1, z0, z1, h, 2, 0x6a6a70, true);
-        addCollider(x0, x1, z0, z1, h + 2);
+        addRoof(x0, x1, z0, z1, h + 1, { city: curCity, shed: true });
         const s = st(x0, x1, z0, z1);
         for (const side of SIDES) if (s[side]) {
           const { fixed, a0, a1, out } = sideInfo(side, x0, x1, z0, z1);
@@ -607,9 +630,11 @@ function genIndustrial(city) {
       for (let z = iz0 + 3; z < iz1 - 2; z += 7) {
         let x = ix0 + 4;
         const rowH = [];
-        while (x < ix1 - 3) { const lv = Math.floor(sr(1, 4.99)); for (let l = 0; l < lv; l++) container(x, z, l, true, spick(CONTAINER_COLORS)); rowH.push(lv); x += 6.3; }
-        if (srand() < 0.25) { /* leave a gap row for walking */ continue; }
-        addCollider(ix0 + 1, x - 3.3, z - 1.25, z + 1.25, Math.max(...rowH) * 2.6);
+        while (x < ix1 - 3) {
+          const lv = Math.floor(sr(1, 4.99));
+          for (let l = 0; l < lv; l++) container(x, z, l, true, spick(CONTAINER_COLORS));
+          rowH.push(lv); addRoof(x - 3, x + 3, z - 1.22, z + 1.22, 0.15 + lv * 2.6, { city: curCity, stack: true }); x += 6.3;
+        }
       }
     } else if (kind === 'tanks') {
       for (const [dx, dz] of [[-9, -9], [9, -9], [-9, 9], [9, 9]]) {
@@ -641,6 +666,8 @@ function genIndustrial(city) {
     const col = spick([0xd04a2a, 0x2a6ab0, 0xe0b030]);
     for (const [dx, dz] of [[-5, -6], [5, -6], [-5, 2], [5, 2]]) { propBuf.box(x + dx - 0.6, x + dx + 0.6, 0, 26, qz + dz - 0.6, qz + dz + 0.6, col); addCollider(x + dx - 0.7, x + dx + 0.7, qz + dz - 0.7, qz + dz + 0.7, 26); }
     propBuf.box(x - 6, x + 6, 26, 28, qz - 7, qz + 3, col);
+    const top = addRoof(x - 6, x + 6, qz - 7, qz + 3, 28, { city, y0: 26, crane: true });
+    forcedLadders.push({ roof: top, x: x - 5, z: qz - 6.7 - 0.35, nx: 0, nz: -1, y0: 0 });
     propBuf.box(x - 1.5, x + 1.5, 27, 28.5, qz - 26, qz + 34, col);
     propBuf.box(x - 2, x + 2, 28, 31, qz - 3, qz + 1, 0xe8e8e8);
     beacons.push({ x, y: 31.5, z: qz + 34 });
@@ -700,45 +727,170 @@ function onReserved(x, z, pad) {
   if (z > RIVER.z0 - pad && z < RIVER.z1 + pad) return true;
   return false;
 }
-function genCountryside() {
-  // river crossing Route 4, with a bridge
-  for (const [x0, x1] of [[WORLD.minX - 200, -9], [9, WORLD.maxX + 200]]) {
-    waterBuf.flat(x0, x1, RIVER.z0, RIVER.z1, 0.03, 0x2f6e8e);
-    addCollider(x0, x1, RIVER.z0 + 0.5, RIVER.z1 - 0.5, 0.2);
-    waterRects.push({ x0, x1, z0: RIVER.z0, z1: RIVER.z1 });
+const fieldRects = [];
+export let fieldCount = 0;
+function hedgerow(x0, x1, z0, z1) {
+  const gapSide = Math.floor(srand() * 4), g = spick(GREENS);
+  const seg = (ax0, ax1, az0, az1) => { propBuf.box(ax0, ax1, 0, 1.8, az0, az1, g); addCollider(ax0, ax1, az0, az1, 1.8); };
+  const gap = (a0, a1) => { const m = (a0 + a1) / 2; return [[a0, m - 3], [m + 3, a1]]; };
+  const sides = [['z', z0], ['z', z1], ['x', x0], ['x', x1]];
+  sides.forEach(([ax, f], i) => {
+    const spans = i === gapSide ? (ax === 'z' ? gap(x0, x1) : gap(z0, z1)) : [ax === 'z' ? [x0, x1] : [z0, z1]];
+    for (const [a, b] of spans) if (ax === 'z') seg(a, b, f - 0.6, f + 0.6); else seg(f - 0.6, f + 0.6, a, b);
+  });
+  for (let t = 0; t < 4; t++) addTree(srand() < 0.5 ? (srand() < 0.5 ? x0 : x1) : sr(x0, x1), srand() < 0.5 ? sr(z0, z1) : (srand() < 0.5 ? z0 : z1), sr(1.4, 2.2));
+}
+function fence(x0, x1, z0, z1) {
+  const col = 0x8a6a4a;
+  for (const [ax, f, a0, a1] of [['z', z0, x0, x1], ['z', z1, x0, x1], ['x', x0, z0, z1], ['x', x1, z0, z1]]) {
+    for (let a = a0; a <= a1; a += 3) { if (ax === 'z') propBuf.box(a - 0.08, a + 0.08, 0, 1.1, f - 0.08, f + 0.08, col); else propBuf.box(f - 0.08, f + 0.08, 0, 1.1, a - 0.08, a + 0.08, col); }
+    for (const y of [0.45, 0.9]) { if (ax === 'z') propBuf.box(a0, a1, y, y + 0.1, f - 0.04, f + 0.04, col); else propBuf.box(f - 0.04, f + 0.04, y, y + 0.1, a0, a1, col); }
   }
-  propBuf.box(-9, 9, 0, 0.5, RIVER.z0 - 2, RIVER.z1 + 2, 0x8a8680);
-  for (const s of [-1, 1]) { propBuf.box(s * 9 - 0.2, s * 9 + 0.2, 0.5, 1.6, RIVER.z0 - 2, RIVER.z1 + 2, 0x6a6660); addCollider(s * 9 - 0.25, s * 9 + 0.25, RIVER.z0 - 2, RIVER.z1 + 2, 1.6); }
-  for (const s of [-1, 1]) { propBuf.box(s * 9 - 0.3, s * 9 + 0.3, 0, 6, (RIVER.z0 + RIVER.z1) / 2 - 0.3, (RIVER.z0 + RIVER.z1) / 2 + 0.3, 0x5a5650); }
+}
+function scarecrow(x, z) {
+  propBuf.box(x - 0.08, x + 0.08, 0, 2.2, z - 0.08, z + 0.08, 0x6a4a2a);
+  propBuf.box(x - 0.9, x + 0.9, 1.55, 1.7, z - 0.06, z + 0.06, 0x6a4a2a);
+  propBuf.box(x - 0.35, x + 0.35, 1.1, 1.75, z - 0.2, z + 0.2, spick([0x8a3a3a, 0x3a5a8a, 0x6a6a3a]));
+  propBuf.box(x - 0.2, x + 0.2, 1.75, 2.15, z - 0.2, z + 0.2, 0xd8c080);
+  propBuf.cyl(x, z, 0.45, 0, 2.15, 2.5, 0xb89050, 8, false);
+}
+function farmstead(x, z, front) {
+  // farmhouse, red barn, silo, sheds, a tractor and a muddy yard; lots of corners to break line of sight
+  groundBuf.flat(x - 30, x + 50, z - 22, z + 26, 0.009, 0x7a6a50);
+  fieldRects.push({ x0: x - 34, x1: x + 54, z0: z - 26, z1: z + 30 });
+  house(x, x + 10, z, z + 8, front);
+  facadeBox('metal', x + 18, x + 34, 0, 7, z - 6, z + 12, 0xb03a2a); propBuf.prism(x + 18, x + 34, z - 6, z + 12, 7, 4, 0x5a5a60, false);
+  addRoof(x + 18, x + 34, z - 6, z + 12, 9, { shed: true });
+  propBuf.face('nz', z - 6.05, x + 23, x + 29, 0, 5, 0x3a2a20);
+  propBuf.cyl(x + 40, z + 2, 3, 3, 0, 14, 0xc8c8c0, 12); propBuf.cyl(x + 40, z + 2, 3.1, 0, 14, 16, 0x8a8a90, 12, false); addCollider(x + 37.5, x + 42.5, z - 0.5, z + 4.5, 16);
+  for (const [sx, sz] of [[x - 14, z + 14], [x + 4, z + 18]]) { facadeBox('metal', sx, sx + 7, 0, 3.2, sz, sz + 5, spick([0x8a8a90, 0x6a7a5a, 0x9a7a5a])); roofBuf.flat(sx, sx + 7, sz, sz + 5, 3.2, 0x5a5a60); addRoof(sx, sx + 7, sz, sz + 5, 3.2, { shed: true }); }
+  // tractor
+  const tx = x + 12, tz = z - 14;
+  propBuf.box(tx - 1, tx + 1, 0.6, 1.6, tz - 1.6, tz + 1.4, 0x2a7a3a); propBuf.box(tx - 0.8, tx + 0.8, 1.6, 2.7, tz - 1.4, tz - 0.1, 0x2a3a2a);
+  for (const s of [-1, 1]) { propBuf.box(tx + s * 1.1 - 0.25, tx + s * 1.1 + 0.25, 0, 1.6, tz - 1.6, tz - 0.2, 0x151515); propBuf.box(tx + s * 1.05 - 0.2, tx + s * 1.05 + 0.2, 0, 0.9, tz + 0.6, tz + 1.5, 0x151515); }
+  addCollider(tx - 1.35, tx + 1.35, tz - 1.7, tz + 1.6, 2.7);
+  // hay stack, troughs, wood piles
+  for (let k = 0; k < 6; k++) { const bx = x - 20 + (k % 3) * 1.9, bz = z - 6 + Math.floor(k / 3) * 1.9; propBuf.box(bx - 0.9, bx + 0.9, 0, 1.8, bz - 0.9, bz + 0.9, 0xd8b860); }
+  addCollider(x - 21, x - 15.3, z - 7, z - 3.2, 1.8);
+  propBuf.box(x - 20, x - 16, 1.8, 3.6, z - 6, z - 4, 0xd0b058); addCollider(x - 20, x - 16, z - 6, z - 4, 3.6);
+  for (let k = 0; k < 2; k++) { const wx = x + 44 + k * 3, wz = z + 16; propBuf.box(wx - 1.2, wx + 1.2, 0, 0.7, wz - 0.5, wz + 0.5, 0x5a5a60); addCollider(wx - 1.2, wx + 1.2, wz - 0.5, wz + 0.5, 0.7); }
+  fence(x - 30, x + 50, z - 22, z + 26);
+  for (let k = 0; k < 6; k++) addTree(sr(x - 28, x + 48), srand() < 0.5 ? z + sr(20, 25) : z - sr(17, 21), sr(1.5, 2.4));
+}
+function motel(x, z) {
+  fieldRects.push({ x0: x - 4, x1: x + 34, z0: z - 36, z1: z + 40 });
+  // a long single-storey motel with a lit sign, facing Route 4
+  building('brick1', x, x + 14, z - 30, z + 30, 4.5, { px: true }, { shops: 1, signs: 0 });
+  propBuf.box(x + 14, x + 17, 3.2, 3.5, z - 30, z + 30, 0x5a3a28);
+  for (let k = 0; k < 6; k++) parkedSpots.push({ x: x + 22, z: z - 25 + k * 9, heading: Math.PI / 2 });
+  const t = textTex(256, 256, '#2a1a3a', '#6af0ff', ['MOTEL', 'VACANCY'], 'bold 56px Georgia, serif');
+  staticMesh(new THREE.BoxGeometry(4, 4, 0.4), new THREE.MeshBasicMaterial({ map: t }), x + 26, 8, z + 34, Math.PI / 2);
+  propBuf.box(x + 25.8, x + 26.2, 0, 6, z + 33.8, z + 34.2, C.pole);
+  propBuf.box(x + 10, x + 30, 0.01, 0.04, z - 32, z + 32, 0x4a4850);
+}
+function truckStop(x, z) {
+  fieldRects.push({ x0: x - 34, x1: x + 34, z0: z - 44, z1: z - 6 });
+  propBuf.box(x - 30, x + 30, 0.01, 0.05, z - 26, z - 10, 0x4a4850);
+  building('metal', x - 12, x + 12, z - 40, z - 28, 6, { pz: true }, { shops: 1, signs: 0, tint: 0x8a9aa8 });
+  for (let k = 0; k < 3; k++) {
+    const tx = x - 22 + k * 16, tz = z - 18;
+    propBuf.box(tx - 1.3, tx + 1.3, 0.5, 4, tz - 7, tz + 4, spick(CONTAINER_COLORS)); propBuf.box(tx - 1.2, tx + 1.2, 0.5, 3.2, tz + 4.3, tz + 7, 0xd0d0d0);
+    addCollider(tx - 1.3, tx + 1.3, tz - 7, tz + 7, 4, { stack: true }); roofs.push(colliders[colliders.length - 1]);
+  }
+}
+function genCountryside() {
+  curCity = null;
+  // river crossing Route 4, with a bridge
+  const bridgesX = HIGHWAYS.filter((h) => h.axis === 'z' && h.a0 < RIVER.z0 && h.a1 > RIVER.z1).map((h) => h.fixed).sort((a, b) => a - b);
+  let rx = WORLD.minX - 200;
+  for (const bx of [...bridgesX, WORLD.maxX + 209]) {
+    const x0 = rx, x1 = bx - 9;
+    waterBuf.flat(x0, x1, RIVER.z0, RIVER.z1, 0.03, 0x2f6e8e);
+    addCollider(x0, x1, RIVER.z0 + 0.5, RIVER.z1 - 0.5, 0.2, { water: true });
+    waterRects.push({ x0, x1, z0: RIVER.z0, z1: RIVER.z1 });
+    propBuf.box(x0, x1, 0, 0.3, RIVER.z0 - 2.5, RIVER.z0, 0x7a6a50); propBuf.box(x0, x1, 0, 0.3, RIVER.z1, RIVER.z1 + 2.5, 0x7a6a50); // muddy banks
+    rx = bx + 9;
+  }
+  for (const bx of bridgesX) {
+    propBuf.box(bx - 9, bx + 9, 0, 0.5, RIVER.z0 - 2, RIVER.z1 + 2, 0x8a8680);
+    for (const s of [-1, 1]) { propBuf.box(bx + s * 9 - 0.2, bx + s * 9 + 0.2, 0.5, 1.6, RIVER.z0 - 2, RIVER.z1 + 2, 0x6a6660); addCollider(bx + s * 9 - 0.25, bx + s * 9 + 0.25, RIVER.z0 - 2, RIVER.z1 + 2, 1.6); }
+    for (const s of [-1, 1]) { propBuf.box(bx + s * 9 - 0.3, bx + s * 9 + 0.3, 0, 6, (RIVER.z0 + RIVER.z1) / 2 - 0.3, (RIVER.z0 + RIVER.z1) / 2 + 0.3, 0x5a5650); }
+  }
+  // reeds and a few rowing boats along the river
+  for (let k = 0; k < 140; k++) { const x = sr(WORLD.minX, WORLD.maxX), z = srand() < 0.5 ? RIVER.z0 - sr(0.5, 3) : RIVER.z1 + sr(0.5, 3); if (bridgesX.some((b) => Math.abs(b - x) < 14)) continue; propBuf.box(x - 0.08, x + 0.08, 0, sr(0.8, 1.6), z - 0.08, z + 0.08, spick([0x6a7a3a, 0x8a8a4a, 0x5a6a2a])); }
   // sea along the south
   waterBuf.flat(WORLD.minX - 600, WORLD.maxX + 600, SEA_Z - 1, SEA_Z + 900, 0.02, 0x2a5f82);
-  addCollider(WORLD.minX - 600, WORLD.maxX + 600, SEA_Z, SEA_Z + 900, 0.2);
+  addCollider(WORLD.minX - 600, WORLD.maxX + 600, SEA_Z, SEA_Z + 900, 0.2, { water: true });
   waterRects.push({ x0: WORLD.minX - 600, x1: WORLD.maxX + 600, z0: SEA_Z, z1: SEA_Z + 900 });
-  // farm fields
-  for (let k = 0; k < 40; k++) {
-    const x = sr(WORLD.minX, WORLD.maxX), z = sr(WORLD.minZ, WORLD.maxZ), w = sr(30, 80), d = sr(25, 60);
-    if (onReserved(x, z, 50) || onReserved(x + w, z + d, 50) || onReserved(x + w, z, 50) || onReserved(x, z + d, 50)) continue;
-    const col = spick([0xc8b45a, 0x8a6a3a, 0x6a9a3a, 0xa8c060, 0x7a5a2a]);
-    groundBuf.flat(x, x + w, z, z + d, 0.008, col);
-    if (col === 0x8a6a3a || col === 0x7a5a2a) for (let r = z + 2; r < z + d; r += 3) markBuf.flat(x, x + w, r, r + 0.5, 0.012, 0x6a4a28);
-  }
-  // farmhouse + red barn by Route 9
-  const fx = 600, fz = 70;
-  house(fx, fx + 10, fz, fz + 8, 'nz');
-  facadeBox('metal', fx + 22, fx + 38, 0, 7, fz - 4, fz + 12, 0xb03a2a); propBuf.prism(fx + 22, fx + 38, fz - 4, fz + 12, 7, 4, 0x5a5a60, false);
-  addCollider(fx + 22, fx + 38, fz - 4, fz + 12, 11);
-  propBuf.cyl(fx + 44, fz + 2, 3, 3, 0, 14, 0xc8c8c0, 12); propBuf.cyl(fx + 44, fz + 2, 3.1, 0, 14, 16, 0x8a8a90, 12, false); addCollider(fx + 41.5, fx + 46.5, fz - 0.5, fz + 4.5, 16);
-  for (let x = fx - 10; x < fx + 60; x += 3) propBuf.box(x, x + 0.15, 0, 1.1, fz - 14, fz - 13.85, 0x8a6a4a);
-  propBuf.box(fx - 10, fx + 60, 0.7, 0.8, fz - 14, fz - 13.9, 0x8a6a4a);
-  // roadside diner on Route 4
-  building('brick4', 22, 40, 380, 392, 4.5, { nx: true }, { shops: 1, signs: 0 });
+  // farmsteads first so fields and woods fill in around them
+  farmstead(380, 60, 'nz'); farmstead(330, -150, 'pz'); farmstead(430, 250, 'nz'); farmstead(-220, 160, 'px');
+  farmstead(250, 560, 'nx'); farmstead(520, 520, 'nz'); farmstead(880, 330, 'nx'); farmstead(-220, -200, 'pz');
+  // roadside stops: a diner and a motel on Route 4, a truck stop on Route 9, a gas station on Old Farm Rd
+  building('brick4', 22, 40, 300, 312, 4.5, { nx: true }, { shops: 1, signs: 0 });
   const dt = textTex(256, 128, '#1a2a4a', '#ff5ab0', ['DINER', 'EAT HERE'], 'bold 52px Georgia, serif');
-  staticMesh(new THREE.BoxGeometry(5, 2.5, 0.3), new THREE.MeshBasicMaterial({ map: dt }), 18, 8, 386, Math.PI / 2);
-  propBuf.box(17.85, 18.15, 0, 6.8, 385.85, 386.15, C.pole);
-  for (let k = 0; k < 3; k++) parkedSpots.push({ x: 16, z: 378 + k * 6, heading: 0 });
+  staticMesh(new THREE.BoxGeometry(5, 2.5, 0.3), new THREE.MeshBasicMaterial({ map: dt }), 18, 8, 306, Math.PI / 2);
+  propBuf.box(17.85, 18.15, 0, 6.8, 305.85, 306.15, C.pole);
+  for (let k = 0; k < 3; k++) parkedSpots.push({ x: 16, z: 298 + k * 6, heading: 0 });
+  motel(-48, 470);
+  truckStop(380, -40);
+  gasStation(ASH.cx + 30, 560);
+  // farm fields with hedgerows (good cover), hay bales and scarecrows
+  for (let k = 0; k < 600; k++) {
+    const x = sr(WORLD.minX, WORLD.maxX), z = sr(WORLD.minZ, WORLD.maxZ), w = sr(26, 60), d = sr(22, 48);
+    if (onReserved(x, z, 14) || onReserved(x + w, z + d, 14) || onReserved(x + w, z, 14) || onReserved(x, z + d, 14)) continue;
+    if (fieldRects.some((f) => x < f.x1 + 6 && x + w > f.x0 - 6 && z < f.z1 + 6 && z + d > f.z0 - 6)) continue;
+    fieldRects.push({ x0: x, x1: x + w, z0: z, z1: z + d }); fieldCount++;
+    const col = spick([0xc8b45a, 0x8a6a3a, 0x6a9a3a, 0xa8c060, 0x7a5a2a, 0x9aa848]);
+    groundBuf.flat(x, x + w, z, z + d, 0.008, col);
+    const ploughed = col === 0x8a6a3a || col === 0x7a5a2a;
+    if (ploughed) for (let r = z + 2; r < z + d; r += 3) markBuf.flat(x, x + w, r, r + 0.5, 0.012, 0x6a4a28);
+    else if (col === 0xc8b45a || col === 0x9aa848) { // tall crops you can duck through
+      for (let r = z + 2; r < z + d - 1; r += 2.2) propBuf.box(x + 1.5, x + w - 1.5, 0, 1.15, r, r + 0.9, col === 0xc8b45a ? 0xd8c060 : 0x7a9a38);
+    }
+    const kind = srand();
+    if (kind < 0.6) hedgerow(x, x + w, z, z + d); else fence(x, x + w, z, z + d);
+    if (!ploughed && srand() < 0.45) for (let b = 0; b < 3 + Math.floor(srand() * 5); b++) { const bx = sr(x + 4, x + w - 4), bz = sr(z + 4, z + d - 4); propBuf.cyl(bx, bz, 0.9, 0.9, 0, 1.5, 0xd8b860, 10); addCollider(bx - 0.75, bx + 0.75, bz - 0.75, bz + 0.75, 1.5); }
+    if (srand() < 0.15) scarecrow(x + w / 2, z + d / 2);
+  }
+  // woods: dense groves you can lose people in
+  for (let k = 0; k < 34; k++) {
+    const cx = sr(WORLD.minX + 20, WORLD.maxX - 20), cz = sr(WORLD.minZ + 20, RIVER.z0 + 200);
+    if (onReserved(cx, cz, 25) || fieldRects.some((f) => cx > f.x0 - 15 && cx < f.x1 + 15 && cz > f.z0 - 15 && cz < f.z1 + 15)) continue;
+    const R = sr(14, 30), n = Math.floor(R * 1.3);
+    for (let t = 0; t < n; t++) { const a = srand() * Math.PI * 2, r = Math.sqrt(srand()) * R, x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r; if (!onReserved(x, z, 4)) addTree(x, z, sr(1.3, 2.4)); }
+    for (let t = 0; t < n / 2; t++) { const a = srand() * Math.PI * 2, r = Math.sqrt(srand()) * R, x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r; if (!onReserved(x, z, 4)) propBuf.box(x - 0.8, x + 0.8, 0, sr(0.6, 1.1), z - 0.8, z + 0.8, spick(GREENS)); }
+  }
+  // telegraph poles along every road out of town
+  for (const h of HIGHWAYS) for (let a = h.a0 + 10; a < h.a1 - 10; a += 32) {
+    const x = h.axis === 'x' ? a : h.fixed + 11.5, z = h.axis === 'x' ? h.fixed - 11.5 : a;
+    propBuf.box(x - 0.13, x + 0.13, 0, 7.5, z - 0.13, z + 0.13, 0x5a4030);
+    if (h.axis === 'x') propBuf.box(x - 0.06, x + 0.06, 6.9, 7.05, z - 1, z + 1, 0x5a4030); else propBuf.box(x - 1, x + 1, 6.9, 7.05, z - 0.06, z + 0.06, 0x5a4030);
+    addCollider(x - 0.18, x + 0.18, z - 0.18, z + 0.18, 7.5);
+  }
+  // dry stone walls and hedges lining the country roads
+  for (const h of HIGHWAYS) for (let a = h.a0 + 30; a < h.a1 - 40; a += sr(60, 110)) {
+    const len = sr(25, 50), side = srand() < 0.5 ? -1 : 1, off = side * sr(14, 18);
+    const x0 = h.axis === 'x' ? a : h.fixed + off - 0.5, x1 = h.axis === 'x' ? a + len : h.fixed + off + 0.5;
+    const z0 = h.axis === 'x' ? h.fixed + off - 0.5 : a, z1 = h.axis === 'x' ? h.fixed + off + 0.5 : a + len;
+    if (srand() < 0.5) { propBuf.box(x0, x1, 0, 1.1, z0, z1, 0x8a8478); addCollider(x0, x1, z0, z1, 1.1); }
+    else { propBuf.box(x0, x1, 0, 1.7, z0, z1, spick(GREENS)); addCollider(x0, x1, z0, z1, 1.7); }
+  }
+  // wildflowers and grass tufts so the open ground isn't a flat green sheet
+  for (let k = 0; k < 220; k++) { // meadow patches in different greens
+    const x = sr(WORLD.minX, WORLD.maxX), z = sr(WORLD.minZ, WORLD.maxZ), w = sr(15, 50), d = sr(15, 50);
+    if (onReserved(x, z, 2) || onReserved(x + w, z + d, 2)) continue;
+    groundBuf.flat(x, x + w, z, z + d, 0.004, spick([0x557a40, 0x628a48, 0x4e7038, 0x6a8a4a, 0x5d7d3a]));
+  }
+  for (let k = 0; k < 9000; k++) {
+    const x = sr(WORLD.minX, WORLD.maxX), z = sr(WORLD.minZ, WORLD.maxZ);
+    if (onReserved(x, z, 2)) continue;
+    const col = srand() < 0.75 ? spick([0x5f8a40, 0x6f9a48, 0x4f7a38, 0x7a9a50]) : spick([0xe8e070, 0xe07070, 0xf0f0f0, 0xb080e0]);
+    const s = col > 0x900000 ? 0.1 : sr(0.3, 0.75);
+    propBuf.box(x - s, x + s, 0, s * sr(0.8, 1.6), z - s, z + s, col);
+  }
   // wind turbines
   for (let k = 0; k < 6; k++) {
-    const x = -180 + (k % 3) * 70, z = 330 + Math.floor(k / 3) * 160 + sr(-20, 20);
+    const x = -270 + (k % 3) * 60, z = 290 + Math.floor(k / 3) * 120 + sr(-15, 15);
     propBuf.cyl(x, z, 1.4, 0.7, 0, 46, 0xeeeeee, 10, false);
     addCollider(x - 1.4, x + 1.4, z - 1.4, z + 1.4, 46);
     propBuf.box(x - 1, x + 1, 45, 47.5, z - 2.5, z + 1.5, 0xe0e0e0);
@@ -751,17 +903,17 @@ function genCountryside() {
     beacons.push({ x, y: 47.8, z });
   }
   // trees, rocks
-  for (let k = 0; k < 520; k++) {
+  for (let k = 0; k < 1100; k++) {
     let x = sr(WORLD.minX, WORLD.maxX), z = sr(WORLD.minZ, WORLD.maxZ);
-    if (srand() < 0.5) { const h = spick(HIGHWAYS), a = sr(h.a0, h.a1), c = sr(14, 70) * (srand() < 0.5 ? -1 : 1); x = h.axis === 'x' ? a : h.fixed + c; z = h.axis === 'x' ? h.fixed + c : a; }
+    if (srand() < 0.6) { const h = spick(HIGHWAYS), a = sr(h.a0, h.a1), c = sr(14, 40) * (srand() < 0.5 ? -1 : 1); x = h.axis === 'x' ? a : h.fixed + c; z = h.axis === 'x' ? h.fixed + c : a; }
     if (onReserved(x, z, 6)) continue;
     if (srand() < 0.12) { const s = sr(0.8, 2.2); propBuf.box(x - s, x + s, 0, s * 1.2, z - s * 0.8, z + s * 0.8, spick([0x7a7670, 0x8a8478, 0x6a6660])); addCollider(x - s, x + s, z - s * 0.8, z + s * 0.8, s * 1.2); }
     else addTree(x, z, sr(1.2, 2.2));
   }
   // distant hills on the horizon (scenery only)
   for (let k = 0; k < 40; k++) {
-    const a = (k / 40) * Math.PI * 2, d = sr(1500, 1900);
-    const x = 575 + Math.cos(a) * d, z = 535 + Math.sin(a) * d;
+    const a = (k / 40) * Math.PI * 2, d = sr(1000, 1300);
+    const x = 350 + Math.cos(a) * d, z = 330 + Math.sin(a) * d;
     if (z > SEA_Z + 100) continue;
     const r = sr(150, 320), h = sr(60, 180);
     propBuf.cyl(x, z, r, 0, 0, h, spick([0x4a6a4a, 0x5a7050, 0x6a7a5a]), 7, false);
@@ -772,7 +924,7 @@ function genCountryside() {
 export const lanes = [];
 export function generateWorld() {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000, 60, 60), new THREE.MeshLambertMaterial({ color: 0x5a7d45 }));
-  ground.rotation.x = -Math.PI / 2; ground.position.set(575, 0, 535);
+  ground.rotation.x = -Math.PI / 2; ground.position.set(350, 0, 330);
   scene.add(ground);
   genMetro(PH); genSuburb(ASH); genIndustrial(DOCKS);
   for (const h of HIGHWAYS) genHighway(h);
@@ -805,9 +957,17 @@ function buildBuckets() {
 export function bucketAt(x, z) {
   return buckets[clamp(Math.floor((z - BMINZ) / BUCKET), 0, BNZ - 1) * BNX + clamp(Math.floor((x - BMINX) / BUCKET), 0, BNX - 1)];
 }
-export function resolveCircle(p, r) {
+export const STEP = 0.4; // anything lower than this above your feet you just walk onto
+// does collider c block a body whose feet are at feetY and is `tall` metres tall?
+export function blocksBody(c, feetY, tall) {
+  if (c.water) return feetY < c.h + 0.3;
+  return c.h > feetY + STEP && c.y0 < feetY + tall;
+}
+export function resolveCircle(p, r) { return resolveBody(p, r, 0, 2); }
+export function resolveBody(p, r, feetY, tall = 1.8) {
   let hit = false;
   for (const c of bucketAt(p.x, p.z)) {
+    if (!blocksBody(c, feetY, tall)) continue;
     if (p.x + r < c.x0 || p.x - r > c.x1 || p.z + r < c.z0 || p.z - r > c.z1) continue;
     const qx = clamp(p.x, c.x0, c.x1), qz = clamp(p.z, c.z0, c.z1);
     const dx = p.x - qx, dz = p.z - qz, d2 = dx * dx + dz * dz;
@@ -823,9 +983,38 @@ export function resolveCircle(p, r) {
   if (p.z < WORLD.minZ) { p.z = WORLD.minZ; hit = true; } else if (p.z > WORLD.maxZ) { p.z = WORLD.maxZ; hit = true; }
   return hit;
 }
+// highest surface you could be standing on at (x, z) given your feet are at feetY (snaps up small steps)
+export function floorAt(x, z, feetY, r = 0.25) {
+  let f = groundY(x, z);
+  for (const c of bucketAt(x, z)) {
+    if (c.water || c.h > feetY + STEP || c.h <= f) continue;
+    if (x + r < c.x0 || x - r > c.x1 || z + r < c.z0 || z - r > c.z1) continue;
+    f = c.h;
+  }
+  return f;
+}
+// top of the solid stack at a point, starting from feetY (a roof plus its parapet counts as one ledge)
+export function stackTop(x, z, feetY, pad = 0.05) {
+  let top = -1, changed = true;
+  const list = bucketAt(x, z);
+  while (changed) {
+    changed = false;
+    for (const c of list) {
+      if (c.water || c.h <= Math.max(top, feetY + STEP) || x < c.x0 - pad || x > c.x1 + pad || z < c.z0 - pad || z > c.z1 + pad) continue;
+      if (c.y0 > (top < 0 ? feetY + 1.6 : top + 0.05)) continue;
+      top = c.h; changed = true;
+    }
+  }
+  return top; // -1 when nothing is in the way
+}
+// is there a ceiling within `tall` metres above y at (x, z)?
+export function headroom(x, z, y, tall = 1.8) {
+  for (const c of bucketAt(x, z)) if (!c.water && c.y0 > y - 0.05 && c.y0 < y + tall && x >= c.x0 - 0.2 && x <= c.x1 + 0.2 && z >= c.z0 - 0.2 && z <= c.z1 + 0.2) return false;
+  return true;
+}
 export function pointBlocked(x, z, pad = 0.3) {
   if (x < WORLD.minX || x > WORLD.maxX || z < WORLD.minZ || z > WORLD.maxZ) return true;
-  for (const c of bucketAt(x, z)) if (x >= c.x0 - pad && x <= c.x1 + pad && z >= c.z0 - pad && z <= c.z1 + pad) return true;
+  for (const c of bucketAt(x, z)) if (blocksBody(c, 0, 1.8) && x >= c.x0 - pad && x <= c.x1 + pad && z >= c.z0 - pad && z <= c.z1 + pad) return true;
   return false;
 }
 export function maxHeightNear(x, z) {
@@ -855,6 +1044,7 @@ export function navRecenter(x, z, force = false) {
   blocked.fill(0);
   const ex = gox + GN * CELL, ez = goz + GN * CELL;
   for (const c of colliders) {
+    if (!blocksBody(c, 0, 1.8)) continue;
     if (c.x1 < gox - 1 || c.x0 > ex + 1 || c.z1 < goz - 1 || c.z0 > ez + 1) continue;
     const x0 = Math.max(0, Math.floor((c.x0 - 0.3 - gox) / CELL)), x1 = Math.min(GN - 1, Math.floor((c.x1 + 0.3 - gox) / CELL));
     const z0 = Math.max(0, Math.floor((c.z0 - 0.3 - goz) / CELL)), z1 = Math.min(GN - 1, Math.floor((c.z1 + 0.3 - goz) / CELL));
@@ -957,7 +1147,7 @@ export function raycastWorld(o, d, maxT) {
       let a = (mn - oo) / dd, b = (mx - oo) / dd; if (a > b) { const tmp = a; a = b; b = tmp; }
       t0 = Math.max(t0, a); t1 = Math.min(t1, b); return t0 <= t1;
     };
-    if (sl(o.x, d.x, c.x0, c.x1) && sl(o.z, d.z, c.z0, c.z1) && sl(o.y, d.y, 0, c.h + 0.5) && t0 < best) best = t0;
+    if (!c.water && sl(o.x, d.x, c.x0, c.x1) && sl(o.z, d.z, c.z0, c.z1) && sl(o.y, d.y, c.y0, c.h) && t0 < best) best = t0;
   }
   return { t: best };
 }
