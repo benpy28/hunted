@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: Build the single-file game
+        run: node tools/build-single.mjs
+      - name: Committed dist/hunted.html matches the source
+        run: git diff --exit-code --stat dist/hunted.html || (echo "::error::dist/hunted.html is stale. Run node tools/build-single.mjs and commit it" && exit 1)
+      - name: Syntax check (modules and bundle)
+        run: node tests/syntax.mjs
+      - name: Smoke and gameplay tests (headless Chromium)
+        run: node --test --test-concurrency=1 --test-reporter=spec tests/*.test.mjs

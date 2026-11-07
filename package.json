@@ -1,0 +1,14 @@
+{
+  "name": "hunted",
+  "private": true,
+  "type": "module",
+  "description": "HUNTED: an open-world browser survival game",
+  "scripts": {
+    "build": "node tools/build-single.mjs",
+    "check": "node tests/syntax.mjs",
+    "test": "node tools/build-single.mjs && node tests/syntax.mjs && node --test --test-concurrency=1 tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
