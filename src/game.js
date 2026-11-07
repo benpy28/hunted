@@ -1471,7 +1471,21 @@ function playerShove() {
 // =====================================================================
 const input = { fwd: 0, side: 0, sprint: false, jump: false, runToggle: false, crouch: false, jumpEdge: false };
 const keys = new Set();
-const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+// touch controls only on phones/tablets (a coarse pointer and no mouse), or once someone actually touches
+// the screen. A laptop with a touchscreen, or a browser that merely supports touch events, still gets the
+// mouse. Using a real mouse again switches back.
+let isTouch = matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+function setTouchMode(on) {
+  if (isTouch === on) return;
+  isTouch = on;
+  applyTouchMode();
+}
+function applyTouchMode() {
+  document.body.classList.toggle('is-touch', isTouch);
+  $('controls-desktop').classList.toggle('hidden', isTouch); $('controls-touch').classList.toggle('hidden', !isTouch);
+  if (G.mode === 'playing' || G.mode === 'paused') $('touch').classList.toggle('hidden', !isTouch);
+  if (isTouch && document.pointerLockElement && document.exitPointerLock) { hadLock = false; document.exitPointerLock(); }
+}
 const stick = { id: null, cx: 0, cy: 0 };
 let touchJump = false, touchCrouch = false, lookTouch = null;
 function recomputeKeys() {
@@ -1506,37 +1520,52 @@ function look(dx, dy, sens) {
   if (player.car) { player.camOff -= dx * sens; return; }
   player.yaw -= dx * sens; player.pitch = clamp(player.pitch - dy * sens, -1.45, 1.45);
 }
-let hadLock = false, lockFailed = false;
+let hadLock = false, lockFailed = false, lockWaitT = 0;
+// no pointer lock (some embedded pages refuse it): drag with the mouse to look, a quick click still fires
+const drag = { on: false, moved: 0, t: 0 };
+window.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' && isTouch && (Math.abs(e.movementX) + Math.abs(e.movementY)) > 0) setTouchMode(false); });
 document.addEventListener('mousemove', (e) => {
-  if (G.mode !== 'playing') return;
+  if (G.mode !== 'playing' || isTouch) return;
   if (document.pointerLockElement === canvas) look(e.movementX, e.movementY, 0.0022);
-  else if (lockFailed && e.buttons) look(e.movementX, e.movementY, 0.004);
+  else if (drag.on && e.buttons) { look(e.movementX, e.movementY, 0.0042); drag.moved += Math.abs(e.movementX) + Math.abs(e.movementY); }
 });
 document.addEventListener('pointerlockerror', () => { lockFailed = true; });
 canvas.addEventListener('mousedown', (e) => {
   if (isTouch || G.mode !== 'playing') return;
-  if (document.pointerLockElement !== canvas && !lockFailed) { lockPointer(); return; }
-  if (e.button === 0) primaryDown();
+  if (document.pointerLockElement === canvas) { if (e.button === 0) primaryDown(); if (e.button === 2) secondary(); return; }
+  if (!lockFailed) lockPointer();
+  // until the lock arrives (or if it never does), dragging looks around
+  drag.on = true; drag.moved = 0; drag.t = performance.now();
   if (e.button === 2) secondary();
 });
-window.addEventListener('mouseup', (e) => { if (e.button === 0) primaryUp(); });
+window.addEventListener('mouseup', (e) => {
+  if (drag.on) {
+    drag.on = false;
+    // a click without much dragging still shoots
+    if (e.button === 0 && drag.moved < 8 && performance.now() - drag.t < 350 && G.mode === 'playing' && document.pointerLockElement !== canvas && lockFailed) { primaryDown(); primaryUp(); }
+    return;
+  }
+  if (e.button === 0) primaryUp();
+});
 window.addEventListener('wheel', (e) => { if (G.mode === 'playing' && Math.abs(e.deltaY) > 4) cycleWeapon(e.deltaY > 0 ? 1 : -1); }, { passive: true });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 function lockPointer() {
   if (isTouch) return;
   if (!canvas.requestPointerLock) { lockFailed = true; return; }
   try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => { lockFailed = true; }); } catch { lockFailed = true; }
+  // some embeds neither grant nor refuse it: give up waiting and use drag-to-look
+  clearTimeout(lockWaitT); lockWaitT = setTimeout(() => { if (document.pointerLockElement !== canvas) lockFailed = true; }, 700);
 }
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === canvas) { hadLock = true; return; }
   if (hadLock && !isTouch && G.mode === 'playing') pauseGame();
   hadLock = false;
 });
-if (isTouch) {
-  document.body.classList.add('is-touch');
-  $('controls-desktop').classList.add('hidden'); $('controls-touch').classList.remove('hidden');
+applyTouchMode();
+{
   const stickEl = $('stick'), knob = $('stick-knob');
   window.addEventListener('touchstart', (e) => {
+    setTouchMode(true);
     if (G.mode !== 'playing') return;
     for (const t of e.changedTouches) {
       if (t.target.classList && t.target.classList.contains('tbtn')) continue;

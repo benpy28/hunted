@@ -8,13 +8,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const GAME_URL = pathToFileURL(join(root, 'dist/hunted.html')).href;
 
-export async function openGame() {
+export async function openGame(ctxOpts = {}, initScript = null) {
   const browser = await chromium.launch({
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
   });
-  const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+  const page = await browser.newPage({ viewport: { width: 960, height: 540 }, ...ctxOpts });
   // no pointer lock in tests: losing it mid-test would pause the game and make results random
   await page.addInitScript(() => { Element.prototype.requestPointerLock = undefined; });
+  if (initScript) await page.addInitScript(initScript);
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e && e.stack || e)));
   page.on('console', (m) => { if (m.type() === 'error' && !/WebGL|GPU|GL_|AudioContext/i.test(m.text())) errors.push(m.text()); });
