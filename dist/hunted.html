@@ -232,6 +232,9 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 /* hiding in a dumpster: black, with a strip of street visible under the lid */
 #hidecrack { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 1; }
 #hidecrack.show { display: block; }
+#hidecrack.slats .lid, #hidecrack.slats .tin, #hidecrack.crate .lid, #hidecrack.crate .tin { display: none; }
+#hidecrack.slats { background: repeating-linear-gradient(180deg, rgba(8,6,4,.96) 0 34px, rgba(8,6,4,.35) 34px 44px); }
+#hidecrack.crate { background: linear-gradient(90deg, rgba(10,8,4,.97) 0 22%, transparent 22% 26%, rgba(10,8,4,.97) 26% 48%, transparent 48% 53%, rgba(10,8,4,.97) 53% 76%, transparent 76% 80%, rgba(10,8,4,.97) 80%); }
 #hidecrack .lid { position: absolute; left: 0; right: 0; top: 0; height: 41%; background: linear-gradient(#050505 85%, #1a1a14); }
 #hidecrack .tin { position: absolute; left: 0; right: 0; bottom: 0; height: 47%; background: linear-gradient(#1c1c16, #050505 20%); }
 #hud-junk { position: absolute; right: calc(20px + env(safe-area-inset-right)); bottom: calc(118px + env(safe-area-inset-bottom)); font: bold 13px Arial, sans-serif; color: #d8f0d0; text-shadow: 0 1px 2px #000; letter-spacing: 1px; }
@@ -3900,6 +3903,9 @@ sfx.lid = () => { tone(150, 0.22, 'sawtooth', 0.05, 0.8); noise(0.12, 0.3, 700, 
 sfx.smash = () => { noise(0.35, 0.45, 4200, 2.2); tone(2600, 0.08, 'sine', 0.05, 1.3); tone(3300, 0.12, 'sine', 0.04, 1.2, 0.05); noise(0.2, 0.2, 2600, 1.4, 0.08); };
 sfx.flap = () => { for (let i = 0; i < 7; i++) noise(0.05, 0.16, 900 + Math.random() * 500, 0.8, i * 0.06 + Math.random() * 0.03); };
 sfx.camBeep = () => { tone(1760, 0.08, 'square', 0.05); tone(1760, 0.08, 'square', 0.05, 1, 0.14); tone(2200, 0.12, 'square', 0.05, 1, 0.28); };
+sfx.paper = () => { noise(0.12, 0.18, 3200, 1.4); noise(0.08, 0.12, 2200, 1.2, 0.1); };
+sfx.meow = () => { tone(720, 0.12, 'triangle', 0.07, 1.25); tone(900, 0.28, 'triangle', 0.06, 0.62, 0.1); };
+sfx.compactor = () => { tone(60, 1.2, 'sawtooth', 0.12, 1.4); noise(1.2, 0.3, 300, 0.5); tone(45, 0.8, 'square', 0.08, 1, 0.5); };
 sfx.explode = () => { noise(0.9, 0.6, 180, 0.4); tone(60, 0.7, 'sawtooth', 0.2, 0.4); };
 
 // continuous rotor / propeller hum, volume driven by distance to the nearest aircraft
@@ -6384,7 +6390,8 @@ function hideSpotNear(x, y, z, r = 1.0) {
   let best = null, bd = 1e9;
   for (const S of hideSpots) {
     if (!S.stand) continue;
-    const dx = Math.max(0, Math.abs(x - S.x) - S.lx), dz = Math.max(0, Math.abs(z - S.z) - S.lz), d = Math.hypot(dx, dz);
+    const dx = Math.max(0, Math.abs(x - S.x) - S.lx), dz = Math.max(0, Math.abs(z - S.z) - S.lz);
+    const d = S.indoor ? Math.max(0, Math.hypot(x - S.stand.x, z - S.stand.z) - 0.35) : Math.hypot(dx, dz); // indoor ones: from the room side only, never through a wall
     if (d < r && d < bd) { bd = d; best = S; }
   }
   return best;
@@ -6399,6 +6406,7 @@ function enterHide(S, K) {
   const P = K.player;
   SK_STATE.hide = S; SK_STATE.hideT = 0;
   P.hide = S; P.x = S.stand.x; P.z = S.stand.z; P.vx = P.vz = 0; P.crouch = 0;
+  if (S.eye) { P.yaw = Math.atan2(-S.stand.ux, -S.stand.uz); P.pitch = 0; } // indoors: you face out through the slats
   S.lift = 1;
   K.sfx.lid();
   // anyone who watched you climb in knows exactly which bin you're in
@@ -6408,18 +6416,19 @@ function enterHide(S, K) {
     const d = Math.hypot(h.x - P.x, h.z - P.z);
     if (d < 30 && h.hasLOS && (h.state === 'chase' || h.sus > 0.35)) { h.checkSpot = S; seen++; if (h.state !== 'chase') h.alert(mr(0.3, 0.8)); }
   }
-  K.showMsg(seen ? 'THEY SAW YOU GET IN. NOT GREAT' : 'IN THE BIN. LIE STILL. E TO CLIMB OUT', 2.5);
+  if (S.kind !== 'lorry') K.showMsg(seen ? 'THEY SAW YOU GET IN. NOT GREAT' : `IN THE ${hideName(S)}. KEEP STILL. E TO GET OUT`, 2.5);
 }
+const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY' })[S.kind] || 'BIN';
 function leaveHide(K, found = null) {
   const S = SK_STATE.hide; if (!S) return;
   SK_STATE.hide = null; K.player.hide = null; S.lift = 1;
   K.sfx.lid();
   K.player.x = S.stand.x; K.player.z = S.stand.z; K.player.y = Math.max(K.player.y, floorAt(S.stand.x, S.stand.z, 0.5));
-  if (SK_STATE.hideT > 40) { SK_STATE.smellT = 70; K.showMsg('YOU SMELL OF BINS. PEOPLE WILL NOTICE', 2.5); }
+  if (SK_STATE.hideT > 40 && S.kind === 'dumpster') { SK_STATE.smellT = 70; K.showMsg('YOU SMELL OF BINS. PEOPLE WILL NOTICE', 2.5); }
   for (const h of K.hunters()) if (h.checkSpot === S) h.checkSpot = null;
   if (found) {
-    K.say(found, mpick(['GOT YOU!', 'OUT YOU COME', 'FOUND THEM! IN THE BIN!', 'YOU STINK. AND YOU\'RE NICKED']));
-    found.alert(); K.shout(found); K.showMsg('THEY HAULED YOU OUT OF THE BIN', 2.5);
+    K.say(found, mpick(S.kind === 'dumpster' ? ['GOT YOU!', 'OUT YOU COME', 'FOUND THEM! IN THE BIN!', 'YOU STINK. AND YOU\'RE NICKED'] : ['GOT YOU!', 'OUT YOU COME', `FOUND THEM! IN THE ${hideName(S)}!`, 'HIDE AND SEEK\'S OVER']));
+    found.alert(); K.shout(found); K.showMsg(`THEY HAULED YOU OUT OF THE ${hideName(S)}`, 2.5);
     K.hurt(4, found.x, found.z, 4); K.addHeat(3);
   }
 }
@@ -6445,7 +6454,9 @@ function hunterPeekArrive(h, K) {
   S.lift = 0.8; if (Math.abs(S.x - K.player.x) + Math.abs(S.z - K.player.z) < 25) K.sfx.lid();
   h.waitT = 1.2; h.face = Math.atan2(S.x - h.x, S.z - h.z);
   if (SK_STATE.hide === S) { leaveHide(K, h); return; }
-  if (Math.random() < 0.35) K.say(h, mpick(['JUST RUBBISH', 'NOTHING. UGH, THE SMELL', 'NOT IN THIS ONE', 'EMPTY. WELL, NOT EMPTY. BUT NO ONE']));
+  if (Math.random() > 0.35) return;
+  if (S.kind !== 'dumpster') K.say(h, mpick(['NOBODY IN HERE', 'JUST COATS', 'EMPTY', 'HELLO? NO. NOBODY']));
+  else K.say(h, mpick(['JUST RUBBISH', 'NOTHING. UGH, THE SMELL', 'NOT IN THIS ONE', 'EMPTY. WELL, NOT EMPTY. BUT NO ONE']));
 }
 
 // =====================================================================
@@ -6469,7 +6480,7 @@ function placeJunk() {
   const spots = [];
   const add = (x, z, kind) => { const p = randomOpenPoint(x, z, 0.3, 1.6, 6); if (p) spots.push({ kind: kind || (Math.random() < 0.5 ? 'bottle' : 'can'), x: p.x, z: p.z }); };
   lifeSpots.forEach((L, i) => { if (i % 2 === 0) add(L.x, L.z); });
-  hideSpots.forEach((S) => { if (S.stand) { const x = S.stand.x + S.stand.ux * 1.5, z = S.stand.z + S.stand.uz * 1.5; add(x, z); if (Math.random() < 0.6) add(x, z, 'bottle'); } });
+  hideSpots.forEach((S) => { if (S.stand && S.kind === 'dumpster') { const x = S.stand.x + S.stand.ux * 1.5, z = S.stand.z + S.stand.uz * 1.5; add(x, z); if (Math.random() < 0.6) add(x, z, 'bottle'); } });
   walkIns.forEach((W, i) => { if (i % 3 === 0) add(W.x, W.z); });
   for (const k of ['bottle', 'can']) {
     const list = spots.filter((s) => s.kind === k);
@@ -6813,7 +6824,7 @@ function pickPocket(h, K) {
 // =====================================================================
 function buildStealth() {
   if (stBuilt) return; stBuilt = true;
-  for (const S of hideSpots) S.stand = standPoint(S);
+  for (const S of hideSpots) if (!S.stand) S.stand = standPoint(S);
   placeJunk(); placeCams(); placePigeons();
 }
 function resetStealth(K) {
@@ -6849,6 +6860,581 @@ function stealthDebug() {
   return { ...SK_STATE, hideSpots: hideSpots.filter((S) => S.stand).length, hideAll: hideSpots.length, junk: junk.filter((J) => !J.taken).length, pocket: SK_STATE.junk.length, cams: cams.length, camsLive: cams.filter((C) => !C.broken).length, flocks: flocks.length, birds: birdCount, flying: flying.length, hide: !!SK_STATE.hide };
 }
 
+
+// Odd jobs, more hiding places and the bin lorries.
+//  - Community notice boards stand by the bus stops and benches. Each one has a few odd jobs pinned up every
+//    day: deliver a parcel, post leaflets through doors, clear litter from a patch of pavement, find someone's
+//    lost cat, or ride a shift on the back of the bin lorry. They pay cash, and people barely look twice at
+//    someone who's obviously at work. Do them well and the jobs start paying better.
+//  - Hiding places indoors: wardrobes in people's houses, store cupboards in the walk-in shops, big crates and
+//    staff lockers in the dock warehouses. They work like the dumpsters (step in, peek out through the slats),
+//    minus the smell.
+//  - Bin lorries do the rounds, stopping to empty the wheelie bins on the pavement. Hop on the back step for a
+//    ride, or crouch to drop into the hopper and vanish under the rubbish. Don't stay in there too long: the
+//    compactor runs every so often.
+
+
+
+
+
+
+
+
+
+const GJ_STATE = { gig: null, ride: null, rep: 0, done: 0, earned: 0, failed: 0, binsEmptied: 0, hopperRides: 0, msgT: 0 };
+const gigBoards = []; // {x, z, face, city, name, offers, day}
+// a repeatable 0..1 from a position (the world's seeded random stream must not shift when things are added)
+const gjHash = (x, z, k = 0) => { const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return s - Math.floor(s); };
+
+// =====================================================================
+// Building: indoor hiding places and notice boards (placed just before the world is baked)
+// =====================================================================
+const overlaps = (c, x0, x1, z0, z1) => c.x1 > x0 && c.x0 < x1 && c.z1 > z0 && c.z0 < z1;
+const clearOf = (list, x0, x1, z0, z1, yTop = 2.2) => !list.some((c) => (c.h || 0) > 0.28 && (c.y0 || 0) < yTop && overlaps(c, x0, x1, z0, z1));
+// furniture that faces into the room along (ux, uz); half sizes: wa along the wall, wd away from it
+function hidePiece(kind, x, z, ux, uz, wa, wd, hgt, y0) {
+  const alongX = uz !== 0; // the wall runs along x when the piece faces along z
+  const lx = alongX ? wa : wd, lz = alongX ? wd : wa;
+  const x0 = x - lx, x1 = x + lx, z0 = z - lz, z1 = z + lz;
+  const front = (d) => [x + ux * (wd + d), z + uz * (wd + d)];
+  const H = gjHash(x, z, 3);
+  if (kind === 'wardrobe' || kind === 'cupboard') {
+    const col = kind === 'wardrobe' ? [0x8a5a32, 0x6a4a2a, 0xe8e0d0, 0xa07a4a][Math.floor(H * 4)] : [0x9aa0a8, 0x6a7a8a, 0xd8d8d0][Math.floor(H * 3)];
+    propBuf.box(x0, x1, y0, y0 + hgt, z0, z1, col);
+    propBuf.box(x0 - 0.02, x1 + 0.02, y0 + hgt, y0 + hgt + 0.06, z0 - 0.02, z1 + 0.02, 0x3a2a1a);
+    // slatted doors and handles on the front face
+    const [fx, fz] = front(0.005), dark = kind === 'wardrobe' ? 0x2a1a10 : 0x3a3e44;
+    for (let y = y0 + 1.1; y < y0 + hgt - 0.15; y += 0.12) {
+      if (alongX) propBuf.box(x0 + 0.06, x1 - 0.06, y, y + 0.03, Math.min(fz, fz + uz * 0.01), Math.max(fz, fz + uz * 0.01), dark);
+      else propBuf.box(Math.min(fx, fx + ux * 0.01), Math.max(fx, fx + ux * 0.01), y, y + 0.03, z0 + 0.06, z1 - 0.06, dark);
+    }
+    if (alongX) { propBuf.box(x - 0.01, x + 0.01, y0 + 0.05, y0 + hgt - 0.05, Math.min(fz, fz + uz * 0.012), Math.max(fz, fz + uz * 0.012), dark); for (const s of [-0.12, 0.12]) propBuf.box(x + s - 0.02, x + s + 0.02, y0 + 0.95, y0 + 1.15, Math.min(fz, fz + uz * 0.05), Math.max(fz, fz + uz * 0.05), 0xd0c090); }
+    else { propBuf.box(Math.min(fx, fx + ux * 0.012), Math.max(fx, fx + ux * 0.012), y0 + 0.05, y0 + hgt - 0.05, z - 0.01, z + 0.01, dark); for (const s of [-0.12, 0.12]) propBuf.box(Math.min(fx, fx + ux * 0.05), Math.max(fx, fx + ux * 0.05), y0 + 0.95, y0 + 1.15, z + s - 0.02, z + s + 0.02, 0xd0c090); }
+  } else if (kind === 'locker') {
+    propBuf.box(x0, x1, y0, y0 + hgt, z0, z1, [0x3a6a9a, 0x6a6a72, 0x2a6a4a][Math.floor(H * 3)]);
+    const [fx, fz] = front(0.005);
+    for (let y = y0 + 1.5; y < y0 + 1.8; y += 0.07) { if (alongX) propBuf.box(x0 + 0.08, x1 - 0.08, y, y + 0.025, Math.min(fz, fz + uz * 0.01), Math.max(fz, fz + uz * 0.01), 0x1a1a1e); else propBuf.box(Math.min(fx, fx + ux * 0.01), Math.max(fx, fx + ux * 0.01), y, y + 0.025, z0 + 0.08, z1 - 0.08, 0x1a1a1e); }
+  } else { // crate: a big slatted packing crate with a loose board at the front
+    const wood = [0xa88a5a, 0x9a7a4a, 0xb8986a][Math.floor(H * 3)];
+    propBuf.box(x0, x1, y0, y0 + hgt, z0, z1, wood);
+    for (const y of [y0 + 0.1, y0 + hgt * 0.5, y0 + hgt - 0.12]) propBuf.box(x0 - 0.02, x1 + 0.02, y, y + 0.1, z0 - 0.02, z1 + 0.02, 0x7a5a32);
+    const [fx, fz] = front(0.02); propBuf.box(fx - 0.25, fx + 0.25, y0 + hgt + 0.0, y0 + hgt + 0.04, fz - 0.25, fz + 0.25, 0x5a4a2a);
+  }
+  addCollider(x0, x1, z0, z1, y0 + hgt + (kind === 'crate' ? 0 : 0.06), { y0: 0 });
+  const eyeY = kind === 'crate' ? y0 + hgt - 0.35 : y0 + Math.min(1.6, hgt - 0.25);
+  const S = { kind, x, z, lx, lz, top: y0 + hgt, indoor: true, eye: { x: x + ux * (wd - 0.12), y: eyeY, z: z + uz * (wd - 0.12) } };
+  const [sx, sz] = front(0.55); S.stand = { x: sx, z: sz, ux, uz };
+  hideSpots.push(S);
+  return S;
+}
+// try spots along the inside walls of a room until one fits
+function placeAgainstWall(rect, kind, wa, wd, hgt, inset, avoid, near, salt) {
+  const list = colliders.filter((c) => overlaps(c, rect.x0 - 1, rect.x1 + 1, rect.z0 - 1, rect.z1 + 1));
+  const cands = [];
+  const sides = [[rect.x0 + inset, null, 1, 0], [rect.x1 - inset, null, -1, 0], [null, rect.z0 + inset, 0, 1], [null, rect.z1 - inset, 0, -1]];
+  for (const [wx, wz, ux, uz] of sides) {
+    const a0 = (ux ? rect.z0 : rect.x0) + inset + wa + 0.1, a1 = (ux ? rect.z1 : rect.x1) - inset - wa - 0.1;
+    for (let a = a0; a <= a1; a += 0.45) {
+      const x = ux ? wx + ux * wd : a, z = uz ? wz + uz * wd : a;
+      cands.push([x, z, ux, uz]);
+    }
+  }
+  if (!cands.length) return null;
+  const off = Math.floor(gjHash(rect.x0, rect.z0, salt) * cands.length);
+  for (let k = 0; k < cands.length; k++) {
+    const [x, z, ux, uz] = cands[(k + off) % cands.length];
+    const lx = uz ? wa : wd, lz = uz ? wd : wa;
+    if (!clearOf(list, x - lx - 0.02, x + lx + 0.02, z - lz - 0.02, z + lz + 0.02)) continue;
+    const sx = x + ux * (wd + 0.6), sz = z + uz * (wd + 0.6);
+    if (!clearOf(list, sx - 0.42, sx + 0.42, sz - 0.42, sz + 0.42, 1.9)) continue;
+    if (sx < rect.x0 + 0.5 || sx > rect.x1 - 0.5 || sz < rect.z0 + 0.5 || sz > rect.z1 - 0.5) continue;
+    if (avoid.some((p) => Math.hypot(p[0] - x, p[1] - z) < near || Math.hypot(p[0] - sx, p[1] - sz) < near)) continue;
+    return { x, z, ux, uz };
+  }
+  return null;
+}
+function placeIndoorHides() {
+  for (const W of walkIns) {
+    if (!W.rect) continue;
+    const doorPts = [[W.x, W.z], ...(W.path || [])];
+    if (W.home) {
+      const p = placeAgainstWall(W.rect, 'wardrobe', 0.55, 0.3, 2.0, 0.3, doorPts, 1.7, 1);
+      if (p) hidePiece('wardrobe', p.x, p.z, p.ux, p.uz, 0.55, 0.3, 2.0, 0.2);
+    } else if (gjHash(W.x, W.z, 2) < 0.4) {
+      const p = placeAgainstWall(W.rect, 'cupboard', 0.45, 0.3, 2.0, 0.3, doorPts, 1.7, 2);
+      if (p) hidePiece('cupboard', p.x, p.z, p.ux, p.uz, 0.45, 0.3, 2.0, 0.2);
+    }
+  }
+  for (const WH of warehouses) {
+    const doorPts = WH.doors.flatMap((d) => [[d.x, d.z], [d.ox, d.oz]]);
+    for (let k = 0; k < 2; k++) {
+      const p = placeAgainstWall(WH.rect, 'crate', 0.85, 0.85, 1.7, 0.35, doorPts, 3, 5 + k);
+      if (p) hidePiece('crate', p.x, p.z, p.ux, p.uz, 0.85, 0.85, 1.7, 0.2);
+    }
+    const p = placeAgainstWall(WH.rect, 'locker', 0.32, 0.28, 1.95, 0.35, doorPts, 3, 9);
+    if (p) hidePiece('locker', p.x, p.z, p.ux, p.uz, 0.32, 0.28, 1.95, 0.2);
+  }
+}
+const BOARD_NAMES = ['COMMUNITY NOTICE BOARD', 'ODD JOBS BOARD', 'LOCAL NOTICES', 'WANTED: HELP', 'NEIGHBOURHOOD BOARD'];
+function placeBoards() {
+  const pick = lifeSpots.filter((s) => s.kind === 'bus' || s.kind === 'bench').sort((a, b) => gjHash(a.x, a.z, 4) - gjHash(b.x, b.z, 4));
+  // the docks have no benches to speak of: their boards go up beside the warehouse doors
+  for (const WH of warehouses) for (const d of WH.doors) pick.push({ x: d.ox + (d.ox - d.x) * 0.6, z: d.oz + (d.oz - d.z) * 0.6, face: Math.atan2(d.ox - d.x, d.oz - d.z) });
+  for (const s of pick) {
+    const city = cityAt(s.x, s.z, 5); if (!city) continue;
+    if (gigBoards.some((B) => Math.hypot(B.x - s.x, B.z - s.z) < 70)) continue;
+    if (gigBoards.filter((B) => B.city === city.name).length >= 9) continue;
+    const f = s.face || 0, px = Math.cos(f), pz = -Math.sin(f);
+    const list = colliders.filter((c) => Math.abs((c.x0 + c.x1) / 2 - s.x) < 12 && Math.abs((c.z0 + c.z1) / 2 - s.z) < 12);
+    for (const d of [2.8, -2.8, 3.6, -3.6, 4.4, -4.4]) {
+      const x = s.x + px * d, z = s.z + pz * d;
+      if (!clearOf(list, x - 0.9, x + 0.9, z - 0.9, z + 0.9, 2.5)) continue;
+      buildBoard(x, z, f);
+      gigBoards.push({ x, z, face: f, city: city.name, name: BOARD_NAMES[Math.floor(gjHash(x, z, 6) * BOARD_NAMES.length)], kind: 'gigs', offers: [], day: 0 });
+      break;
+    }
+  }
+}
+const NOTE_COLS = [0xfff4a0, 0xffffff, 0xa0e0ff, 0xffb0c8, 0xb0f0a0, 0xffd090];
+function buildBoard(x, z, f) {
+  const c = Math.cos(f), s = Math.sin(f), w = 0.75; // the board runs along (c, -s)
+  const P = (a, b) => [x + c * a + s * b, z - s * a + c * b];
+  for (const a of [-w, w]) { const [px, pz] = P(a, 0); propBuf.box(px - 0.05, px + 0.05, 0, 2.2, pz - 0.05, pz + 0.05, 0x4a3a2a); }
+  // the cork board and its little roof, as a few thin slabs along the run (axis-aligned pieces)
+  for (let k = 0; k < 6; k++) {
+    const a = -w + (k + 0.5) * (2 * w / 6), [px, pz] = P(a, 0), hw = w / 6 + 0.01;
+    const ax = Math.abs(c) > Math.abs(s);
+    const ex = ax ? hw : 0.04, ez = ax ? 0.04 : hw;
+    propBuf.box(px - ex, px + ex, 1.05, 1.95, pz - ez, pz + ez, 0xb08a5a);
+    propBuf.box(px - (ax ? hw : 0.2), px + (ax ? hw : 0.2), 2.0, 2.06, pz - (ax ? 0.2 : hw), pz + (ax ? 0.2 : hw), 0x2a3a2a);
+  }
+  // pinned notes on both faces
+  for (let k = 0; k < 7; k++) {
+    const a = -w + 0.18 + gjHash(x, z, 10 + k) * (2 * w - 0.36), y = 1.15 + gjHash(x, z, 20 + k) * 0.6;
+    for (const side of [-1, 1]) {
+      const [px, pz] = P(a, side * 0.05), ax = Math.abs(c) > Math.abs(s);
+      const ex = ax ? 0.1 : 0.006, ez = ax ? 0.006 : 0.1;
+      propBuf.box(px - ex, px + ex, y, y + 0.22, pz - ez, pz + ez, NOTE_COLS[Math.floor(gjHash(x, z, 30 + k) * NOTE_COLS.length)]);
+    }
+  }
+  const ax = Math.abs(c) > Math.abs(s), [cx, cz] = P(0, 0);
+  addCollider(cx - (ax ? w : 0.12), cx + (ax ? w : 0.12), cz - (ax ? 0.12 : w), cz + (ax ? 0.12 : w), 2.06, { y0: 0 });
+  glowBuf.box(cx - 0.06, cx + 0.06, 2.06, 2.1, cz - 0.06, cz + 0.06, 0xffe8a0);
+}
+// ---------------------------------------------------------------------
+// busier pavements: cafe and bar terraces (with seats people actually use), flower stalls outside florists,
+// postboxes, phone boxes, planters and newspaper stands
+// ---------------------------------------------------------------------
+const terraceSeats = [];
+let gjClutter = 0, gjTerraceMiss = 0;
+function pavementFree(x, z, r, list) { return clearOf(list, x - r, x + r, z - r, z + r, 2.4) && !keepClear.some((k) => overlaps(k, x - r, x + r, z - r, z + r)); }
+function placeTerraces() {
+  for (const W of walkIns) {
+    if (W.home || !W.path || W.path.length < 2) continue;
+    const terrace = ['cafe', 'bar', 'diner', 'pizza'].includes(W.kind), florist = W.kind === 'florist';
+    if (!terrace && !florist) continue;
+    const [ox, oz] = W.path[0], [ix, iz] = W.path[1];
+    let ux = ox - ix, uz = oz - iz; const l = Math.hypot(ux, uz) || 1; ux /= l; uz /= l; // out of the door
+    const px = -uz, pz = ux; // along the shop front
+    const list = colliders.filter((c) => Math.abs((c.x0 + c.x1) / 2 - W.x) < 14 && Math.abs((c.z0 + c.z1) / 2 - W.z) < 14);
+    for (const side of [1, -1]) {
+      const cx = W.x + ux * 1.6 + px * side * 3.1, cz = W.z + uz * 1.6 + pz * side * 3.1;
+      const ex = Math.abs(px) > 0.5 ? 1.05 : 0.5, ez = Math.abs(px) > 0.5 ? 0.5 : 1.05;
+      if (!clearOf(list, cx - ex, cx + ex, cz - ez, cz + ez, 2.4) || keepClear.some((k) => overlaps(k, cx - ex, cx + ex, cz - ez, cz + ez))) { gjTerraceMiss++; continue; }
+      if (florist) {
+        for (const [a, b, c] of [[-0.6, 0, 0xe04a6a], [0, 0.1, 0xf0d040], [0.6, 0, 0xa04ae0]]) {
+          const x = cx + px * a, z = cz + pz * a;
+          propBuf.box(x - 0.28, x + 0.28, 0.15, 0.55 + b, z - 0.28, z + 0.28, 0x6a4a2a);
+          for (let k = 0; k < 5; k++) propBuf.box(x - 0.2 + (k % 3) * 0.15, x - 0.1 + (k % 3) * 0.15, 0.55 + b, 0.75 + b, z - 0.15 + (k >> 1) * 0.1, z - 0.05 + (k >> 1) * 0.1, k % 2 ? c : 0x3a8a3a);
+        }
+        addCollider(cx - ex, cx + ex, cz - ez, cz + ez, 0.8, { y0: 0 }); gjClutter++;
+        continue;
+      }
+      // a round table, a parasol and two chairs facing each other across it
+      propBuf.cyl(cx, cz, 0.05, 0.05, 0.15, 0.85, 0x2a2a2e, 6); propBuf.cyl(cx, cz, 0.42, 0.42, 0.85, 0.9, 0xe8e0d0, 12);
+      propBuf.cyl(cx, cz, 0.03, 0.03, 0.9, 2.3, 0x5a5a5e, 5); propBuf.cyl(cx, cz, 1.35, 0.05, 2.0, 2.45, [0xc83a3a, 0x2a6a9a, 0xf0e0c0, 0x3a8a4a][Math.floor(gjHash(cx, cz, 7) * 4)], 10);
+      addCollider(cx - 0.42, cx + 0.42, cz - 0.42, cz + 0.42, 0.9, { y0: 0 });
+      for (const s of [1, -1]) {
+        const x = cx + px * s * 0.8, z = cz + pz * s * 0.8;
+        propBuf.box(x - 0.22, x + 0.22, 0.15, 0.45, z - 0.22, z + 0.22, 0x8a6a4a);
+        const bx = x + px * s * 0.2, bz = z + pz * s * 0.2; propBuf.box(Math.min(bx, bx + px * s * 0.05) - Math.abs(pz) * 0.22, Math.max(bx, bx + px * s * 0.05) + Math.abs(pz) * 0.22, 0.45, 0.95, Math.min(bz, bz + pz * s * 0.05) - Math.abs(px) * 0.22, Math.max(bz, bz + pz * s * 0.05) + Math.abs(px) * 0.22, 0x8a6a4a);
+        const face = Math.atan2(-px * s, -pz * s);
+        const seat = { kind: 'bench', x: x - px * s * 0.05 + ux * 0.6, z: z - pz * s * 0.05 + uz * 0.6, face, sx: x, sz: z, terrace: true };
+        lifeSpots.push(seat); terraceSeats.push(seat);
+      }
+      gjClutter++;
+    }
+  }
+}
+function placeStreetClutter() {
+  const benches = lifeSpots.filter((s) => s.kind === 'bench' && !s.terrace && cityAt(s.x, s.z, 0));
+  for (let i = 0; i < benches.length; i += 2) {
+    const s = benches[i], H = gjHash(s.x, s.z, 40);
+    if (H > 0.55) continue;
+    const f = s.face || 0, px = Math.cos(f), pz = -Math.sin(f);
+    const list = colliders.filter((c) => Math.abs((c.x0 + c.x1) / 2 - s.x) < 10 && Math.abs((c.z0 + c.z1) / 2 - s.z) < 10);
+    for (const d of [-3.4, 3.4, -4.6, 4.6]) {
+      const x = s.x + px * d, z = s.z + pz * d;
+      if (!pavementFree(x, z, 0.75, list)) continue;
+      const kind = Math.floor(gjHash(x, z, 41) * 4);
+      if (kind === 0) { propBuf.cyl(x, z, 0.24, 0.24, 0.15, 1.25, 0xc8202a, 10); propBuf.cyl(x, z, 0.27, 0.2, 1.25, 1.4, 0xc8202a, 10); propBuf.box(x - 0.12, x + 0.12, 1.0, 1.04, z - 0.25, z + 0.25, 0x1a1a1a); addCollider(x - 0.25, x + 0.25, z - 0.25, z + 0.25, 1.4, { y0: 0 }); }
+      else if (kind === 1) { // phone box
+        propBuf.box(x - 0.5, x + 0.5, 0.15, 0.3, z - 0.5, z + 0.5, 0x2a2a2e);
+        for (const [a, b] of [[-0.46, -0.46], [0.46, -0.46], [-0.46, 0.46], [0.46, 0.46]]) propBuf.box(x + a - 0.04, x + a + 0.04, 0.3, 2.3, z + b - 0.04, z + b + 0.04, 0x2a5a8a);
+        propBuf.box(x - 0.5, x + 0.5, 2.3, 2.5, z - 0.5, z + 0.5, 0x2a5a8a); glowBuf.box(x - 0.3, x + 0.3, 2.32, 2.46, z - 0.51, z + 0.51, 0xe8f0ff);
+        propBuf.box(x - 0.18, x + 0.18, 1.1, 1.6, z - 0.42, z - 0.3, 0x3a3a40);
+        addCollider(x - 0.5, x + 0.5, z - 0.5, z + 0.5, 2.5, { y0: 0 });
+      } else if (kind === 2) { // planter
+        propBuf.box(x - 0.6, x + 0.6, 0.15, 0.7, z - 0.6, z + 0.6, 0x8a8a84); propBuf.box(x - 0.52, x + 0.52, 0.7, 0.72, z - 0.52, z + 0.52, 0x4a3a2a);
+        for (let k = 0; k < 4; k++) propBuf.cyl(x + (k % 2 - 0.5) * 0.5, z + ((k >> 1) - 0.5) * 0.5, 0.26, 0.05, 0.7, 1.25, [0x3a8a3a, 0x4a9a3a, 0xe0508a, 0xf0d040][Math.floor(gjHash(x, z, 50 + k) * 4)], 6);
+        addCollider(x - 0.6, x + 0.6, z - 0.6, z + 0.6, 0.72, { y0: 0 });
+      } else { // newspaper stand
+        propBuf.box(x - 0.45, x + 0.45, 0.15, 1.0, z - 0.3, z + 0.3, 0x3a6a3a); propBuf.box(x - 0.4, x + 0.4, 1.0, 1.35, z - 0.25, z + 0.25, 0x2a2a2e);
+        for (let k = 0; k < 3; k++) propBuf.box(x - 0.38 + k * 0.26, x - 0.16 + k * 0.26, 0.6, 0.95, z - 0.31, z - 0.3, [0xf0f0e8, 0xe8d050, 0xf0f0e8][k]);
+        addCollider(x - 0.45, x + 0.45, z - 0.3, z + 0.3, 1.35, { y0: 0 });
+      }
+      gjClutter++;
+      break;
+    }
+  }
+}
+worldHooks.beforeBake.push(() => { placeIndoorHides(); placeBoards(); placeTerraces(); placeStreetClutter(); });
+const clutterCount = () => gjClutter;
+
+// =====================================================================
+// Odd jobs
+// =====================================================================
+const GIG_KINDS = {
+  delivery: { label: 'PARCEL DELIVERY', color: '#ffb84a', hex: 0xffb84a },
+  leaflets: { label: 'LEAFLET ROUND', color: '#7ad0ff', hex: 0x7ad0ff },
+  litter: { label: 'LITTER PICK', color: '#9aff7a', hex: 0x9aff7a },
+  pet: { label: 'LOST CAT', color: '#ff9ad0', hex: 0xff9ad0 },
+  bincrew: { label: 'BIN CREW', color: '#c8ff4a', hex: 0xc8ff4a },
+};
+const CAT_NAMES = ['BISCUIT', 'MR WHISKERS', 'NOODLE', 'DUCHESS', 'PICKLE', 'SIR PURRSALOT', 'MARMALADE', 'TOFFEE', 'PRINCESS FLUFFBALL', 'GERALD'];
+const CLIENTS = ['MRS OKAFOR AT NUMBER 12', 'A MAN CALLED DES', 'THE CORNER SHOP', 'A VERY ANXIOUS LANDLORD', 'THE RESIDENTS\' COMMITTEE', 'SOMEONE WHO SIGNED IT "X"', 'NANA PEG', 'THE CHURCH HALL', 'A STRESSED CAFE OWNER', 'THE ALLOTMENT SOCIETY'];
+const PARCELS = ['A SUSPICIOUSLY HEAVY BOX', 'A BIRTHDAY CAKE (DON\'T TIP IT)', 'A LAMP', 'SIX TINS OF PAINT', 'A RETURNED TOASTER', 'SOMEONE\'S LEFT SHOE', 'A BOX MARKED "FRAGILE!!"', 'A SIGNED FOOTBALL', 'A TANK OF GOLDFISH (LIDDED)'];
+const LEAFLETS = ['PIZZA MENUS', 'LOST TORTOISE POSTERS', 'A CARPET SALE', 'THE SUMMER FETE', 'A MAGICIAN FOR PARTIES', 'A LOCAL BAND\'S GIG'];
+const BOARD_BLURBS = ['"Reliable person wanted. Cash in hand. No questions asked, no questions answered."', '"Tear off a strip. Or don\'t. We\'re not your mum."', '"Help wanted. Must own legs."', '"Odd jobs for odd people. That\'s you, that is."'];
+const payMul = (K) => (1 + GJ_STATE.rep * 0.06) * (1 + (K.G.day - 1) * 0.02);
+const round5 = (n) => Math.max(5, Math.round(n / 5) * 5);
+function nearWalkIns(x, z, r0, r1, filter = () => true) { return walkIns.filter((W) => { const d = Math.hypot(W.x - x, W.z - z); return d > r0 && d < r1 && filter(W); }); }
+function gjMakeOffers(B, K) {
+  B.offers = []; B.day = K.G.day;
+  const kinds = ['delivery', 'leaflets', 'litter', 'pet', 'bincrew'].sort(() => Math.random() - 0.5).slice(0, 3);
+  for (const kind of kinds) {
+    const O = { id: `${kind}-${Math.random().toString(36).slice(2, 7)}`, kind, client: mpick(CLIENTS), board: B };
+    if (kind === 'delivery') {
+      const from = mpick(nearWalkIns(B.x, B.z, 20, 160, (W) => !W.home)) || mpick(nearWalkIns(B.x, B.z, 10, 220));
+      if (!from) continue;
+      const to = mpick(nearWalkIns(from.x, from.z, 80, 260, (W) => W.home)) || mpick(nearWalkIns(from.x, from.z, 70, 260));
+      if (!to) continue;
+      O.from = from; O.to = to; O.what = mpick(PARCELS);
+      const d = Math.hypot(to.x - from.x, to.z - from.z);
+      O.pay = round5((18 + d * 0.12) * payMul(K)); O.time = Math.round(120 + d / 3);
+      O.desc = `Collect ${O.what} from ${from.name} and drop it at ${to.name}, ${Math.round(d)} m away. Don't get it knocked about.`;
+    } else if (kind === 'leaflets') {
+      const doors = nearWalkIns(B.x, B.z, 15, 170).sort(() => Math.random() - 0.5).slice(0, 5);
+      if (doors.length < 3) continue;
+      O.doors = doors; O.what = mpick(LEAFLETS);
+      O.pay = round5((10 + doors.length * 5) * payMul(K)); O.time = 200;
+      O.desc = `Push leaflets for ${O.what} through ${doors.length} doors round here. Walk up to each door.`;
+    } else if (kind === 'litter') {
+      O.pay = round5(32 * payMul(K)); O.time = 160; O.bags = 7;
+      O.desc = 'Seven bags of rubbish dumped on a patch of pavement. Clear the lot. Nobody looks at the person picking up litter.';
+    } else if (kind === 'pet') {
+      O.what = mpick(CAT_NAMES); O.pay = round5(mr(40, 60) * payMul(K)); O.time = 240;
+      O.desc = `${O.what} hasn't come home. Search the marked area, creep up slowly (crouch, they spook easily) and bring them back here.`;
+    } else {
+      O.pay = round5(35 * payMul(K)); O.time = 220; O.need = 45;
+      O.desc = 'The council\'s short-handed. Find a bin lorry and ride the back step for 45 seconds. Hi-vis provided, in spirit.';
+    }
+    O.label = GIG_KINDS[kind].label;
+    B.offers.push(O);
+  }
+}
+// the notice board menu (uses the same panel as the shops)
+function gigMenu(K) {
+  return {
+    cash: () => K.player.cash,
+    items(kind, B) {
+      if (B.day !== K.G.day || !B.offers.length) gjMakeOffers(B, K);
+      const G0 = GJ_STATE.gig;
+      return B.offers.map((O) => ({ id: O.id, name: `${O.label} · ${O.client}`, desc: O.desc + ` ${Math.floor(O.time / 60)}:${String(O.time % 60).padStart(2, '0')} to do it.`, price: O.pay, tag: G0 && G0.offer === O ? 'DROP IT' : O.taken ? 'TAKEN' : `PAYS $${O.pay}` }));
+    },
+    state() { return ''; },
+    buy(it) {
+      const G0 = GJ_STATE.gig;
+      if (G0 && G0.offer.id === it.id) { endGig(K, false, 'JOB DROPPED. THEY\'LL FIND SOMEONE ELSE'); return 'JOB DROPPED'; }
+      if (G0) return 'FINISH THE JOB YOU\'RE ON FIRST (OR DROP IT)';
+      if (K.G.super) return 'HEROES DON\'T DO ODD JOBS. ALLEGEDLY';
+      const B = gigBoards.find((b) => b.offers.some((o) => o.id === it.id)); const O = B && B.offers.find((o) => o.id === it.id);
+      if (!O) return 'THAT ONE\'S BEEN TORN DOWN';
+      if (O.taken) return 'SOMEONE ELSE IS ON IT (YOU, EARLIER)';
+      startGig(O, K);
+      setTimeout(() => K.leaveShop(), 700);
+      return `JOB TAKEN: ${O.label}. FOLLOW THE MARKER.`;
+    },
+  };
+}
+function gigBoardNear(x, y, z) {
+  if (y > 1.5) return null;
+  for (const B of gigBoards) if (Math.abs(B.x - x) < 2.2 && Math.abs(B.z - z) < 2.2) return B;
+  return null;
+}
+function boardBlurbs() { return BOARD_BLURBS; }
+
+// ---------------------------------------------------------------------
+// meshes for the jobs: litter bags, the cat, marker beams
+// ---------------------------------------------------------------------
+const gjMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+const bagGeo = (() => { const b = new GeoBuf(); b.box(-0.22, 0.22, 0, 0.42, -0.2, 0.2, 0x1a1a1e); b.box(-0.06, 0.06, 0.42, 0.52, -0.05, 0.05, 0x2a2a2e); return b.geometry(); })();
+const catGeo = (() => {
+  const b = new GeoBuf(), o = 0xe08a3a, d = 0xc06a2a;
+  b.box(-0.1, 0.1, 0.12, 0.3, -0.22, 0.2, o); b.box(-0.09, 0.09, 0.22, 0.4, 0.18, 0.36, o);
+  b.box(-0.08, -0.03, 0.4, 0.47, 0.25, 0.3, d); b.box(0.03, 0.08, 0.4, 0.47, 0.25, 0.3, d);
+  for (const [x, z] of [[-0.07, 0.14], [0.07, 0.14], [-0.07, -0.16], [0.07, -0.16]]) b.box(x - 0.03, x + 0.03, 0, 0.13, z - 0.03, z + 0.03, d);
+  b.box(-0.025, 0.025, 0.25, 0.5, -0.3, -0.22, d); b.box(-0.02, 0.02, 0.33, 0.35, 0.36, 0.37, 0x111111);
+  return b.geometry();
+})();
+const beamMats = {};
+const gjBeamGeo = new THREE.CylinderGeometry(0.45, 0.45, 60, 10, 1, true); gjBeamGeo.translate(0, 30, 0);
+const beams = [];
+function beamAt(i, x, y, z, hex) {
+  let m = beams[i];
+  if (!m) { m = new THREE.Mesh(gjBeamGeo, null); m.renderOrder = 3; scene.add(m); beams[i] = m; }
+  if (!beamMats[hex]) beamMats[hex] = new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  m.material = beamMats[hex]; m.position.set(x, y, z); m.visible = true;
+}
+const gigMeshes = [];
+function clearGigMeshes() { for (const m of gigMeshes) scene.remove(m); gigMeshes.length = 0; }
+
+function startGig(O, K) {
+  O.taken = true;
+  const g = { offer: O, kind: O.kind, t: O.time, pay: O.pay, stage: 0, carry: null, bumps: 0, hp0: K.player.hp, targets: [] };
+  if (O.kind === 'delivery') g.targets = [{ x: O.from.x, z: O.from.z, label: 'COLLECT' }];
+  else if (O.kind === 'leaflets') g.targets = O.doors.map((W) => ({ x: W.x, z: W.z, label: 'DOOR', W }));
+  else if (O.kind === 'litter') {
+    const c = randomOpenPoint(O.board.x, O.board.z, 30, 100) || { x: O.board.x + 30, z: O.board.z };
+    for (let i = 0; i < O.bags; i++) {
+      const p = randomOpenPoint(c.x, c.z, 1, 14) || { x: c.x + mr(-6, 6), z: c.z + mr(-6, 6) };
+      const m = new THREE.Mesh(bagGeo, gjMat); m.position.set(p.x, 0.15, p.z); m.rotation.y = mr(0, 6); scene.add(m); gigMeshes.push(m);
+      g.targets.push({ x: p.x, z: p.z, label: 'BAG', mesh: m });
+    }
+  } else if (O.kind === 'pet') {
+    const p = randomOpenPoint(O.board.x, O.board.z, 60, 150) || randomOpenPoint(O.board.x, O.board.z, 30, 100) || { x: O.board.x + 50, z: O.board.z };
+    const m = new THREE.Mesh(catGeo, gjMat); m.position.set(p.x, 0.15, p.z); scene.add(m); gigMeshes.push(m);
+    g.cat = { x: p.x, z: p.z, m, spooked: 0, seen: false, meowT: 0, runT: 0, tx: p.x, tz: p.z };
+    g.area = { x: p.x + mr(-14, 14), z: p.z + mr(-14, 14), r: 24 };
+    g.targets = [{ x: g.area.x, z: g.area.z, label: 'SEARCH', area: true }];
+  } else if (O.kind === 'bincrew') { g.rode = 0; g.targets = []; }
+  GJ_STATE.gig = g;
+  K.sfx.pickup();
+}
+function endGig(K, ok, msg) {
+  const g = GJ_STATE.gig; if (!g) return;
+  GJ_STATE.gig = null; clearGigMeshes();
+  for (const m of beams) if (m) m.visible = false;
+  if (ok) {
+    let pay = g.pay;
+    if (g.kind === 'delivery' && g.bumps > 0) pay = round5(pay * Math.max(0.4, 1 - g.bumps * 0.25));
+    K.addCash(pay); K.sfx.cash(); GJ_STATE.done++; GJ_STATE.earned += pay; GJ_STATE.rep = Math.min(10, GJ_STATE.rep + 1);
+    K.showMsg(`${msg} +$${pay}`, 2.6);
+  } else {
+    if (msg) K.showMsg(msg, 2.4);
+    GJ_STATE.failed++; GJ_STATE.rep = Math.max(0, GJ_STATE.rep - 1);
+  }
+}
+// odd jobs make you look like you belong (a negative nudge on how much you stand out)
+function gigConspic(K) {
+  const g = GJ_STATE.gig, R = GJ_STATE.ride;
+  let k = 0;
+  if (g && (g.carry || g.kind === 'litter' || g.kind === 'leaflets')) k -= 0.12;
+  if (R && R.mode === 'step') k -= 0.15;
+  if (k && K.player.outfit && K.player.outfit.body === 'hivis') k -= 0.1;
+  return k;
+}
+function updateGig(dt, K) {
+  const g = GJ_STATE.gig; if (!g) return;
+  const P = K.player;
+  g.t -= dt;
+  if (g.t <= 0) { endGig(K, false, g.kind === 'pet' ? 'TOO SLOW. THE CAT CAME HOME BY ITSELF. NO PAY' : 'TOO SLOW. THE CLIENT GAVE UP ON YOU'); return; }
+  if (!P.alive) { endGig(K, false, ''); return; }
+  const near = (x, z, r) => Math.abs(P.x - x) < r && Math.abs(P.z - z) < r && Math.hypot(P.x - x, P.z - z) < r && P.y < 2;
+  if (g.kind === 'delivery') {
+    if (g.carry && P.hp < g.hp0 - 8) { g.bumps++; K.showMsg(g.bumps > 2 ? 'THE PARCEL IS BASICALLY A PANCAKE NOW' : 'OOF. THE PARCEL TOOK A KNOCK', 1.6); }
+    g.hp0 = P.hp;
+    const T = g.targets[0];
+    if (T && near(T.x, T.z, 2.2) && !P.car) {
+      if (!g.carry) { g.carry = 'parcel'; K.sfx.pickup(); K.showMsg(`GOT ${g.offer.what}. NOW TO ${g.offer.to.name}`, 2.4); g.targets = [{ x: g.offer.to.x, z: g.offer.to.z, label: 'DROP' }]; }
+      else { g.carry = null; endGig(K, true, g.bumps ? 'DELIVERED. A BIT DENTED' : 'DELIVERED. SIGNED FOR'); }
+    }
+  } else if (g.kind === 'leaflets') {
+    for (const T of g.targets) if (!T.done && near(T.x, T.z, 2.4) && !P.car) { T.done = true; K.sfx.paper(); K.showMsg(`LEAFLET IN. ${g.targets.filter((q) => !q.done).length} TO GO`, 1.2); }
+    if (g.targets.every((T) => T.done)) endGig(K, true, 'ALL LEAFLETS POSTED');
+  } else if (g.kind === 'litter') {
+    for (const T of g.targets) if (!T.done && near(T.x, T.z, 1.5) && !P.car) { T.done = true; T.mesh.visible = false; K.sfx.paper(); }
+    if (g.targets.every((T) => T.done)) endGig(K, true, 'PAVEMENT SPOTLESS');
+  } else if (g.kind === 'pet') updateCat(g, dt, K, near);
+  else if (g.kind === 'bincrew') {
+    if (GJ_STATE.ride && GJ_STATE.ride.mode === 'step') { g.rode += dt; if (g.rode >= g.offer.need) endGig(K, true, 'SHIFT DONE. THE CREW SAYS YOU\'RE ALRIGHT'); }
+    const L = nearestLorry(K, P.x, P.z); g.targets = L ? [{ x: L.x, z: L.z, label: 'LORRY' }] : [];
+  }
+}
+function updateCat(g, dt, K, near) {
+  const C = g.cat, P = K.player;
+  if (g.carry === 'cat') {
+    C.m.position.set(P.x + Math.sin(-P.yaw) * 0.0, -50, P.z); // tucked under your arm (out of view)
+    if (P.sprinting && Math.random() < dt * 0.12) {
+      g.carry = null; const p = randomOpenPoint(P.x, P.z, 6, 12) || { x: P.x + 6, z: P.z };
+      C.x = P.x; C.z = P.z; C.tx = p.x; C.tz = p.z; C.runT = 2; K.sfx.meow(); K.showMsg(`${g.offer.what} WRIGGLED FREE! DON'T RUN WITH A CAT`, 2);
+      g.targets = [{ x: p.x, z: p.z, label: 'CAT' }];
+    } else if (near(g.offer.board.x, g.offer.board.z, 2.6)) { g.carry = null; endGig(K, true, `${g.offer.what} IS HOME. THE OWNER WEEPS WITH JOY`); }
+    return;
+  }
+  const d = Math.hypot(P.x - C.x, P.z - C.z);
+  if (C.runT > 0) {
+    C.runT -= dt; const dx = C.tx - C.x, dz = C.tz - C.z, l = Math.hypot(dx, dz);
+    if (l > 0.2) { const s = Math.min(l, 7 * dt); C.x += dx / l * s; C.z += dz / l * s; C.m.rotation.y = Math.atan2(dx, dz); }
+  }
+  C.m.position.set(C.x, 0.15 + (C.runT > 0 ? Math.abs(Math.sin(K.G.elapsed * 18)) * 0.08 : 0), C.z);
+  if (!C.seen && d < 16) { C.seen = true; K.sfx.meow(); K.showMsg(`THERE'S ${g.offer.what}. CROUCH AND CREEP UP`, 2.2); g.targets = [{ x: C.x, z: C.z, label: 'CAT' }]; }
+  if (C.seen) { g.targets[0].x = C.x; g.targets[0].z = C.z; }
+  C.meowT -= dt; if (C.seen && C.meowT < 0 && d < 30) { C.meowT = mr(3, 6); K.sfx.meow(); }
+  const sneaky = P.crouch > 0.5 || K.input.crouch;
+  if (d < 4.5 && !sneaky && C.runT <= 0 && C.spooked < 3) {
+    C.spooked++; const p = randomOpenPoint(C.x, C.z, 7, 12) || { x: C.x + 7, z: C.z }; C.tx = p.x; C.tz = p.z; C.runT = 1.8; K.sfx.meow();
+    if (C.spooked === 1) K.showMsg('IT BOLTED. CROUCH NEXT TIME', 1.6);
+  }
+  if (d < 1.3 && C.runT <= 0 && !P.car) { g.carry = 'cat'; K.sfx.pickup(); K.showMsg(`GOT ${g.offer.what}. TAKE THEM BACK TO THE BOARD. NO RUNNING`, 2.4); g.targets = [{ x: g.offer.board.x, z: g.offer.board.z, label: 'HOME' }]; }
+}
+// what the minimap should mark for the current job
+function gigMapMarks() {
+  const g = GJ_STATE.gig; if (!g) return [];
+  const col = GIG_KINDS[g.kind].color;
+  return g.targets.filter((T) => !T.done).map((T) => ({ x: T.x, z: T.z, color: col, area: T.area ? g.area.r : 0 }));
+}
+function gigHud(K) {
+  const g = GJ_STATE.gig; if (!g) return '';
+  const P = K.player, open = g.targets.filter((T) => !T.done);
+  const nT = open.reduce((b, T) => (!b || Math.hypot(T.x - P.x, T.z - P.z) < Math.hypot(b.x - P.x, b.z - P.z) ? T : b), null);
+  const dist = nT ? `${Math.round(Math.hypot(nT.x - P.x, nT.z - P.z))} m · ` : '';
+  const t = `${Math.floor(g.t / 60)}:${String(Math.floor(g.t % 60)).padStart(2, '0')}`;
+  let what = '';
+  if (g.kind === 'delivery') what = g.carry ? `TAKE IT TO ${g.offer.to.name}` : `COLLECT FROM ${g.offer.from.name}`;
+  else if (g.kind === 'leaflets') what = `${open.length} DOORS LEFT`;
+  else if (g.kind === 'litter') what = `${open.length} BAGS LEFT`;
+  else if (g.kind === 'pet') what = g.carry === 'cat' ? `${g.offer.what} BACK TO THE BOARD` : g.cat.seen ? `CATCH ${g.offer.what} (CROUCH)` : `FIND ${g.offer.what} IN THE PINK AREA`;
+  else what = GJ_STATE.ride && GJ_STATE.ride.mode === 'step' ? `RIDING · ${Math.ceil(g.offer.need - g.rode)} s TO GO` : 'FIND A BIN LORRY, HOP ON THE BACK';
+  return `<b style="color:${GIG_KINDS[g.kind].color}">${GIG_KINDS[g.kind].label}</b> ${what}<br>${dist}${t} left · pays $${g.pay}`;
+}
+
+// =====================================================================
+// Bin lorries
+// =====================================================================
+const lorriesOf = (K) => K.G.cars.filter((c) => c.kind === 'binlorry' && !c.wrecked);
+function nearestLorry(K, x, z) { let b = null, bd = 1e9; for (const L of lorriesOf(K)) { const d = Math.hypot(L.x - x, L.z - z); if (d < bd) { bd = d; b = L; } } return b; }
+const rearOf = (L, extra = 0.7) => ({ x: L.x - L.fx * (L.hl + extra), z: L.z - L.fz * (L.hl + extra) });
+// traffic logic: pull up beside wheelie bins on the pavement and empty them
+function lorryLogic(L, dt, target, K) {
+  if (L.stopT > 0) {
+    L.stopT -= dt;
+    if (L.stopT <= 0 && L.binAt) {
+      const B = L.binAt; L.binAt = null; B.emptied = K.G.day; GJ_STATE.binsEmptied++;
+      if (Math.hypot(B.x - K.player.x, B.z - K.player.z) < 45) { K.sfx.bin(); comicWord('CLANK', B.x, 1.8, B.z); }
+      for (let i = 0; i < 3; i++) emitPuff(B.x + mr(-0.4, 0.4), 1.6, B.z + mr(-0.4, 0.4), { life: 1, vy: 1, size0: 0.3, size1: 1, alpha: 0.3, color: 0x8a8a70 });
+    }
+    return 0;
+  }
+  L.scanT = (L.scanT || 0) - dt;
+  if (L.scanT > 0) return target;
+  L.scanT = 0.35;
+  for (const B of streetPropObjs) {
+    if (B.kind !== 'wheelie' || B.state !== 'up' || B.emptied === K.G.day) continue;
+    const ax = B.x - L.x, az = B.z - L.z, ahead = ax * L.fx + az * L.fz, side = Math.abs(ax * L.fz - az * L.fx);
+    if (ahead > -1 && ahead < 2.5 && side < 8) { L.stopT = mr(3, 4.5); L.binAt = B; return 0; }
+  }
+  return target;
+}
+function lorryRearNear(K) {
+  const P = K.player;
+  if (P.car || P.hide || P.bike || P.mode !== 'move' || GJ_STATE.ride || K.G.super) return null;
+  for (const L of lorriesOf(K)) { const r = rearOf(L, 0.4); if (Math.abs(L.speed) < 4.5 && Math.hypot(r.x - P.x, r.z - P.z) < 2.2 && P.y < 1.5) return L; }
+  return null;
+}
+function hopOnLorry(L, K) {
+  GJ_STATE.ride = { car: L, mode: 'step', t: 0, stallT: 0, crouchWas: true };
+  K.sfx.thunk(); K.showMsg(`ON THE BACK STEP. ${K.isTouch() ? 'CROUCH' : 'C'} TO DROP INTO THE HOPPER · ${K.isTouch() ? 'USE' : 'E'} TO HOP OFF`, 3);
+}
+function hopOffLorry(K, msg) {
+  const R = GJ_STATE.ride; if (!R) return;
+  GJ_STATE.ride = null;
+  const L = R.car, P = K.player;
+  if (R.mode === 'hopper' && P.hide === R.spot) K.leaveHide();
+  const side = { x: L.fz, z: -L.fx }, r = rearOf(L, 1.2);
+  let p = null;
+  for (const [a, b] of [[0, 0], [1.4, 0], [-1.4, 0], [0, 1], [2.2, 0.6], [-2.2, 0.6]]) { const x = r.x + side.x * a - L.fx * b, z = r.z + side.z * a - L.fz * b; if (!pointBlocked(x, z, 0.35)) { p = { x, z }; break; } }
+  if (p) { P.x = p.x; P.z = p.z; }
+  P.y = 0; P.vx = P.vz = 0; P.vy = 0;
+  K.sfx.thunk(); if (msg) K.showMsg(msg, 2);
+}
+// keeps the rider stuck to the lorry. Returns true while riding (the player doesn't move themselves)
+function gigRidePlayer(dt, K) {
+  const R = GJ_STATE.ride; if (!R) return false;
+  const L = R.car, P = K.player, inp = K.input;
+  if (!P.alive || L.wrecked || !K.G.cars.includes(L)) { hopOffLorry(K, 'THE LORRY\'S DONE FOR. OFF YOU GET'); return false; }
+  R.t += dt;
+  // a lorry that has stopped for good (end of the road) puts you off
+  if (Math.abs(L.speed) < 0.4 && !(L.stopT > 0)) R.stallT += dt; else R.stallT = 0;
+  if (R.stallT > 3) { hopOffLorry(K, 'END OF THE ROUND'); return false; }
+  const r = rearOf(L, R.mode === 'step' ? 0.35 : -1.2), side = { x: L.fz, z: -L.fx };
+  if (R.mode === 'step') {
+    P.x = r.x + side.x * 0.55; P.z = r.z + side.z * 0.55; P.y = 0.45; P.vx = P.vz = 0; P.vy = 0; P.sprinting = false;
+    const cr = !!inp.crouch;
+    if (cr && !R.crouchWas) { // into the hopper you go
+      R.mode = 'hopper'; R.hopT = 0; GJ_STATE.hopperRides++;
+      R.spot = { kind: 'lorry', x: r.x, z: r.z, lx: 0.9, lz: 0.9, top: 2.4, eye: { x: r.x, y: 2.1, z: r.z }, stand: { x: r.x, z: r.z, ux: -L.fx, uz: -L.fz }, lorry: L };
+      K.enterHide(R.spot);
+      K.showMsg(`IN WITH THE RUBBISH. NOBODY WILL LOOK HERE. ${K.isTouch() ? 'USE' : 'E'} TO CLIMB OUT`, 2.6);
+    }
+    R.crouchWas = cr;
+    return true;
+  }
+  // in the hopper: the spot moves with the lorry
+  const S = R.spot;
+  if (P.hide !== S) { GJ_STATE.ride = null; return false; }
+  const rr = rearOf(L, 1.4);
+  S.x = r.x; S.z = r.z; S.eye.x = r.x - L.fx * 0.3; S.eye.z = r.z - L.fz * 0.3; S.stand.x = rr.x; S.stand.z = rr.z; S.stand.ux = -L.fx; S.stand.uz = -L.fz;
+  P.x = r.x; P.z = r.z;
+  R.hopT += dt;
+  if (R.hopT > 28 && !R.warned) { R.warned = true; K.sfx.compactor(); K.showMsg('THE COMPACTOR IS WARMING UP. GET OUT!', 2.2); }
+  if (R.hopT > 34) { hopOffLorry(K, 'SQUEEZED OUT BY THE COMPACTOR. YOU REEK'); K.hurt(6); K.smell(80); }
+  return true;
+}
+function updateGigs(dt, K) {
+  updateGig(dt, K);
+  const R = GJ_STATE.ride;
+  if (R && R.mode === 'hopper' && K.player.hide !== R.spot) { GJ_STATE.ride = null; K.smell(50); }
+  // beams over the current targets (nearest few)
+  let n = 0;
+  const g = GJ_STATE.gig;
+  if (g) {
+    const hex = GIG_KINDS[g.kind].hex, P = K.player;
+    const open = g.targets.filter((T) => !T.done && !T.area).sort((a, b) => Math.hypot(a.x - P.x, a.z - P.z) - Math.hypot(b.x - P.x, b.z - P.z));
+    for (const T of open.slice(0, 6)) beamAt(n++, T.x, 0, T.z, hex);
+  }
+  for (let i = n; i < beams.length; i++) beams[i].visible = false;
+}
+function resetGigs() {
+  GJ_STATE.gig = null; GJ_STATE.ride = null; GJ_STATE.rep = 0; GJ_STATE.done = 0; GJ_STATE.earned = 0; GJ_STATE.failed = 0; GJ_STATE.binsEmptied = 0; GJ_STATE.hopperRides = 0;
+  clearGigMeshes(); for (const m of beams) if (m) m.visible = false;
+  for (const B of gigBoards) { B.offers = []; B.day = 0; }
+}
+function gigsDebug() {
+  const kinds = {}; for (const S of hideSpots) kinds[S.kind] = (kinds[S.kind] || 0) + 1;
+  return { boards: gigBoards.length, clutter: gjClutter, terraceMiss: gjTerraceMiss, terraceSeats: terraceSeats.length, hideKinds: kinds, gig: GJ_STATE.gig ? { kind: GJ_STATE.gig.kind, targets: GJ_STATE.gig.targets.length, carry: GJ_STATE.gig.carry, t: GJ_STATE.gig.t } : null, ride: GJ_STATE.ride ? GJ_STATE.ride.mode : null, rep: GJ_STATE.rep, done: GJ_STATE.done, earned: GJ_STATE.earned, binsEmptied: GJ_STATE.binsEmptied };
+}
+const gigInternals = { startGig, endGig, gjMakeOffers, rearOf, nearestLorry, clamp };
 
 // Safehouses: one hideout per town. Get inside without being seen and you can lie low: your profile
 // cools off fast, you heal, there's a stash to raid once a day and a bed to nap in. Get seen going in
@@ -7858,6 +8444,7 @@ function mhRivalCaughtByYou(r, ctx) {
 
 
 
+
 const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
 
 generateWorld();
@@ -7928,7 +8515,8 @@ function conspicuous() {
   if (player.crouch > 0.5) k += 0.15;
   if (player.hp < 45) k += 0.15; // looking roughed up
   k += stealthConspic(); // smelling of bins
-  return k;
+  k += gigConspic(GJ); // at work: nobody looks twice
+  return Math.max(0, k);
 }
 const knownFace = () => (0.3 + G.level * 0.55) * (1 - 0.6 * player.disg) * (1 + 2.5 * localSus()) * (1 + (G.day - 1) * 0.015);
 function reportSighting(x, z) { G.lkp.x = x; G.lkp.z = z; G.lastSeenT = 0; }
@@ -8322,6 +8910,7 @@ const VKINDS = {
   van: { hl: 2.6, hw: 1.08, offs: [1.5, -1.5], top: 24 },
   truck: { hl: 3.5, hw: 1.2, offs: [2.4, 0, -2.4], top: 20 },
   bus: { hl: 5.6, hw: 1.3, offs: [4.4, 1.5, -1.5, -4.4], top: 18 },
+  binlorry: { hl: 4.0, hw: 1.25, offs: [2.8, 0, -2.8], top: 16 },
 };
 const BUS_COLORS = { 'PORT HALDEN': 0xc8282a, ASHFORD: 0x2a8a4a, 'SALTMARSH DOCKS': 0x2a5aa0 };
 function vehicleGeometry(kind, color) {
@@ -8344,6 +8933,16 @@ function vehicleGeometry(kind, color) {
     b.box(-W, W, 0.6, 3.1, -L, L - 1.8, color, { bottom: true }); b.box(-W - 0.02, W + 0.02, 1.0, 2.6, -L + 0.4, L - 2.2, shadeHexG(color, 1.25));
     b.box(-W + 0.2, W - 0.2, 0.25, 0.6, -L, L, 0x2a2a2a);
     wheels([L - 0.8, -L + 0.9, -L + 1.8], 0.42);
+  } else if (kind === 'binlorry') { // cab up front, a big boxy body, the hopper and back step at the rear
+    b.box(-W, W, 0.45, 2.5, L - 1.8, L, 0xf0f0ea, { bottom: true }); b.box(-W + 0.06, W - 0.06, 1.45, 2.3, L - 0.05, L + 0.02, glass);
+    b.box(-W - 0.01, W + 0.01, 1.45, 2.2, L - 1.4, L - 0.5, glass);
+    b.box(-W, W, 0.6, 3.2, -L + 1.1, L - 1.9, color, { bottom: true }); b.box(-W - 0.02, W + 0.02, 0.9, 1.2, -L + 1.1, L - 1.9, 0xf0f0ea);
+    b.box(-W, W, 0.6, 2.7, -L, -L + 1.1, shadeHexG(color, 0.7)); b.box(-W + 0.2, W - 0.2, 1.3, 2.4, -L - 0.02, -L + 0.2, 0x1a1a1a); // hopper mouth
+    b.box(-W, W, 0.35, 0.45, -L - 0.45, -L, 0x9a9aa0); for (const x of [-W + 0.1, W - 0.1]) b.box(x - 0.04, x + 0.04, 0.45, 2.2, -L - 0.08, -L - 0.02, 0x9a9aa0); // back step + grab rails
+    for (let z = -L + 1.3; z < L - 2; z += 0.6) for (const x of [-W - 0.03, W + 0.01]) b.box(x, x + 0.02, 1.5, 1.7, z, z + 0.3, 0xffd020); // chevrons
+    b.box(-0.35, 0.35, 2.5, 2.7, L - 1.2, L - 0.8, 0xff9a20); // beacon
+    b.box(-W + 0.2, W - 0.2, 0.25, 0.6, -L, L, 0x2a2a2a);
+    wheels([L - 0.9, -L + 1.2, -L + 2.2], 0.45);
   } else if (kind === 'bus') {
     b.box(-W, W, 0.45, 3.1, -L, L, color, { bottom: true });
     b.box(-W - 0.02, W + 0.02, 1.55, 2.55, -L + 0.4, L - 0.5, glass); b.box(-W + 0.06, W - 0.06, 1.3, 2.7, L - 0.02, L + 0.02, glass);
@@ -8358,7 +8957,7 @@ function shadeHexG(hex, k) { const c = new THREE.Color(hex); c.r = Math.min(1, c
 const lightGeoCache = new Map();
 function vehicleLights(kind) {
   if (lightGeoCache.has(kind)) return lightGeoCache.get(kind);
-  const K = VKINDS[kind], L = K.hl, y = kind === 'bus' || kind === 'truck' ? 0.9 : 0.72, b = new GeoBuf();
+  const K = VKINDS[kind], L = K.hl, y = kind === 'bus' || kind === 'truck' || kind === 'binlorry' ? 0.9 : 0.72, b = new GeoBuf();
   for (const x of [-K.hw * 0.65, K.hw * 0.65]) { b.box(x - 0.22, x + 0.22, y, y + 0.2, L, L + 0.04, 0xfff6d0); b.box(x - 0.22, x + 0.22, y, y + 0.2, -L - 0.04, -L, 0xff2020); }
   const g = b.geometry(); lightGeoCache.set(kind, g); return g;
 }
@@ -8394,7 +8993,7 @@ function resolveCircleCar(p, r, car) {
 class Car {
   constructor(lane, along, parked, kind = 'car') {
     this.kind = kind; const K = VKINDS[kind];
-    const color = kind === 'bus' ? BUS_COLORS[(lane && cityAt(lane.axis === 'z' ? lane.fixed : along, lane.axis === 'z' ? along : lane.fixed, 30) || {}).name] || 0xc8282a : kind === 'truck' ? mpick([0xd0d0d0, 0x2a5aa0, 0xb03020, 0xe0b020, 0x2a6a3a]) : mpick(CAR_COLORS);
+    const color = kind === 'bus' ? BUS_COLORS[(lane && cityAt(lane.axis === 'z' ? lane.fixed : along, lane.axis === 'z' ? along : lane.fixed, 30) || {}).name] || 0xc8282a : kind === 'truck' ? mpick([0xd0d0d0, 0x2a5aa0, 0xb03020, 0xe0b020, 0x2a6a3a]) : kind === 'binlorry' ? 0x2a7a3a : mpick(CAR_COLORS);
     this.taxi = kind === 'car' && color === 0xe8c020;
     this.g = new THREE.Group();
     this.geo = vehicleGeometry(kind, color);
@@ -8468,6 +9067,7 @@ class Car {
         if (ahead > 2 && ahead < 11 && side < 1.8) { target = 0; this.honkT -= dt; if (this.honkT < 0 && ahead < 9) { this.honkT = 2.5; if (G.mode === 'playing') sfx.horn(); } }
       }
       if (this.kind === 'bus') target = busStopLogic(this, dt, target);
+      else if (this.kind === 'binlorry') target = lorryLogic(this, dt, target, GJ);
       throttle = this.speed < target ? 1 : 0; brake = this.speed > target + 0.5;
       this.wrap();
     } else if (this.driver === 'hunter') {
@@ -8613,6 +9213,7 @@ function zipStartNear() {
   return null;
 }
 function useAction() {
+  if (GJ_STATE.ride) { hopOffLorry(GJ, 'HOPPED OFF THE LORRY'); return; }
   if (player.hide) { leaveHide(SK); return; }
   if (player.car) { exitCar(); return; }
   if (player.bike) { playerBikeAction(BK); return; }
@@ -8628,6 +9229,10 @@ function useAction() {
   const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
   if (atm && WX.blackout && WX.blackout.city === WX.here) { showMsg('CASHPOINT IS DEAD. POWER CUT.', 2); return; }
   if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
+  const board = !player.car && player.mode === 'move' ? gigBoardNear(player.x, player.y, player.z) : null;
+  if (board) { board.blurbs = boardBlurbs(); tryOpenShop(board, gigMenu(GJ)); return; }
+  const lorry = lorryRearNear(GJ);
+  if (lorry) { hopOnLorry(lorry, GJ); return; }
   const Z = zipStartNear();
   if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
   const ST = stealthUseTarget(SK);
@@ -8950,7 +9555,7 @@ function rayCar(o, d, car, maxT) {
   const s = Math.sin(car.heading), c = Math.cos(car.heading), ox = o.x - car.x, oz = o.z - car.z;
   const lo = { f: ox * s + oz * c, r: ox * c - oz * s, y: o.y }, ld = { f: d.x * s + d.z * c, r: d.x * c - d.z * s, y: d.y };
   let t0 = 0, t1 = maxT;
-  for (const [k, mn, mx] of [['f', -car.hl, car.hl], ['r', -car.hw, car.hw], ['y', 0.1, car.kind === 'bus' || car.kind === 'truck' ? 3.1 : car.kind === 'van' ? 2.2 : 1.7]]) {
+  for (const [k, mn, mx] of [['f', -car.hl, car.hl], ['r', -car.hw, car.hw], ['y', 0.1, car.kind === 'bus' || car.kind === 'truck' || car.kind === 'binlorry' ? 3.1 : car.kind === 'van' ? 2.2 : 1.7]]) {
     if (Math.abs(ld[k]) < 1e-8) { if (lo[k] < mn || lo[k] > mx) return -1; continue; }
     let a = (mn - lo[k]) / ld[k], b = (mx - lo[k]) / ld[k]; if (a > b) [a, b] = [b, a];
     t0 = Math.max(t0, a); t1 = Math.min(t1, b); if (t0 > t1) return -1;
@@ -9046,6 +9651,12 @@ const SK = {
     if (h.dead) { for (const o of G.hunters) if (!o.dead && o.state !== 'chase' && Math.abs(o.x - h.x) < 12 && Math.abs(o.z - h.z) < 12) { o.sus = Math.max(o.sus, 0.6); o.huntT = Math.max(o.huntT, 10); } return; }
     if (h.hasLOS || Math.hypot(h.x - player.x, h.z - player.z) < 14) { h.alert(0.5); addHeat(1.5); } else { h.huntT = Math.max(h.huntT, 10); h.sus = Math.max(h.sus, 0.5); }
   },
+};
+// what the odd jobs and bin lorries need from the game
+const GJ = {
+  G, player, sfx, get input() { return input; }, isTouch: () => isTouch, showMsg: (t, d) => showMsg(t, d), addCash: (n) => { player.cash += n; },
+  leaveShop: () => leaveShop(), enterHide: (S) => enterHide(S, SK), leaveHide: () => leaveHide(SK), hurt: (n) => hurtPlayer(n, player.x, player.z, 2),
+  smell: (t) => { SK_STATE.smellT = Math.max(SK_STATE.smellT, t); },
 };
 const LIFE = {
   say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b, HC),
@@ -9773,6 +10384,8 @@ function drawMinimap() {
   if (!big) for (const C of cams) { if (!inR(C.x, C.z, C.x, C.z, 5)) continue; mm.fillStyle = C.broken ? '#555' : C.alarmT > 0 ? '#ff3030' : '#ff9a9a'; mm.beginPath(); mm.arc(C.x, C.z, 1.6 / sc * 1.3, 0, Math.PI * 2); mm.fill(); }
   mm.fillStyle = '#9affb0'; for (const a of atmSpots) mm.fillRect(a.x - 1.6 / sc, a.z - 1.6 / sc, 3.2 / sc, 3.2 / sc);
   mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
+  mm.fillStyle = '#e8c070'; for (const B of gigBoards) mm.fillRect(B.x - 1.6 / sc, B.z - 1.6 / sc, 3.2 / sc, 3.2 / sc); // notice boards
+  for (const M of gigMapMarks()) if (M.area) { mm.fillStyle = 'rgba(255,154,208,.18)'; mm.strokeStyle = M.color; mm.lineWidth = 1.5 / sc; mm.beginPath(); mm.arc(M.x, M.z, M.area, 0, Math.PI * 2); mm.fill(); mm.stroke(); }
   const dot = Math.max(1.8, 2.2 / sc);
   mm.fillStyle = '#3cff8a'; for (const a of G.allies) if (!a.dead) { mm.beginPath(); mm.arc(a.x, a.z, dot * 1.2, 0, Math.PI * 2); mm.fill(); }
   for (const h of G.hunters) { if (h.dead) continue; mm.fillStyle = h.type === 'cop' ? '#5a8cff' : h.tracker ? '#ff9a2a' : h.state === 'chase' ? '#ff3b3b' : '#c9b8b8'; mm.beginPath(); mm.arc(h.x, h.z, h.state === 'chase' ? dot * 1.2 : dot, 0, Math.PI * 2); mm.fill(); }
@@ -9797,6 +10410,7 @@ function drawMinimap() {
       mm.fillStyle = '#ffd23a'; mm.beginPath(); mm.moveTo(7, 0); mm.lineTo(-5, -6); mm.lineTo(-5, 6); mm.closePath(); mm.fill(); mm.restore();
     }
   }
+  for (const M of gigMapMarks()) if (!M.area) drawMapTarget(M, tp, range, yaw, W, big, sc);
   { const T = mhTarget(); if (T) drawMapTarget(T, tp, range, yaw, W, big, sc); const R = mhRivalTarget(); if (R) drawMapTarget(R, tp, range, yaw, W, big, sc); }
   if (G.super) { for (const M of heroMapMarks()) drawMapTarget(M, tp, range, yaw, W, big, sc); for (const M of villainMapMarks()) drawVillainMark(M, tp, range, yaw, W, big, sc); }
   mm.save(); mm.translate(W / 2, W / 2); if (big) mm.rotate(-(player.car ? player.car.heading + Math.PI + player.camOff : player.yaw));
@@ -9883,7 +10497,8 @@ function updateHUD(dt) {
   if (VF) hud.job.innerHTML = `<b style="color:${VF.def.css}">${VF.def.name}</b> ${VF.def.title}<br><span class="vbar"><i style="width:${Math.max(0, VF.hp / VF.def.hp * 100).toFixed(0)}%;background:${VF.def.css}"></i></span>`;
   else if (G.super && HERO.call) { const dd = Math.hypot(HERO.call.x - player.x, HERO.call.z - player.z); hud.job.innerHTML = `<b>CALL</b> ${HERO.call.K.text(localeName(HERO.call.x, HERO.call.z))}<br>${Math.round(dd)} m · ${fmtTime(HERO.call.t)} left`; }
   else if (CT) { const dd = Math.hypot(CT.h.x - player.x, CT.h.z - player.z); hud.job.innerHTML = `<b>CONTRACT</b> ${CT.name}<br>${Math.round(dd)} m · ${fmtTime(CT.t)} left · pays $${CT.pay}`; }
-  hud.job.classList.toggle('hidden', !CT && !VF && !(G.super && HERO.call));
+  else if (GJ_STATE.gig) hud.job.innerHTML = gigHud(GJ);
+  hud.job.classList.toggle('hidden', !CT && !VF && !(G.super && HERO.call) && !GJ_STATE.gig);
   const al = G.allies.filter((a) => !a.dead);
   hud.allies.innerHTML = al.map((a) => `<span>${a.name} <em style="width:${Math.max(0, a.hp / a.T.hp * 100).toFixed(0)}%"></em></span>`).join('');
   hud.carbar.classList.toggle('hidden', !player.car);
@@ -9892,7 +10507,9 @@ function updateHUD(dt) {
   let prompt = '';
   const PST = stealthUseTarget(SK), pmark = PST?.kind === 'mark' ? PST.obj : null, pjunk = PST?.kind === 'junk' ? PST.obj : null, pbin = PST?.kind === 'bin' ? PST.obj : null;
   const useK = isTouch ? 'Tap USE' : 'Press E';
-  if (player.hide) prompt = `${useK} to climb out of the bin` + (SK_STATE.hideT > 30 ? ' · it\'s getting whiffy in here' : '');
+  const pboard = !player.car && player.mode === 'move' ? gigBoardNear(player.x, player.y, player.z) : null, plorry = lorryRearNear(GJ);
+  if (GJ_STATE.ride) prompt = GJ_STATE.ride.mode === 'step' ? `${useK} to hop off · ${isTouch ? 'CROUCH' : 'C'} to drop into the hopper` : `${useK} to climb out of the lorry`;
+  else if (player.hide) prompt = `${useK} to climb out of the ${hideName(player.hide).toLowerCase()}` + (SK_STATE.hideT > 30 && player.hide.kind === 'dumpster' ? ' · it\'s getting whiffy in here' : '');
   else if (player.car) prompt = Math.abs(player.car.speed) > 6 ? '' : (isTouch ? 'Tap CAR to get out' : 'Press E to get out');
   else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
   else if (player.mode === 'climb') prompt = isTouch ? 'Push forward to climb, JUMP to kick off' : 'W to climb, Space to kick off the wall, C to drop';
@@ -9902,19 +10519,23 @@ function updateHUD(dt) {
   else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'stash') prompt = G.inSafe.stashDay === G.day ? 'Stash is empty. Back tomorrow' : `${isTouch ? 'Tap USE' : 'Press E'} to raid the stash`;
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
   else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
+  else if (pboard) prompt = `${useK} to read the ${pboard.name.toLowerCase()}` + (GJ_STATE.gig ? ' (you\'re already on a job)' : '');
+  else if (plorry) prompt = `${useK} to hop on the back of the bin lorry`;
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
   else if (pmark) prompt = `${useK} to pick their pocket`;
   else if (pjunk && !nearestCar(2.2)) prompt = `${useK} to pick up the ${pjunk.kind}`;
-  else if (pbin && !nearestCar(2.2)) prompt = `${useK} to hide in the bin`;
+  else if (pbin && !nearestCar(2.2)) prompt = `${useK} to hide in the ${hideName(pbin).toLowerCase()}`;
   else if (player.bike) prompt = isTouch ? 'Tap USE to hop off the bike' : 'Press E to hop off · Shift to pedal hard';
   else if (!G.super && !nearestCar(2.6) && bikeNear(player.x, player.z)) prompt = isTouch ? 'Tap USE to ride the bike' : 'Press E to ride the bike';
   else if (!G.super && !nearestCar(2.6) && riderNear(player.x, player.z)) prompt = isTouch ? 'Tap USE to nick their bike' : 'Press E to nick their bike';
   else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
   hud.crack.classList.toggle('show', !!player.hide);
+  hud.crack.classList.toggle('slats', !!player.hide && ['wardrobe', 'cupboard', 'locker'].includes(player.hide.kind));
+  hud.crack.classList.toggle('crate', !!player.hide && player.hide.kind === 'crate');
   { const n = SK_STATE.junk.length, b = SK_STATE.junk.filter((k) => k === 'bottle').length; hud.junk.textContent = n ? `${b ? b + ' BOTTLE' + (b > 1 ? 'S' : '') : ''}${b && n - b ? ' · ' : ''}${n - b ? (n - b) + ' CAN' + (n - b > 1 ? 'S' : '') : ''}${isTouch ? '' : ' (T)'}` : ''; }
   if (hud.btnThrow) hud.btnThrow.classList.toggle('hidden', !SK_STATE.junk.length || !!player.car || !!player.hide);
-  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || player.hide || pmark || pjunk || pbin || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
+  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || player.hide || GJ_STATE.ride || pboard || plorry || pmark || pjunk || pbin || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
 }
 
 // =====================================================================
@@ -9972,7 +10593,7 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   const nh = new Hunter(p.x, p.z, type, gunner, state); G.hunters.push(nh);
   if (state !== 'chase') assignJob(nh, LIFE);
 }
-const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min((26 + G.day * 1.2 + G.level * 2) * MH.bountyMul, 58) * localeFactor(tp.x, tp.z) * WX.crowd); }; // everyday crowds to blend into
+const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min((32 + G.day * 1.2 + G.level * 2) * MH.bountyMul, 66) * localeFactor(tp.x, tp.z) * WX.crowd); }; // everyday crowds to blend into
 const maxChasers = () => Math.round((5 + G.level * 2 + G.day * 0.35) * (0.5 + MH.bountyMul * 0.5));
 
 function clearWorld() {
@@ -9999,6 +10620,7 @@ function spawnTraffic(count) {
       const vr = Math.random(), buses = G.cars.filter((c) => c.kind === 'bus').length;
       const kind = (vr < 0.07 || (buses < 3 && i >= count - 6)) ? 'bus' : vr < 0.15 ? 'truck' : vr < 0.28 ? 'van' : vr < 0.42 ? 'hatch' : 'car'; // always a few buses about
       if (kind === 'bus' && !cityAt(x, z, 10)) continue;
+      if (i < 5) { if (!cityAt(x, z, 0)) continue; G.cars.push(new Car(lane, along, null, 'binlorry')); break; } // the bin rounds
       G.cars.push(new Car(lane, along, null, kind)); break;
     }
   }
@@ -10014,9 +10636,9 @@ function resetGame() {
   G.lkp = { x: 0, z: 0 };
   for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
   resetManhunt(CFG.days);
-  player.hide = null; resetStealth(SK);
+  player.hide = null; resetStealth(SK); resetGigs();
   Object.assign(G, { airGapT: 0, shook: false, safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
-  spawnTraffic(70);
+  spawnTraffic(84);
   navRecenter(0, 0, true); computeFlow(0, 0);
   for (let i = 0; i < targetHunters(); i++) spawnHunter(40, 170);
   if (!G.pickups.length) { for (let i = 0; i < 10; i++) G.pickups.push(new Pickup('health')); for (let i = 0; i < 10; i++) G.pickups.push(new Pickup('ammo')); }
@@ -10125,6 +10747,7 @@ function updatePlayer(dt) {
     return;
   }
   if (!player.alive) return;
+  if (gigRidePlayer(dt, GJ)) { input.jumpEdge = false; return; }
   if (player.hide) { player.vx = player.vz = 0; player.sprinting = false; player.stam = Math.min(100, player.stam + 18 * dt); input.jumpEdge = false; return; }
   const moving = input.fwd !== 0 || input.side !== 0;
   const sprint = input.sprint && moving && !player.exhausted && input.fwd >= 0;
@@ -10224,7 +10847,7 @@ function updateCamera(dt, t) {
   let eye = eyeHeight(player);
   if (!player.alive) { G.deathT = (G.deathT || 0) + dt; eye = Math.max(0.3, 1.65 - G.deathT * 1.5); } else G.deathT = 0;
   camera.position.set(player.x + sx, player.y + eye + bobY + sy, player.z);
-  if (player.hide) { const S = player.hide; camera.position.set(S.x + S.stand.ux * (S.lx - 0.25), S.top - 0.12 + sy, S.z + S.stand.uz * (S.lz - 0.25)); }
+  if (player.hide) { const S = player.hide; if (S.eye) camera.position.set(S.eye.x, S.eye.y + sy, S.eye.z); else camera.position.set(S.x + S.stand.ux * (S.lx - 0.25), S.top - 0.12 + sy, S.z + S.stand.uz * (S.lz - 0.25)); }
   // adrenaline: the view widens with speed, tilts on the zipline and dips through vaults and mantles
   const hs = Math.hypot(player.vx, player.vz);
   const wantFov = 72 + clamp((hs - 5.8) * 1.4, 0, 8) + (player.slideT > 0 ? 6 : 0) + (player.mode === 'zip' ? clamp(player.zipV * 0.6, 0, 14) : 0) + (player.mode === 'vault' ? 5 : 0) + G.fovKick;
@@ -10532,7 +11155,7 @@ function simulate(dt, t) {
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
-    updateBikes(dt, BK); updateStreetProps(dt, BK); updateStealth(dt, SK);
+    updateBikes(dt, BK); updateStreetProps(dt, BK); updateStealth(dt, SK); updateGigs(dt, GJ);
     for (const a of G.helis) if (!a.dead) a.update(dt);
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
@@ -10563,12 +11186,12 @@ buildStealth();
   const MALL_CATS = { 'SPECS APPEAL': ['eyes'], 'BEARD BARN': ['face'], 'BIG HAT BARN': ['hat'], 'WIGS 4 U': ['wig'], 'SUIT YOURSELF': ['body', 'hat'] };
   for (const m of mallShops) if (MALL_CATS[m.name]) shopSpots.push({ x: m.x, z: m.z, y: m.y, r: 1.8, kind: 'costume', name: m.name, city: 'PORT HALDEN', cats: MALL_CATS[m.name], face: 'mall' });
 }
-spawnTraffic(70);
+spawnTraffic(84);
 $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>

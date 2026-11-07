@@ -34,7 +34,7 @@ test('climb into a bin unseen and the chase loses you; climb out again with E', 
     H.fresh(H);
     // the first dumpster with an open side
     let spot = null;
-    for (let x = -400; x < 900 && !spot; x += 3) { const T = H.hideSpotNear(x, 0.15, 0, 999); if (T) spot = T; }
+    for (let x = -400; x < 900 && !spot; x += 3) { const T = H.hideSpotNear(x, 0.15, 0, 999); if (T && T.kind === 'dumpster') spot = T; }
     H.player.x = spot.stand.x; H.player.z = spot.stand.z; H.player.y = 0.15;
     H.useAction();
     const inBin = !!H.player.hide && H.player.hide === spot;
@@ -60,7 +60,7 @@ test('anyone who watched you climb in comes over and hauls you out', async () =>
   const s = await g.run((H) => {
     H.fresh(H);
     let spot = null;
-    for (let x = 900; x > -400 && !spot; x -= 3) { const T = H.hideSpotNear(x, 0.15, 0, 999); if (T) spot = T; }
+    for (let x = 900; x > -400 && !spot; x -= 3) { const T = H.hideSpotNear(x, 0.15, 0, 999); if (T && T.kind === 'dumpster') spot = T; }
     H.player.x = spot.stand.x; H.player.z = spot.stand.z; H.player.y = 0.15;
     // somewhere a few metres off with a clear view of the bin
     let hp = null;
