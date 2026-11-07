@@ -9,7 +9,7 @@ after(async () => { await g?.close(); });
 beforeEach(async () => { await g.run((H) => H.startGame(false)); });
 
 test('days roll over as time passes', async () => {
-  const s = await g.run((H) => { H.G.elapsed = 89; H.step(2); return H.G.day; });
+  const s = await g.run((H) => { H.G.elapsed = H.CFG.dayLength - 1; H.step(2); return H.G.day; });
   assert.equal(s, 2);
 });
 
@@ -60,9 +60,104 @@ test('the run ends when you are caught', async () => {
 });
 
 test('surviving every day wins', async () => {
-  const s = await g.run((H) => { H.G.elapsed = 90 * 30 - 0.5; H.G.day = 30; H.step(1); return { mode: H.G.mode, title: document.getElementById('over-title').textContent }; });
+  const s = await g.run((H) => { H.G.elapsed = H.CFG.dayLength * H.CFG.days - 0.5; H.G.day = H.CFG.days; H.step(1); return { mode: H.G.mode, title: document.getElementById('over-title').textContent }; });
   assert.equal(s.mode, 'over');
   assert.equal(s.title, 'YOU SURVIVED');
+});
+
+test('you start with empty hands, and pressing the slot you are on puts it away', async () => {
+  const s = await g.run((H) => {
+    const start = H.player.weapon;
+    H.selectWeapon('pistol'); const drawn = H.player.weapon;
+    H.player.switchT = 0; H.selectWeapon('pistol'); const away = H.player.weapon;
+    const slots = document.querySelectorAll('#hud-slots .slot').length;
+    return { start, drawn, away, slots };
+  });
+  assert.equal(s.start, 'hands');
+  assert.equal(s.drawn, 'pistol');
+  assert.equal(s.away, 'hands');
+  assert.equal(s.slots, 4);
+});
+
+test('what you hold changes how much you stand out: hands < crowbar < gun', async () => {
+  const s = await g.run((H) => {
+    H.player.owned.add('crowbar'); H.player.owned.add('shotgun');
+    const read = (w) => { if (H.player.weapon !== w) H.selectWeapon(w); H.player.drawnT = 99; H.player.sprinting = false; H.step(0.1); return H.G.conspic; };
+    return { hands: read('hands'), crowbar: read('crowbar'), pistol: read('pistol'), shotgun: read('shotgun') };
+  });
+  assert.ok(s.hands < s.crowbar, JSON.stringify(s));
+  assert.ok(s.crowbar < s.pistol, JSON.stringify(s));
+  assert.ok(s.pistol <= s.shotgun, JSON.stringify(s));
+});
+
+test('every day has a goal, and the supply drop pays out when you grab it', async () => {
+  const s = await g.run((H) => {
+    const O = H.MH.objective, kind = O.kind, cash0 = H.player.cash, lives0 = H.MH.lifelines;
+    H.player.x = O.x; H.player.z = O.z; H.player.y = H.groundY(O.x, O.z);
+    H.step(0.2);
+    return { kind, done: O.done, cash: H.player.cash - cash0, lives: H.MH.lifelines - lives0, goal: document.getElementById('hud-goal').textContent };
+  });
+  assert.equal(s.kind, 'drop', 'day 1 is always a supply drop');
+  assert.ok(s.done, 'grabbing it completes the goal');
+  assert.ok(s.cash > 0 || s.lives > 0, 'it pays out');
+  assert.match(s.goal, /TODAY/);
+});
+
+test('a second chance saves you once, then getting caught ends it', async () => {
+  const s = await g.run((H) => {
+    const lives = H.MH.lifelines;
+    H.hurtPlayer(500, H.player.x + 1, H.player.z);
+    const saved = { alive: H.player.alive, hp: H.player.hp, lives: H.MH.lifelines };
+    H.MH.invulnT = 0;
+    H.hurtPlayer(500, H.player.x + 1, H.player.z);
+    const second = H.player.alive;
+    H.step(2.5);
+    return { lives, saved, second, mode: H.G.mode };
+  });
+  assert.equal(s.lives, 1, 'you start with one second chance');
+  assert.ok(s.saved.alive && s.saved.hp > 0 && s.saved.lives === 0, JSON.stringify(s.saved));
+  assert.equal(s.second, false);
+  assert.equal(s.mode, 'over');
+});
+
+test('other runners get caught over the days and it makes the news', async () => {
+  const s = await g.run((H) => {
+    const total = H.MH.runners.length + 1;
+    H.G.elapsed = H.CFG.dayLength * 10; H.step(0.2);
+    const left = 1 + H.MH.runners.filter((r) => !r.caught).length;
+    const last = H.MH.runners.reduce((a, r) => (r.at > a.at ? r : a));
+    return { total, left, lastAt: last.at, days: H.CFG.days };
+  });
+  assert.equal(s.total, 12);
+  assert.ok(s.left < s.total && s.left > 1, `by day 11 some runners are out (${s.left} left)`);
+  assert.ok(s.lastAt > s.days - 1, 'one rival lasts until the final day');
+});
+
+test('days 3+ schedule a sweep with a warning', async () => {
+  const s = await g.run((H) => {
+    H.G.elapsed = H.CFG.dayLength * 3 - 0.2; H.step(0.4);
+    return { mode: H.G.mode, el: H.G.elapsed, day: H.G.day, sweeps: H.MH.sweeps.length, trackers: H.G.hunters.filter((h) => h.tracker).length, recap: !document.getElementById('hud-recap').classList.contains('hidden') };
+  });
+  assert.equal(s.day, 4, JSON.stringify(s));
+  assert.ok(s.sweeps >= 1);
+  assert.ok(s.trackers >= 1, 'trackers join each morning');
+  assert.ok(s.recap, 'the end-of-day recap card shows');
+});
+
+test('the final day opens an extraction you can hold to escape clean', async () => {
+  const s = await g.run((H) => {
+    H.G.elapsed = H.CFG.dayLength * (H.CFG.days - 1) - 0.1; H.step(0.3);
+    const X = H.MH.extract; if (!X) return { none: true };
+    // jump to the evening
+    while (H.G.hour < 18.2 && H.G.mode === 'playing') { H.G.elapsed += 1; H.step(1 / 30); }
+    H.G.hunters.forEach((h) => h.remove()); H.G.hunters.length = 0;
+    for (let i = 0; i < 20 && H.G.mode === 'playing'; i++) { H.player.x = X.x; H.player.z = X.z; H.player.hp = 100; H.MH.invulnT = 99; H.step(1); }
+    return { open: X.open, mode: H.G.mode, title: document.getElementById('over-title').textContent };
+  });
+  assert.ok(!s.none, 'extraction exists on the final day');
+  assert.ok(s.open);
+  assert.equal(s.mode, 'over');
+  assert.equal(s.title, 'CLEAN ESCAPE');
 });
 
 test('no script errors across the whole session', () => { assert.deepEqual(g.errors, []); });

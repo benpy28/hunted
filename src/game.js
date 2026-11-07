@@ -21,9 +21,10 @@ import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
 import { updateNews, newsTex } from './news.js';
 import { PFX, renderFrame, initPostFX } from './postfx.js';
+import { MH, resetManhunt, manhuntNewDay, updateManhunt, trySecondChance, mhTarget, manhuntNews, manhuntSweepCity, runnersLeft } from './manhunt.js';
 import { WX, WX_NAMES, FESTIVALS, updateWeather, applyWeatherLook, resetWeather, forceWeather } from './weather.js';
 
-const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
+const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
 
 generateWorld();
 initPostFX();
@@ -41,11 +42,12 @@ const G = {
 };
 // weapons: the pistol you start with, plus whatever the gun shops will sell you
 const WEAPONS = {
-  pistol: { name: 'PISTOL', mag: 12, cd: 0.17, spread: 0.008, pellets: 1, reload: 1.3, maxRes: 180, heat: 2.5, alert: 45 },
-  crowbar: { name: 'CROWBAR', melee: true },
-  shotgun: { name: 'SHOTGUN', mag: 6, cd: 0.85, spread: 0.055, pellets: 8, reload: 2.1, maxRes: 60, heat: 3.5, alert: 55, range: 50 },
-  laser: { name: 'LASER EYES', laser: true, cd: 0.06, auto: true },
-  smg: { name: 'SMG', mag: 30, cd: 0.075, spread: 0.02, pellets: 1, reload: 1.6, maxRes: 300, heat: 1.1, alert: 55, auto: true },
+  hands: { name: 'EMPTY HANDS', hands: true, melee: true, sus: 0 },
+  pistol: { name: 'PISTOL', sus: 0.75, mag: 12, cd: 0.17, spread: 0.008, pellets: 1, reload: 1.3, maxRes: 180, heat: 2.5, alert: 45 },
+  crowbar: { name: 'CROWBAR', melee: true, sus: 0.22 },
+  shotgun: { name: 'SHOTGUN', sus: 1, mag: 6, cd: 0.85, spread: 0.055, pellets: 8, reload: 2.1, maxRes: 60, heat: 3.5, alert: 55, range: 50 },
+  laser: { name: 'LASER EYES', sus: 0, laser: true, cd: 0.06, auto: true },
+  smg: { name: 'SMG', sus: 0.95, mag: 30, cd: 0.075, spread: 0.02, pellets: 1, reload: 1.6, maxRes: 300, heat: 1.1, alert: 55, auto: true },
 };
 const SLOTS = ['pistol', 'crowbar', 'shotgun', 'smg'];
 const START_CASH = 45;
@@ -53,7 +55,7 @@ const freshAmmo = () => ({ pistol: { mag: 12, res: 48 }, shotgun: { mag: 0, res:
 const player = {
   x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: 0, pitch: 0, hp: 100, stam: 100, exhausted: false,
   lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, ammo: freshAmmo(), reloadT: 0, fireCd: 0,
-  cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0,
+  cash: START_CASH, weapon: 'hands', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0,
   outfit: {}, disg: 0, drawnT: 99,
   bob: 0, dragT: 0, carHitCd: 0, recoil: 0, shoveAnim: 0, camOff: 0, sprinting: false,
 };
@@ -77,12 +79,16 @@ const localKey = (x, z) => { const c = cityAt(x, z, 20); return c ? c.name : 'CO
 function localSus() { const tp = targetPos(); return G.localSus[localKey(tp.x, tp.z)] || 0; }
 function bumpLocal(n) { const tp = targetPos(), k = localKey(tp.x, tp.z); G.localSus[k] = clamp((G.localSus[k] || 0) + n, 0, 1); }
 // how much you stand out right now (0 = just another face in the crowd)
+// how alarming the thing in your hands looks (a crowbar could be for work; a shotgun is not)
+function heldSus() { return player.car || G.super ? 0 : WEAPONS[player.weapon].sus || 0; }
 function conspicuous() {
   if (player.car) return Math.abs(player.car.speed) > 22 ? 0.8 : 0.25;
   let k = 0.1;
   if (player.sprinting) k += 0.8;
   else if (Math.hypot(player.vx, player.vz) < 0.5) k -= 0.04;
-  if (player.drawnT < 4) k += 0.7;
+  const held = heldSus();
+  k += held * (player.drawnT < 4 ? 1.1 : 0.75); // whatever's in your hands, and more so if you just used it
+  if (player.drawnT < 4 && held > 0) k += 0.15;
   if (player.mode !== 'move' || player.y > 1.6) k += 0.6; // climbing about, up on the rooftops
   if (player.crouch > 0.5) k += 0.15;
   if (player.hp < 45) k += 0.15; // looking roughed up
@@ -108,6 +114,7 @@ function hourAt(elapsed) {
 
 function hurtPlayer(dmg, fromX, fromZ, knock = 0) {
   if (!player.alive || G.mode !== 'playing') return;
+  if (MH.invulnT > 0) return;
   if (G.super) { player.hp = Math.max(1, player.hp - dmg * 0.05); G.shake = Math.min(0.3, G.shake + dmg / 120); return; } // more or less unkillable
   player.hp -= dmg; player.lastHurt = 0;
   G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + dmg / 40); G.shake = Math.min(0.5, G.shake + dmg / 60);
@@ -216,6 +223,7 @@ class Hunter {
         if (see && d < sight && looking) {
           gain = G.conspic * knownFace() * lerp(1.8, 0.35, clamp(d / sight, 0, 1)) * 0.9 * (WX.crowd > 1 ? 0.65 : 1);
           if (d < 14 && !player.car) bumpLocal(tdt * 0.0025 * (WX.crowd > 1 ? 0.5 : 1));
+          reactToItem(this, d, tdt);
         }
         if (Math.abs(dy) < 3 && d < 14 && player.sprinting) gain += 0.5 * knownFace(); // pounding footsteps
         if (gain > 0) this.sus += gain * tdt; else this.sus = Math.max(0, this.sus - tdt * 0.06);
@@ -407,6 +415,18 @@ function shout(h) {
     if (o === h || o.state === 'chase' || Math.abs(o.x - h.x) > 20 || Math.abs(o.z - h.z) > 20 || Math.random() > 0.5) continue;
     if (G.level >= 3) o.alert(mr(0.6, 2.2)); else { o.sus = Math.max(o.sus, 0.7); o.huntT = Math.max(o.huntT, 12); }
   }
+}
+// someone sees what's in your hands: a crowbar gets a funny look, a gun gets screams and a phone call
+function reactToItem(h, d, tdt) {
+  const s = heldSus(); if (s <= 0 || d > 22 || h.contract || h.guard) return;
+  h.itemT = (h.itemT || 0) + tdt * s;
+  if (h.itemT < 0.6 || h.reacted) return;
+  h.reacted = true;
+  if (s >= 0.6) {
+    const brave = h.type === 'brute' || h.type === 'cop' || h.role === 'rusher';
+    if (!brave || Math.random() < 0.4) { h.panicT = mr(4, 7); h.sus = 0; say(h, mpick(s >= 1 ? ['THEY\'VE GOT A SHOTGUN!', 'RUN!', 'EVERYBODY DOWN!'] : ['GUN! GUN!', 'THEY\'RE ARMED!', 'CALL SOMEONE!'])); sfx.scream(); bumpLocal(0.06 * s); addHeat(5 * s); reportSighting(player.x, player.z); for (const o of G.hunters) if (o !== h && !o.dead && o.state !== 'chase' && Math.abs(o.x - h.x) < 14 && Math.abs(o.z - h.z) < 14 && Math.random() < 0.5) o.panicT = mr(3, 6); }
+    else { h.sus = Math.max(h.sus, 0.85); say(h, mpick(['OI. PUT THAT DOWN', 'THAT\'S HIM', 'I KNOW THAT FACE'])); }
+  } else { h.sus = Math.max(h.sus, 0.35 + s); if (Math.random() < 0.5) say(h, mpick(['WHAT\'S THE CROWBAR FOR?', 'HMM.', 'DOING SOME WORK?'])); }
 }
 // tell people to go and have a look (aircraft, leaks): they still have to spot you themselves
 function sendLooking(x, z, r, t = 15) {
@@ -1231,15 +1251,24 @@ function updateDrops(dt, t) {
 // weapons in hand
 // ---------------------------------------------------------------------
 function selectWeapon(w) {
-  if (!w || !player.owned.has(w) || player.car || w === player.weapon) return;
+  if (w === player.weapon && w !== 'hands' && !G.super) w = 'hands'; // same slot again: put it away
+  if (!w || (w !== 'hands' && !player.owned.has(w)) || player.car || w === player.weapon) return;
+  if (w === 'hands') for (const h of G.hunters) { h.itemT = 0; h.reacted = false; }
   player.lastWeapon = player.weapon; player.weapon = w; player.reloadT = 0; player.drawnT = 0; player.switchT = 0.28; player.swingKind = null; player.swingT = 9;
-  sfx.swap(); showWeaponModel();
+  sfx.swap(); showWeaponModel(); updateSlots();
 }
+// the four-slot inventory bar
+const slotBar = (() => { const e = document.createElement('div'); e.id = 'hud-slots'; $('hud').appendChild(e); return e; })();
+function updateSlots() {
+  if (!slotBar) return;
+  slotBar.innerHTML = SLOTS.map((w, i) => { const own = player.owned.has(w); return `<div class="slot${own ? '' : ' empty'}${player.weapon === w ? ' on' : ''}" data-w="${w}"><span>${i + 1}</span>${own ? WEAPONS[w].name : '·'}</div>`; }).join('') + `<div class="slot-hint">${player.weapon === 'hands' ? 'HANDS EMPTY' : 'PRESS AGAIN TO PUT IT AWAY'}</div>`;
+}
+slotBar.addEventListener('pointerdown', (e) => { const el = e.target.closest('.slot'); if (!el) return; e.stopPropagation(); e.preventDefault(); selectWeapon(el.dataset.w); });
 function cycleWeapon(dir) {
   const owned = SLOTS.filter((w) => player.owned.has(w)); if (owned.length < 2) return;
   const i = owned.indexOf(player.weapon); selectWeapon(owned[(i + dir + owned.length) % owned.length]);
 }
-function primaryDown() { G.fireHeld = true; if (WEAPONS[player.weapon].melee) crowbarSwing(false); else playerShoot(); }
+function primaryDown() { G.fireHeld = true; if (WEAPONS[player.weapon].hands) { if (!G.super) playerShove(); } else if (WEAPONS[player.weapon].melee) crowbarSwing(false); else playerShoot(); }
 function primaryUp() { G.fireHeld = false; }
 function secondary() { if (G.super) heroSwat(); else if (player.weapon === 'crowbar') crowbarSwing(true); else playerShove(); }
 
@@ -1276,7 +1305,7 @@ const shopCtx = {
     const id = it.id;
     if (it.slot) { player.outfit[it.slot] = id; return putOnDisguise(); }
     if (id === 'crowbar' || id === 'shotgun' || id === 'smg') {
-      player.owned.add(id);
+      player.owned.add(id); updateSlots();
       if (id !== 'crowbar') { const W = WEAPONS[id]; player.ammo[id].mag = W.mag; player.ammo[id].res += W.mag * 2; }
       selectWeapon(id); player.switchT = 0;
     } else if (id === 'ammo_pistol') player.ammo.pistol.res = Math.min(WEAPONS.pistol.maxRes, player.ammo.pistol.res + 24);
@@ -1461,7 +1490,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (G.mode !== 'playing') return;
   if (/^Digit[1-4]$/.test(e.code)) selectWeapon(SLOTS[+e.code.slice(5) - 1]);
-  if (e.code === 'KeyQ') selectWeapon(player.lastWeapon);
+  if (e.code === 'KeyQ') selectWeapon(player.weapon === 'hands' ? player.lastWeapon : 'hands');
   if (e.code === 'Space' && !e.repeat) input.jumpEdge = true;
   keys.add(e.code); recomputeKeys();
   if (e.code === 'KeyE') useAction();
@@ -1579,7 +1608,8 @@ function drawMinimap() {
   const inR = (x0, z0, x1, z1, pad) => !(x1 < tp.x - range - pad || x0 > tp.x + range + pad || z1 < tp.z - range - pad || z0 > tp.z + range + pad);
   mm.fillStyle = '#2f5f82'; for (const w of waterRects) if (inR(w.x0, w.z0, w.x1, w.z1, 40)) mm.fillRect(w.x0, w.z0, w.x1 - w.x0, w.z1 - w.z0);
   mm.fillStyle = '#34323a';
-  for (const c of CITIES) mm.fillRect(c.minX, c.minZ, c.maxX - c.minX, c.maxZ - c.minZ);
+  for (const c of CITIES) { const sw = manhuntSweepCity() === c.name; mm.fillStyle = sw ? (Math.sin(G.elapsed * 5) > 0 ? '#5a2a30' : '#46282c') : '#34323a'; mm.fillRect(c.minX, c.minZ, c.maxX - c.minX, c.maxZ - c.minZ); }
+  mm.fillStyle = '#34323a';
   for (const h of HIGHWAYS) { if (h.axis === 'x') mm.fillRect(h.a0, h.fixed - 7, h.a1 - h.a0, 14); else mm.fillRect(h.fixed - 7, h.a0, 14, h.a1 - h.a0); }
   mm.fillStyle = '#7d7886';
   for (const b of blockRects) if (inR(b.x0, b.z0, b.x1, b.z1, 60)) mm.fillRect(b.x0, b.z0, b.x1 - b.x0, b.z1 - b.z0);
@@ -1608,7 +1638,7 @@ function drawMinimap() {
   mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
   const dot = Math.max(1.8, 2.2 / sc);
   mm.fillStyle = '#3cff8a'; for (const a of G.allies) if (!a.dead) { mm.beginPath(); mm.arc(a.x, a.z, dot * 1.2, 0, Math.PI * 2); mm.fill(); }
-  for (const h of G.hunters) { if (h.dead) continue; mm.fillStyle = h.type === 'cop' ? '#5a8cff' : h.state === 'chase' ? '#ff3b3b' : '#c9b8b8'; mm.beginPath(); mm.arc(h.x, h.z, h.state === 'chase' ? dot * 1.2 : dot, 0, Math.PI * 2); mm.fill(); }
+  for (const h of G.hunters) { if (h.dead) continue; mm.fillStyle = h.type === 'cop' ? '#5a8cff' : h.tracker ? '#ff9a2a' : h.state === 'chase' ? '#ff3b3b' : '#c9b8b8'; mm.beginPath(); mm.arc(h.x, h.z, h.state === 'chase' ? dot * 1.2 : dot, 0, Math.PI * 2); mm.fill(); }
   for (const a of [...G.helis, ...G.drones]) {
     if (a.dead) continue;
     if (a.kind === 'heli') { mm.fillStyle = a.state === 'track' ? 'rgba(255,80,80,.35)' : 'rgba(230,240,255,.3)'; mm.beginPath(); mm.arc(a.bx, a.bz, 9, 0, Math.PI * 2); mm.fill(); }
@@ -1630,9 +1660,25 @@ function drawMinimap() {
       mm.fillStyle = '#ffd23a'; mm.beginPath(); mm.moveTo(7, 0); mm.lineTo(-5, -6); mm.lineTo(-5, 6); mm.closePath(); mm.fill(); mm.restore();
     }
   }
+  { const T = mhTarget(); if (T) drawMapTarget(T, tp, range, yaw, W, big, sc); }
   mm.save(); mm.translate(W / 2, W / 2); if (big) mm.rotate(-(player.car ? player.car.heading + Math.PI + player.camOff : player.yaw));
   mm.fillStyle = '#5ab4ff'; mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
   mm.beginPath(); mm.moveTo(0, -8); mm.lineTo(6, 6); mm.lineTo(0, 3); mm.lineTo(-6, 6); mm.closePath(); mm.fill(); mm.stroke();
+  mm.restore();
+}
+
+// today's goal on the minimap: a diamond on the spot, or an arrow on the rim if it's off the edge
+function drawMapTarget(T, tp, range, yaw, W, big, sc) {
+  const dx = T.x - tp.x, dz = T.z - tp.z, dd = Math.hypot(dx, dz);
+  mm.save(); mm.fillStyle = T.color; mm.strokeStyle = '#08131a'; mm.lineWidth = 1.5;
+  if (dd < range * 0.92) {
+    const c = Math.cos(-yaw), s = Math.sin(-yaw), px = W / 2 + (dx * c - dz * s) * sc, pz = W / 2 + (dx * s + dz * c) * sc, k = big ? 8 : 6;
+    mm.translate(px, pz); mm.beginPath(); mm.moveTo(0, -k); mm.lineTo(k, 0); mm.lineTo(0, k); mm.lineTo(-k, 0); mm.closePath(); mm.fill(); mm.stroke();
+  } else if (!big) {
+    const a = Math.atan2(dz, dx) + yaw, R0 = W / 2 - 9;
+    mm.translate(W / 2 + Math.cos(a) * R0, W / 2 + Math.sin(a) * R0); mm.rotate(a);
+    mm.beginPath(); mm.moveTo(8, 0); mm.lineTo(-5, -7); mm.lineTo(-5, 7); mm.closePath(); mm.fill(); mm.stroke();
+  }
   mm.restore();
 }
 
@@ -1670,7 +1716,7 @@ function updateHUD(dt) {
   else if (G.unseenT > 10) { hud.alert.textContent = G.conspic < 0.3 && !player.car ? 'BLENDING IN' : 'HIDDEN'; hud.alert.className = 'calm'; }
   else { hud.alert.textContent = 'THEY LOST SIGHT OF YOU'; hud.alert.className = 'warm'; }
   const W = WEAPONS[player.weapon], A = player.ammo[player.weapon];
-  hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.laser ? (player.flying ? '<i>FLYING</i>' : '<i>UNLIMITED</i>') : W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
+  hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.hands ? '<i>HIDDEN AWAY</i>' : W.laser ? (player.flying ? '<i>FLYING</i>' : '<i>UNLIMITED</i>') : W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
   hud.cash.textContent = '$' + player.cash;
   const nOut = Object.keys(player.outfit).length;
   const ls = localSus();
@@ -1753,8 +1799,8 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   const gunner = type !== 'brute' && Math.random() < Math.min(0.08 + (G.day - 1) * 0.022, 0.5);
   G.hunters.push(new Hunter(p.x, p.z, type, gunner, state));
 }
-const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min(26 + G.day * 1.2 + G.level * 2, 50) * localeFactor(tp.x, tp.z) * WX.crowd); }; // everyday crowds to blend into
-const maxChasers = () => Math.round(5 + G.level * 2 + G.day * 0.35);
+const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min((26 + G.day * 1.2 + G.level * 2) * MH.bountyMul, 58) * localeFactor(tp.x, tp.z) * WX.crowd); }; // everyday crowds to blend into
+const maxChasers = () => Math.round((5 + G.level * 2 + G.day * 0.35) * (0.5 + MH.bountyMul * 0.5));
 
 function clearWorld() {
   for (const h of G.hunters) h.remove(); G.hunters.length = 0;
@@ -1786,11 +1832,12 @@ function resetGame() {
   clearWorld();
   resetParkour(player);
   Object.assign(player, { x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: Math.PI / 4, pitch: 0, hp: 100, stam: 100, exhausted: false, lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, ammo: freshAmmo(), reloadT: 0, fireCd: 0, dragT: 0, carHitCd: 0, camOff: 0,
-    cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0, outfit: {}, disg: 0 });
-  showWeaponModel(); updateOutfitView();
+    cash: START_CASH, weapon: 'hands', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0, outfit: {}, disg: 0 });
+  showWeaponModel(); updateOutfitView(); updateSlots();
   Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false, hitstopT: 0, fovKick: 0, fireHeld: false });
   G.lkp = { x: 0, z: 0 };
   for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
+  resetManhunt(CFG.days);
   Object.assign(G, { safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
   spawnTraffic(70);
   navRecenter(0, 0, true); computeFlow(0, 0);
@@ -1803,6 +1850,7 @@ function startGame(sup = G.super) {
   initAudio(); resetGame(); resetWeather(); G.newsLook = {};
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
+  updateSlots();
   player.flying = false; player.slamming = false;
   G.mode = 'playing';
   for (const id of ['menu', 'over', 'pause']) $(id).classList.add('hidden');
@@ -1810,7 +1858,12 @@ function startGame(sup = G.super) {
   if (isTouch) $('touch').classList.remove('hidden');
   lockPointer();
   if (G.super) { showBanner(`THE PARAGON<small>THE CITY'S GREATEST HERO. ASK ANYONE. THEY'RE TOO SCARED TO SAY OTHERWISE.</small>`, 4); showMsg('CLICK LASER · SPACE TWICE FLY · E GRAB · F SWAT · C SLAM', 7); }
-  else { showBanner(`DAY 1<small>EVERYONE IS AFTER THE BOUNTY ON YOUR HEAD</small>`, 3.5); showMsg("NAN'S OLD FLAT IS THE WHITE HOUSE ON YOUR MAP. GET IN UNSEEN TO LIE LOW", 5); }
+  else {
+    manhuntNewDay(mhCtx());
+    showBanner(`DAY 1 OF ${CFG.days}<small>${runnersLeft()} RUNNERS. THREE TOWNS HUNTING. LAST ONE FREE WINS.</small>`, 4.5);
+    showMsg(`TODAY: ${MH.objective.text}`, 5);
+    setTimeout(() => { if (G.mode === 'playing' && G.day === 1) showMsg("NAN'S OLD FLAT (WHITE HOUSE ON THE MAP) IS SAFE", 4); }, 5500);
+  }
 }
 function pauseGame() {
   if (G.mode !== 'playing') return;
@@ -1826,7 +1879,19 @@ function toMenu() {
   if (document.exitPointerLock) document.exitPointerLock();
   setAircraftVolume(0, 0); showBest();
 }
-function killPlayer() { if (!player.alive) return; player.alive = false; if (player.car) exitCar(true); G.overT = 1.8; }
+function killPlayer() {
+  if (!player.alive) return;
+  if (trySecondChance({ super: G.super })) { breakFree(); return; } player.alive = false; if (player.car) exitCar(true); G.overT = 1.8; }
+// a second chance: you shove free of everyone on you and get a couple of seconds' head start
+function breakFree() {
+  player.hp = 45; player.stam = 100; player.exhausted = false; G.hitstopT = 0.6; G.shake = 0.6; G.fovKick = 8;
+  for (const h of G.hunters) {
+    if (h.dead) continue;
+    const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz) || 1;
+    if (d < 9) { h.stun = Math.max(h.stun, 2.6); h.kx += (dx / d) * 14; h.kz += (dz / d) * 14; }
+  }
+  addHeat(15); sfx.whoosh(); sfx.alarm();
+}
 function loadBest() { try { return JSON.parse(localStorage.getItem('hunted.best') || 'null'); } catch { return null; } }
 function endGame(won) {
   G.mode = 'over';
@@ -1834,9 +1899,9 @@ function endGame(won) {
   setAircraftVolume(0, 0);
   $('hud').classList.add('hidden'); $('touch').classList.add('hidden');
   const days = won ? CFG.days : G.day;
-  $('over-title').textContent = won ? 'YOU SURVIVED' : 'CAUGHT';
-  $('over-text').textContent = won ? '30 days. Three towns came for you and nobody collected.' : `Somebody in ${G.locale === 'COUNTRYSIDE' || G.locale.startsWith('ROUTE') ? 'the middle of nowhere' : G.locale} just got very rich.`;
-  $('over-stats').innerHTML = `Reached <b>Day ${days}</b> of ${CFG.days}<br>Survived <b>${fmtTime(G.elapsed)}</b><br><b>${G.kills}</b> hunters taken down<br>Peak profile: <b>${LEVEL_NAMES[G.peak || 0]}</b>`;
+  $('over-title').textContent = won ? (MH.escaped ? 'CLEAN ESCAPE' : 'YOU SURVIVED') : 'CAUGHT';
+  $('over-text').textContent = won ? (MH.escaped ? `Extracted from ${MH.extract.city} on the final night. Last runner standing.` : '30 days. Three towns came for you and nobody collected.') : `Somebody in ${G.locale === 'COUNTRYSIDE' || G.locale.startsWith('ROUTE') ? 'the middle of nowhere' : G.locale} just got very rich.`;
+  $('over-stats').innerHTML = `Reached <b>Day ${days}</b> of ${CFG.days}<br>Survived <b>${fmtTime(G.elapsed)}</b><br><b>${G.kills}</b> hunters taken down<br>Peak profile: <b>${LEVEL_NAMES[G.peak || 0]}</b><br><b>${MH.done}</b> daily goals done · <b>${MH.closeCalls}</b> close calls<br><b>${MH.usedLifelines}</b> second chances used · <b>${won ? 1 : runnersLeft()}</b> of ${MH.runners.length + 1} runners still free`;
   const best = loadBest();
   try { if (!best || G.elapsed > best.time) localStorage.setItem('hunted.best', JSON.stringify({ time: G.elapsed, day: days, kills: G.kills })); } catch { /* storage unavailable */ }
   $('over').classList.remove('hidden');
@@ -1978,7 +2043,7 @@ function updateCamera(dt, t) {
   const mantleDip = player.mode === 'mantle' ? -0.25 * Math.sin(clamp(player.anim.t / player.anim.dur, 0, 1) * Math.PI) : 0;
   const swingRoll = player.swingKind === 'heavy' && player.swingT < 0.7 ? Math.sin(clamp((player.swingT - 0.3) / 0.35, 0, 1) * Math.PI) * 0.05 : 0;
   camera.rotation.set(player.pitch + player.recoil * 0.03 + mantleDip - player.landDip * 0.08, player.yaw, player.alive ? G.camRoll + swingRoll : Math.min(1.2, G.deathT * 1.4));
-  vm.visible = player.alive && player.weapon !== 'laser';
+  vm.visible = player.alive && player.weapon !== 'laser' && player.weapon !== 'hands';
   const b = player.bob;
   vm.position.set(Math.cos(b) * 0.012, Math.abs(Math.sin(b)) * -0.015 - (player.reloadT > 0 ? 0.25 : 0), player.recoil * 0.06);
   armR.rotation.x = 0.05 + player.recoil * 0.25;
@@ -1989,7 +2054,7 @@ function updateCamera(dt, t) {
   G.vmReach = lerp(G.vmReach || 0, reach, Math.min(1, dt * 10));
   armL.rotation.x = 0.1 + G.vmReach * 0.7; armL.position.y = -0.27 + G.vmReach * 0.6; armL.position.x = -0.08 - G.vmReach * 0.12;
   if (player.mode === 'ladder') armL.position.y += Math.sin(player.y * 3) * 0.06;
-  G.holster = lerp(G.holster || 0, player.drawnT > 4 && !player.reloadT ? 1 : 0, Math.min(1, dt * 5));
+  G.holster = lerp(G.holster || 0, player.weapon === 'hands' ? 1.6 : player.drawnT > 4 && !player.reloadT ? 1 : 0, Math.min(1, dt * 5));
   vm.position.y -= G.vmReach * 0.12 + player.switchT * 1.1 + G.holster * 0.3;
   vm.rotation.x = G.holster * 0.9;
   // two-handed guns bring the left hand forward under the barrel
@@ -2080,6 +2145,43 @@ function napInSafehouse() {
   } else showMsg(mpick(NAP_LINES), 3);
 }
 
+// what the manhunt layer is allowed to see and do
+function mhCtx(seen = false) {
+  const tp = targetPos();
+  return {
+    day: G.day, days: CFG.days, dayLength: CFG.dayLength, elapsed: G.elapsed, hour: G.hour, level: G.level, super: G.super,
+    x: tp.x, z: tp.z, inCar: !!player.car, inSafe: !!G.safe, alive: player.alive, hp: player.hp, seen, unseen: G.unseenT, nearest: G.nearestChaser ?? 1e9,
+    say: (m, d = 3) => showMsg(m, d), banner: (h, d = 3.5) => showBanner(h, d), sfx: (n) => sfx[n] && sfx[n](),
+    heal: (n) => { player.hp = Math.min(100, player.hp + n); player.stam = 100; },
+    giveAmmo: () => { const A = player.ammo; A.pistol.res = Math.min(WEAPONS.pistol.maxRes, A.pistol.res + 36); if (player.owned.has('shotgun')) A.shotgun.res = Math.min(WEAPONS.shotgun.maxRes, A.shotgun.res + 12); if (player.owned.has('smg')) A.smg.res = Math.min(WEAPONS.smg.maxRes, A.smg.res + 60); },
+    giveCash: (n) => { player.cash += n; },
+    coolOff: (n) => { G.heat = Math.max(heatFloor(), G.heat - n); },
+    minHeat: (n) => { if (G.heat < n) G.heat = Math.min(G.heat + 0.6, n); },
+    restoreStamina: () => { player.stam = 100; player.exhausted = false; },
+    win: () => endGame(true),
+    spawnTrackers: (n) => {
+      const ox = G.lastSeenT < 900 ? G.lkp.x : tp.x + mr(-120, 120), oz = G.lastSeenT < 900 ? G.lkp.z : tp.z + mr(-120, 120);
+      let made = 0;
+      for (let i = 0; i < n * 3 && made < n; i++) {
+        const p = randomOpenPoint(ox, oz, 40, 80, 4);
+        if (!p || Math.hypot(p.x - tp.x, p.z - tp.z) < 45) continue;
+        const h = new Hunter(p.x, p.z, 'runner', G.day >= 10 && Math.random() < 0.4, 'search');
+        h.tracker = true; h.huntT = 90; h.sus = 0.6; h.spdMul = 1.12; h.wt = randomOpenPoint(ox, oz, 1, 20);
+        G.hunters.push(h); made++;
+      }
+      if (made) showMsg(`${made} TRACKERS ARE STARTING FROM WHERE YOU WERE LAST SEEN`, 4);
+    },
+    ambush: (x, z) => {
+      for (let i = 0; i < 5; i++) { const p = randomOpenPoint(x, z, 7, 16, 6); if (p) G.hunters.push(new Hunter(p.x, p.z, mpick(['runner', 'civ', 'brute']), Math.random() < 0.25, 'chase')); }
+      reportSighting(x, z); addHeat(30); sfx.alarm();
+    },
+    sweepPulse: () => {
+      sendLooking(tp.x, tp.z, 70, 20); reportSighting(tp.x + mr(-30, 30), tp.z + mr(-30, 30));
+      if (G.hunters.filter((h) => h.sweep && !h.dead).length < 10) for (let i = 0, made = 0; i < 8 && made < 2; i++) { const p = randomOpenPoint(tp.x, tp.z, 35, 60, 4); if (p && !los(p.x, p.z, tp.x, tp.z)) { made++; const h = new Hunter(p.x, p.z, 'cop', true, 'search'); h.sweep = true; h.huntT = 40; h.wt = randomOpenPoint(tp.x, tp.z, 4, 25); G.hunters.push(h); } }
+    },
+  };
+}
+
 function updateDirector(dt) {
   G.hour = hourAt(G.elapsed);
   { const tp0 = targetPos(), c0 = cityAt(tp0.x, tp0.z, 20);
@@ -2091,7 +2193,7 @@ function updateDirector(dt) {
     G.day = day;
     if (G.day > CFG.days && !G.super) { endGame(true); return; }
     sfx.day();
-    showBanner(`DAY ${G.day}<small>${G.day === CFG.days ? 'LAST DAY. HOLD ON.' : 'THE BOUNTY WENT UP. MORE OF THEM NOW.'}</small>`, 3.5);
+    showBanner(manhuntNewDay(mhCtx()), 5);
   }
   const tp = targetPos();
   // locale
@@ -2119,6 +2221,7 @@ function updateDirector(dt) {
   let lvl = 0; for (let i = 0; i < LEVELS.length; i++) if (G.heat >= LEVELS[i]) lvl = i;
   if (lvl > G.level) { showMsg(`PROFILE: ${LEVEL_NAMES[lvl]}`, 2.5); sfx.alarm(); }
   G.level = lvl; G.peak = Math.max(G.peak || 0, lvl);
+  if (!G.super) { updateManhunt(dt, mhCtx(seenByHunters)); if (G.mode !== 'playing') return; }
   G.spottedMsgT -= dt;
   // air tracking alerts ground units
   if (G.airTracking) { G.airAlertT -= dt; if (G.airAlertT <= 0) { G.airAlertT = 3; sendLooking(tp.x, tp.z, 60, 15); } }
@@ -2206,6 +2309,8 @@ function newsState() {
   const bits = [];
   if (G.level >= 1 && !G.super) bits.push(`BOUNTY TARGET LAST SEEN NEAR ${seen}`, `PROFILE: ${LEVEL_NAMES[G.level]}`);
   if (G.level >= 3 && !G.super) bits.push('AIR UNITS SEARCHING', 'CALL CHANNEL 9 WITH ANY SIGHTINGS');
+  if (!G.super) bits.push(...manhuntNews(), `${runnersLeft()} OF ${MH.runners.length + 1} RUNNERS STILL FREE`);
+  if (manhuntSweepCity()) bits.push(`POLICE SWEEP UNDER WAY IN ${manhuntSweepCity()}`);
   if (WX.festival) bits.push(`${FESTIVALS[WX.festival.city]} IN ${WX.festival.city} TODAY`);
   if (WX.blackout) bits.push(`POWER CUT IN ${WX.blackout.city}`);
   bits.push(`WEATHER: ${WX_NAMES[WX.kind]}`);
@@ -2257,4 +2362,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

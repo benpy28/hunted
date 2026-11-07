@@ -178,3 +178,43 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 #hud-sus span { flex: 1; height: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
 #hud-sus i { display: block; height: 100%; background: linear-gradient(90deg, #ffcf7a, #ff7a4a); }
 #btn-super { margin-top: 10px; background: linear-gradient(90deg, #d0202a, #ff6a3a); color: #fff; }
+
+/* ---------- the manhunt: today's goal, sweeps, runners, recap card, stamps ---------- */
+#hud-goal { margin-top: 8px; max-width: 250px; font-size: 11px; font-weight: 700; letter-spacing: 1px; line-height: 1.35; color: #bfefff; }
+#hud-goal b { color: #5ae0ff; letter-spacing: 2.5px; margin-right: 4px; }
+#hud-goal.done { color: #8fe39a; } #hud-goal.done b { color: #8fe39a; }
+#hud-goal:empty, #hud-sweep:empty, #hud-runners:empty { display: none; }
+#hud-sweep { margin-top: 5px; font-size: 11px; font-weight: 900; letter-spacing: 2px; color: #ffb35a; }
+#hud-sweep.live { color: #ff5a4a; animation: mhPulse 0.8s infinite alternate; }
+#hud-runners { margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #9aa6ba; }
+#hud-runners b { color: #fff; }
+.mh-life { color: #ff6a7a; letter-spacing: 2px; font-size: 13px; }
+@keyframes mhPulse { from { opacity: 1; } to { opacity: .45; } }
+#hud-recap { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); min-width: 300px; padding: 14px 22px 12px; text-align: center;
+  border-radius: 14px; background: rgba(10, 12, 20, .78); border: 1px solid rgba(90, 224, 255, .35); box-shadow: 0 8px 30px rgba(0,0,0,.6);
+  font-size: 12px; font-weight: 700; letter-spacing: 1.5px; color: #cfd6e4; animation: mhIn .5s ease-out; }
+#hud-recap.hidden { display: none; }
+#hud-recap small { display: block; font-size: 11px; letter-spacing: 4px; color: #5ae0ff; }
+#hud-recap h3 { margin: 4px 0 8px; font-size: 26px; letter-spacing: 5px; color: #fff; }
+#hud-recap .mh-row { margin-top: 4px; } #hud-recap b { color: #fff; } #hud-recap .ok { color: #8fe39a; } #hud-recap .no { color: #ff6a5a; }
+@keyframes mhIn { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+#hud-stamp { position: absolute; left: 72%; top: 44%; transform: translate(-50%, -50%) rotate(-6deg) scale(1.6); opacity: 0; pointer-events: none;
+  padding: 6px 18px; border: 4px solid #ffd23a; border-radius: 8px; color: #ffd23a; font-size: 34px; font-weight: 900; letter-spacing: 6px; text-align: center;
+  text-shadow: 0 2px 12px rgba(0,0,0,.8); background: rgba(10,10,10,.35); }
+#hud-stamp small { display: block; font-size: 12px; letter-spacing: 4px; color: #fff; }
+#hud-stamp.show { animation: mhStamp 2.2s ease-out forwards; }
+@keyframes mhStamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-6deg) scale(1.8); } 12% { opacity: 1; transform: translate(-50%, -50%) rotate(-6deg) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) rotate(-6deg) scale(1); } }
+@media (max-width: 760px) { #hud-goal { max-width: 170px; font-size: 10px; } #hud-recap { min-width: 240px; font-size: 11px; } #hud-stamp { font-size: 24px; } }
+
+/* ---------- inventory: four slots, press the one you're on again to empty your hands ---------- */
+#hud-slots { position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; align-items: flex-end; pointer-events: auto; }
+#hud-slots .slot { position: relative; min-width: 74px; padding: 14px 8px 6px; border-radius: 9px; text-align: center; cursor: pointer;
+  background: rgba(12,14,22,.55); border: 2px solid rgba(255,255,255,.14); font-size: 10px; font-weight: 900; letter-spacing: 1.5px; color: #dfe5f0; }
+#hud-slots .slot span { position: absolute; left: 6px; top: 2px; font-size: 10px; color: #9aa6ba; }
+#hud-slots .slot.on { border-color: #ffd23a; background: rgba(60,48,10,.6); color: #ffe08a; }
+#hud-slots .slot.empty { opacity: .45; }
+#hud-slots .slot-hint { position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); margin-bottom: 4px; white-space: nowrap; font-size: 9px; font-weight: 700; letter-spacing: 2px; color: rgba(255,255,255,.55); }
+@media (max-width: 760px) { #hud-slots .slot { min-width: 52px; font-size: 8px; padding: 12px 4px 5px; } }
+.is-touch #hud-slots { bottom: auto; top: calc(10px + env(safe-area-inset-top)); }
+.is-touch #hud-slots .slot-hint { bottom: auto; top: 100%; margin: 4px 0 0; }
+#hud-banner small { white-space: normal; max-width: min(680px, 86vw); margin: 6px auto; line-height: 1.4; }
