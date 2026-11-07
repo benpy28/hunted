@@ -162,6 +162,7 @@ test('on a school morning parents walk their kids to the gates and the kids run 
     const S = H.schoolInfo; H.goTo(H, S.gate.x + 25, S.gate.z - 25);
     const p = H.randomOpenPoint(S.gate.x, S.gate.z - 20, 10, 20);
     const h = H.family(H, p.x, p.z); h.waitT = 0; h.wt = null;
+    for (const c of H.G.cars) if (Math.hypot(c.x - p.x, c.z - p.z) < 200) { c.x += 2000; c.lane = null; c.driver = null; } // no car knocking the grown-up flat on the way (the kid would run off shouting instead)
     const in0 = H.KD_STATE.schoolIn;
     const planned = H.LIFE.plan(h, 8.3);
     const k = h.kid; let dbg = '';
