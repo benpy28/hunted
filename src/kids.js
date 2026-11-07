@@ -167,8 +167,22 @@ export function makeKid(parent, K) {
   scene.add(p.group);
   const fx = Math.sin(parent.face), fz = Math.cos(parent.face);
   const k = { p, g: p.group, s, parent, x: parent.x + fz * 0.6, z: parent.z - fx * 0.6, y: parent.y, face: parent.face, phase: Math.random() * 6, mode: 'follow', trail: [], starT: 0, toldN: 0, toldT: 0, hushDay: 0, lineT: mr(6, 18), seeT: Math.random() * 0.3, pointT: 0, side: Math.random() < 0.5 ? 1 : -1, hiT: 0 };
+  if (Math.random() < 0.32) giveRide(k, Math.random() < 0.6 ? 'scooter' : 'bike'); // whizzing about on a scooter or a little bike
   kids.push(k); parent.kid = k; parent.fleer = true; KD_STATE.families++;
   return k;
+}
+// a scooter (deck, stem, handlebars) or a little bike with stabilisers, under the kid
+function giveRide(k, kind) {
+  const g = new THREE.Group(), col = mpick(KID_SHIRTS), m = (w, h, d, x, y, z, c) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lam(c)); o.position.set(x, y, z); g.add(o); return o; };
+  if (kind === 'scooter') {
+    m(0.22, 0.05, 0.75, 0, 0.12, 0, col); m(0.05, 1.05, 0.05, 0, 0.62, 0.36, 0x9a9aa2); m(0.5, 0.05, 0.05, 0, 1.13, 0.36, 0x1a1a1e);
+    for (const z of [-0.33, 0.36]) m(0.06, 0.16, 0.16, 0, 0.08, z, 0x1a1a1e);
+  } else {
+    for (const z of [-0.42, 0.42]) m(0.07, 0.48, 0.48, 0, 0.24, z, 0x1a1a1e);
+    for (const x of [-0.3, 0.3]) m(0.05, 0.2, 0.2, x, 0.1, -0.42, 0x1a1a1e); // stabilisers
+    m(0.08, 0.08, 0.86, 0, 0.5, 0, col); m(0.06, 0.5, 0.06, 0, 0.68, 0.38, col); m(0.55, 0.05, 0.05, 0, 0.94, 0.38, 0x1a1a1e); m(0.2, 0.06, 0.3, 0, 0.8, -0.18, 0x1a1a1e);
+  }
+  g.scale.setScalar(1 / k.s * 0.62); k.g.add(g); k.ride = kind; k.rideMesh = g;
 }
 function removeKid(k) { scene.remove(k.g); const i = kids.indexOf(k); if (i >= 0) kids.splice(i, 1); if (k.parent && k.parent.kid === k) { k.parent.kid = null; if (!k.parent.rival) k.parent.fleer = false; } if (k.piece) leavePiece(k); }
 // a grown-up with a kid in tow, or a pram, or neither
@@ -210,6 +224,13 @@ function kidPose(k, spd, dt) {
   k.phase += spd * dt * 4.2;
   const sw = Math.sin(k.phase) * Math.min(1, spd / 2) * 0.9;
   p.legL.rotation.x = sw; p.legR.rotation.x = -sw; p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; p.armL.rotation.z = p.armR.rotation.z = 0;
+  if (k.rideMesh) k.rideMesh.visible = !k.piece && k.mode !== 'school';
+  if (k.ride && k.rideMesh.visible) { // scooting or pedalling instead of walking
+    const go = Math.min(1, spd / 1.5);
+    if (k.ride === 'scooter') { p.legL.rotation.x = 0; p.legR.rotation.x = -Math.max(0, Math.sin(k.phase * 0.7)) * 0.9 * go; }
+    else { p.legL.rotation.x = -1.0 + Math.sin(k.phase) * 0.5 * go; p.legR.rotation.x = -1.0 - Math.sin(k.phase) * 0.5 * go; }
+    p.armL.rotation.x = p.armR.rotation.x = -1.2; p.armL.rotation.z = -0.15; p.armR.rotation.z = 0.15;
+  }
 }
 function updateKid(k, dt, K) {
   const O = k.parent, P = K.player;
@@ -316,6 +337,7 @@ function kidLook(k, dt, K) {
   if (k.mode === 'point' || k.mode === 'school' || !k.g.visible) return;
   const d = Math.hypot(P.x - k.x, P.z - k.z);
   if (d > 18 || P.hide || P.car) { k.starT = Math.max(0, k.starT - dt * 0.5); return; }
+  if (K.distracted && K.distracted(k)) { k.starT = Math.max(0, k.starT - dt); return; } // the ice cream van's here
   if (!K.canSee(k.x, k.y + 0.95 * k.s * 1.7, k.z)) { k.starT = Math.max(0, k.starT - dt * 0.5); return; }
   if (K.superMode) { if (d < 8 && k.toldT <= 0) { k.toldT = 12; K.sayAt(k, mpick(KID_HERO)); k.hiT = 1.5; } return; }
   if (k.hushDay === K.G.day) { if (d < 6 && k.toldT <= 0) { k.toldT = 15; k.hiT = 1.2; K.sayAt(k, mpick(['HELLO!', '*WAVES*', 'I\'M NOT TELLING!', 'SHHHH!'])); } return; }

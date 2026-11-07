@@ -246,6 +246,15 @@ export function staticMesh(geo, mat, x, y, z, ry = 0) {
 // Buffers + palette
 // ---------------------------------------------------------------------
 export const roofBuf = new ChunkBuf(128), propBuf = new ChunkBuf(96, 520), glowBuf = new GeoBuf(), shopBuf = new GeoBuf(), markBuf = new GeoBuf(), waterBuf = new GeoBuf(), groundBuf = new GeoBuf();
+// Clearings: patches of countryside other modules keep free (the football ground, the village church).
+// The countryside is still generated in full, drawing the same random numbers, so nothing else in the seeded
+// world moves; whatever would have landed in a clearing (trees, hedges, crops, bales) is just thrown away.
+export const clearings = []; // {x0,x1,z0,z1}
+let clearOn = false, clearMute = 0;
+const inClearing = (x, z) => clearOn && clearings.some((q) => x > q.x0 && x < q.x1 && z > q.z0 && z < q.z1);
+const clearTrash = new GeoBuf();
+{ const at0 = propBuf.at.bind(propBuf); propBuf.at = (x, z) => (clearOn && (clearMute || inClearing(x, z)) ? clearTrash : at0(x, z)); }
+for (const B of [groundBuf, markBuf]) { const f0 = B.flat.bind(B); B.flat = (x0, x1, z0, z1, y, col) => { if (!inClearing((x0 + x1) / 2, (z0 + z1) / 2)) f0(x0, x1, z0, z1, y, col); }; }
 export const C = {
   sidewalk: 0x8a8590, roof: 0x3d3944, parapet: 0x55505c, grass: 0x4f7d3e, trunk: 0x5a3e2b, asphalt: 0x2f2d35,
   pole: 0x2e3035, lamp: 0xfff0c4, sodium: 0xffb050, signal: 0x6b5a18, white: 0xe8e8e8, yellow: 0xe0b52a, concrete: 0xa8a4a0,
@@ -259,7 +268,7 @@ export const CONTAINER_COLORS = [0xb0302a, 0x2a5aa0, 0x2a8a4a, 0xd0902a, 0x6a6a7
 
 let curCity = null;
 export const forcedLadders = []; // {roof, x, z, nx, nz, y0}
-export function addCollider(x0, x1, z0, z1, h, extra) { const c = { x0, x1, z0, z1, h, y0: 0 }; if (extra) Object.assign(c, extra); colliders.push(c); return c; }
+export function addCollider(x0, x1, z0, z1, h, extra) { const c = { x0, x1, z0, z1, h, y0: 0 }; if (extra) Object.assign(c, extra); if (!(clearOn && (clearMute || inClearing((x0 + x1) / 2, (z0 + z1) / 2)))) colliders.push(c); return c; }
 export function addRoof(x0, x1, z0, z1, h, extra) { const c = addCollider(x0, x1, z0, z1, h, extra); roofs.push(c); return c; }
 
 // low-poly round blob (tree canopies, bushes): three stacked tapered cylinders
@@ -269,6 +278,7 @@ export function blob(buf, x, y, z, r, col, segs = 7) {
   buf.cyl(x, z, r * 0.92, r * 0.35, y + r * 1.05, y + r * 1.55, col, segs);
 }
 export function addTree(x, z, s = sr(1.1, 1.7), col = true, y = 0) {
+  const mute = inClearing(x, z); if (mute) clearMute++;
   propBuf.cyl(x, z, 0.2, 0.13, y, y + 2.6, C.trunk, 6, false);
   const g = spick(GREENS), kind = srand();
   if (kind < 0.25) { // conifer: stacked cones
@@ -284,6 +294,7 @@ export function addTree(x, z, s = sr(1.1, 1.7), col = true, y = 0) {
     propBuf.cyl(x, z, s * 0.7, 0, y + 2.6 + s * 2, y + 3.4 + s * 2.6, g, 7, false);
   }
   if (col) addCollider(x - 0.3, x + 0.3, z - 0.3, z + 0.3, y + 4, y ? { y0: y } : undefined);
+  if (mute) clearMute--;
 }
 export function shadeHex(hex, k) { const c = new THREE.Color(hex); c.r = Math.min(1, c.r * k); c.g = Math.min(1, c.g * k); c.b = Math.min(1, c.b * k); return c.getHex(); }
 export function addStreetLight(x, z, ax, az, color = C.lamp, h = 6.5) {
@@ -1440,7 +1451,8 @@ export function generateWorld() {
   baked.grass = gb.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   genMetro(PH); genSuburb(ASH); genIndustrial(DOCKS);
   for (const h of HIGHWAYS) genHighway(h);
-  genCountryside();
+  clearOn = true; genCountryside(); clearOn = false; clearMute = 0;
+  clearTrash.pos.length = clearTrash.nor.length = clearTrash.uv.length = clearTrash.col.length = clearTrash.idx.length = 0; clearTrash.n = 0;
   // street dressing runs with provisional collision buckets so it can avoid what's already there
   buildBuckets();
   for (const f of worldHooks.afterGen) f();

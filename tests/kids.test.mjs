@@ -9,6 +9,7 @@ before(async () => {
   g = await openGame(); await g.run((H) => H.startGame(false));
   await g.run((H) => {
     H.fresh = (H) => {
+      H.TDK.distracted = () => null; // no ice cream van pulling up at the playground mid-test (kids forget all about you when it does)
       if (H.pramHeld()) H.dropPram(H.TDK);
       if (H.player.hide) H.leaveHide(H.SK);
       if (H.G.mode !== 'playing') H.G.mode = 'playing';

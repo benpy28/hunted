@@ -73,7 +73,7 @@ for (const S of STRIPS) {
         tv.position.set(tvx, 3.4, tvz + front * 0.01); tv.rotation.y = front > 0 ? 0 : Math.PI; tv.matrixAutoUpdate = false; tv.updateMatrix(); scene.add(tv);
       }
       lamp(um - 3, um + 3, H - 0.3, Math.min(zF, zB) + 2, Math.max(zF, zB) - 2, 0xfff4dc);
-      keepers.push({ x: um, z: zB + front * 1.0, y: 0.2, face: S.face, kind });
+      keepers.push({ x: um, z: zB + front * 1.0, y: 0.2, face: S.face, kind, city: S.city.name });
       navOpen.push({ x0: um - 1.15, x1: um + 1.15, z0: zF - 2.2, z1: zF + 2.2 });
       shopSpots.push({ x: um, z: cz + front * 1.1, y: 0.2, r: 2.4, kind, name, city: S.city.name, face: S.face });
       // decor on the back wall
@@ -160,6 +160,8 @@ export function spawnShopkeepers(scene) {
     scene.add(p.group); K.p = p;
   }
 }
+// shut shops have nobody behind the counter
+export function showShopkeepers(isOpen) { for (const K of keepers) if (K.p) K.p.group.visible = isOpen(K.kind, K.city); }
 export function animateShopkeepers(t) {
   for (const K of keepers) if (K.p) { K.p.head.rotation.y = Math.sin(t * 0.7 + K.x) * 0.4; K.p.armR.rotation.x = Math.sin(t * 1.3 + K.z) * 0.15 - 0.1; }
 }
