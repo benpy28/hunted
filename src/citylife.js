@@ -9,7 +9,7 @@ import { lam } from './people.js';
 import { emitPuff } from './fx.js';
 
 export const JOBS = ['vendor', 'sweeper', 'busker', 'courier', 'jogger', 'tourist', 'dogwalker'];
-const JOB_LINES = {
+const LIFE_JOB_LINES = {
   vendor: ['HOT PRETZELS!', 'GET YOUR CHURROS!', 'TWO FOR ONE!', 'FRESH LEMONADE!', 'HOT DOGS! HOT!', 'BEST IN TOWN!'],
   busker: ['♪ ♫ ♪', '♪ OOH BABY ♪', '♫ LA LA LA ♫', '♪ ♪ ♪', 'ANY SPARE CHANGE?', 'TAKING REQUESTS!'],
   courier: ['DELIVERY!', 'SIGN HERE', 'WRONG ADDRESS AGAIN', 'PARCEL FOR... NUMBER 9?'],
@@ -18,14 +18,14 @@ const JOB_LINES = {
   dogwalker: ['WHO\'S A GOOD BOY?', 'NO! DROP IT!', 'HEEL! HEEL!', 'SORRY, HE\'S FRIENDLY'],
   jogger: ['ON YOUR LEFT!', 'PERSONAL BEST!', 'HUFF... HUFF...'],
 };
-const CHATS = [
+const LIFE_CHATS = [
   ['DID YOU SEE THE NEWS?', 'THE BOUNTY THING? MAD.'], ['NICE WEATHER', 'FOR NOW'], ['MY LANDLORD AGAIN', 'THE RENT?', 'TWICE THIS MONTH'],
   ['I\'D SPOT THEM IN A SECOND', 'SURE YOU WOULD'], ['WHAT\'S THE PRIZE MONEY?', 'ENOUGH TO RETIRE'], ['FANCY A COFFEE?', 'ALWAYS'],
   ['HOW\'S THE BACK?', 'DON\'T ASK'], ['YOU WATCHING THE MATCH?', 'WHICH ONE?', 'EXACTLY'], ['THAT CAFE SHUT DOWN', 'THE GOOD ONE?', 'THE GOOD ONE.'],
   ['IS THAT A NEW HAT?', 'IT\'S A DISGUISE', 'FROM WHO?'], ['HOW\'S YOUR MUM?', 'STILL ON THE ROOF'], ['I SAW THEM ON THE TRAIN', 'YOU SAY THAT EVERY DAY'],
   ['BUS IS LATE AGAIN', 'BUS IS ALWAYS LATE'], ['TRIED THE NEW DINER?', 'GAVE ME HICCUPS'], ['LOVELY DOG', 'IT\'S A CAT'],
 ];
-const HERO_CHATS = [
+const LIFE_HERO_CHATS = [
   ['DON\'T LOOK UP', 'IS HE HERE?', 'HE\'S ALWAYS HERE'], ['HE THREW A BUS YESTERDAY', 'WAS IT A BAD BUS?', 'IT WAS EMPTY. MOSTLY.'],
   ['SMILE IF HE FLIES OVER', 'I AM SMILING'], ['MY CAT WAS STUCK UP A TREE', 'DID HE HELP?', 'HE LASERED THE TREE'],
   ['HE SIGNED MY CAST', 'YOU DIDN\'T HAVE A CAST', 'I DO NOW'], ['HE SAVED ME ONCE', 'FROM WHAT?', 'HE WON\'T SAY'],
@@ -37,7 +37,7 @@ export const CRITIC_CHATS = [
   ['I PREFERRED THE OLD HERO', 'WE DON\'T TALK ABOUT HIM'], ['HE NEVER SAVES ANYONE', 'KEEP YOUR VOICE DOWN'],
   ['THAT CAPE IS RIDICULOUS', 'PLEASE STOP TALKING'],
 ];
-const PHONE_LINES = ['NO, YOU HANG UP', 'I\'M ON THE HIGH STREET', 'CAN\'T TALK, BYE', 'HE\'S DONE WHAT?!', 'SEE YOU AT SIX', 'MUM, I\'M FINE'];
+const LIFE_PHONE_LINES = ['NO, YOU HANG UP', 'I\'M ON THE HIGH STREET', 'CAN\'T TALK, BYE', 'HE\'S DONE WHAT?!', 'SEE YOU AT SIX', 'MUM, I\'M FINE'];
 
 // ---------------------------------------------------------------------
 // props people carry for their jobs
@@ -51,7 +51,7 @@ const LIFE_PROPG = {
   leash: new THREE.BoxGeometry(0.02, 0.02, 1).translate(0, 0, 0.5),
 };
 function jobProp(parent, geo, hex, x = 0, y = 0, z = 0) { const m = new THREE.Mesh(geo, lam(hex)); m.position.set(x, y, z); parent.add(m); return m; }
-function giveJobProps(h) {
+function giveLifeJobProps(h) {
   const p = h.p, J = h.job;
   if (J === 'sweeper') { jobProp(p.armR, LIFE_PROPG.stick, 0x8a6a3a); jobProp(p.armR, LIFE_PROPG.brush, 0x2a2a2a); }
   else if (J === 'busker') { const g = new THREE.Group(); g.position.set(0.05, -0.05, 0.24); g.rotation.z = -0.6; jobProp(g, LIFE_PROPG.gbody, 0xa0582a); jobProp(g, LIFE_PROPG.gneck, 0x5a3a1a, 0.18, 0.42, 0); p.torso.add(g); h.guitar = g; }
@@ -122,7 +122,7 @@ export function assignJob(h, C) {
   }
   h.job = job;
   if (!job) return;
-  giveJobProps(h);
+  giveLifeJobProps(h);
   if (job === 'jogger') h.walkK = 2.3;
   if (job === 'courier') h.walkK = 1.35;
   if (job === 'sweeper') h.walkK = 0.6;
@@ -135,7 +135,7 @@ function nearestLifeSpot(h, kind, maxD) {
   for (const s of lifeSpots) { if (s.kind !== kind || s.taken) continue; const d = Math.abs(s.x - h.x) + Math.abs(s.z - h.z); if (d < bd && Math.abs(h.y) < 1) { bd = d; best = s; } }
   return best;
 }
-function cartSides(s) { // the two long sides of a cart: one for the vendor, one for customers
+function lifeCartSides(s) { // the two long sides of a cart: one for the vendor, one for customers
   const px = s.alongX ? 0 : 1, pz = s.alongX ? 1 : 0, off = s.alongX ? 1.15 : 1.15;
   return [{ x: s.x + px * off, z: s.z + pz * off, face: Math.atan2(-px, -pz) }, { x: s.x - px * off, z: s.z - pz * off, face: Math.atan2(px, pz) }].filter((q) => !blockedAt(q.x, q.z));
 }
@@ -147,7 +147,7 @@ function lifeBegin(h, kind, tx, tz, face, dur, extra) {
 export function lifeStart(h, C) {
   if (h.act || h.state === 'chase' || h.huntT > 0 || Math.abs(h.y) > 1 || h.contract || h.rival || h.guard) return false;
   const hr = C.hour, night = hr < 6 || hr > 22.5, J = h.job;
-  if (J === 'vendor' && h.cart) { const sd = cartSides(h.cart)[0]; if (sd) return lifeBegin(h, 'vend', sd.x, sd.z, sd.face, night ? 20 : mr(60, 140)); }
+  if (J === 'vendor' && h.cart) { const sd = lifeCartSides(h.cart)[0]; if (sd) return lifeBegin(h, 'vend', sd.x, sd.z, sd.face, night ? 20 : mr(60, 140)); }
   if (J === 'busker' && Math.random() < 0.8) return lifeBegin(h, 'busk', h.x, h.z, h.face, mr(40, 90));
   if (J === 'tourist' && Math.random() < 0.6) return lifeBegin(h, 'photo', h.x, h.z, h.face + mr(-1.5, 1.5), mr(3, 6));
   if (J === 'courier' && walkIns.length && Math.random() < 0.7) { const W = nearestWalkInFor(h, 70); if (W) return lifeBegin(h, 'deliver', W.x, W.z, null, mr(3, 5), { W }); }
@@ -160,14 +160,14 @@ export function lifeStart(h, C) {
   if (r < 0.32) { const s = nearestLifeSpot(h, 'bench', 45); if (s) { s.taken = h; return lifeBegin(h, 'sit', s.x, s.z, s.face, mr(10, 30), { spot: s }); } }
   if (r < (lunch ? 0.6 : 0.42)) {
     let best = null, bd = 50; for (const s of lifeSpots) if (s.kind === 'cart' && lifeVendorCarts.has(s)) { const d = Math.abs(s.x - h.x) + Math.abs(s.z - h.z); if (d < bd) { bd = d; best = s; } }
-    if (best) { const sd = cartSides(best); const q = sd[1] || sd[0]; if (q) { const n = (best.queue = (best.queue || 0) + 1) - 1, ux = Math.sin(q.face), uz = Math.cos(q.face); return lifeBegin(h, 'queue', q.x - ux * n * 0.9, q.z - uz * n * 0.9, q.face, mr(6, 12), { cart: best }); } }
+    if (best) { const sd = lifeCartSides(best); const q = sd[1] || sd[0]; if (q) { const n = (best.queue = (best.queue || 0) + 1) - 1, ux = Math.sin(q.face), uz = Math.cos(q.face); return lifeBegin(h, 'queue', q.x - ux * n * 0.9, q.z - uz * n * 0.9, q.face, mr(6, 12), { cart: best }); } }
   }
   if (r < 0.62) { // find someone to talk to
     let best = null, bd = 14;
     for (const o of C.hunters) { if (o === h || o.dead || o.act || o.state === 'chase' || o.job === 'jogger' || o.contract || o.rival || o.guard || Math.abs(o.y - h.y) > 1) continue; const d = Math.hypot(o.x - h.x, o.z - h.z); if (d < bd) { bd = d; best = o; } }
     if (best) {
       const crit = C.superMode && Math.random() < 0.3;
-      const script = crit ? mpick(CRITIC_CHATS) : mpick(C.superMode && Math.random() < 0.7 ? HERO_CHATS : CHATS);
+      const script = crit ? mpick(CRITIC_CHATS) : mpick(C.superMode && Math.random() < 0.7 ? LIFE_HERO_CHATS : LIFE_CHATS);
       const mx = (h.x + best.x) / 2, mz = (h.z + best.z) / 2, dx = best.x - h.x, dz = best.z - h.z, dl = Math.hypot(dx, dz) || 1;
       const conv = { script, i: 0, a: h, b: best, crit, nextT: mr(0.8, 1.6) };
       lifeBegin(h, 'chat', mx - dx / dl * 0.6, mz - dz / dl * 0.6, Math.atan2(dx, dz), 30, { conv });
@@ -224,7 +224,7 @@ export function lifeStep(h, dt, C) {
     }
   } else if (A.lineT <= 0) {
     A.lineT = mr(5, 11);
-    const lines = A.kind === 'phone' ? PHONE_LINES : A.kind === 'vend' ? JOB_LINES.vendor : A.kind === 'busk' ? JOB_LINES.busker : A.kind === 'deliver' ? JOB_LINES.courier : A.kind === 'photo' ? JOB_LINES.tourist : A.kind === 'sweep' ? JOB_LINES.sweeper : A.kind === 'sniff' ? JOB_LINES.dogwalker : null;
+    const lines = A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
     if (lines && heard && Math.random() < 0.6) C.say(h, mpick(lines));
   }
   if (A.kind === 'photo' && A.phase === 'do' && !A.flashed && A.t > 1.2) { A.flashed = true; const fx = Math.sin(h.face), fz = Math.cos(h.face); emitPuff(h.x + fx * 0.5, h.y + 1.6, h.z + fz * 0.5, { life: 0.15, size0: 0.5, size1: 1.2, alpha: 0.9, color: 0xffffff }); }

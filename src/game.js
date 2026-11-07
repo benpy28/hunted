@@ -15,6 +15,8 @@ import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
 import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
 import { walkIns, lifeSpots } from './streets.js';
+import { HERO, resetHero, heroFun, heroMenace, heroPoseCmd, heroOverheard, updateHero, heroPersonPose, heroHolds, heroNews, heroMapMarks, heroHud } from './hero.js';
+import { villains, resetVillains, updateVillains, villainHit, villainsNear, villainRay, villainMapMarks } from './villains.js';
 import { assignJob, releaseJob, lifeStart, lifeStep, lifePose, lifeInterrupt, updateCityLife, clearCityLife, cityLifeDebug } from './citylife.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
@@ -319,6 +321,7 @@ class Hunter {
         if (blockedAt(this.x + ax * 2.5, this.z + az * 2.5)) { const n = this.navTo({ x: this.x + ax * 10, z: this.z + az * 10 }); if (n) { ox2 = n.x; oz2 = n.z; } }
         tvx = ox2 * T.speed * 0.9; tvz = oz2 * T.speed * 0.9; this.wt = null;
       } else if (this.sus > 0.45 && this.hasLOS && d < 40) { this.waitT = Math.max(this.waitT, 0.3); this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 4); } // "hang on, is that...?"
+      else if (G.super && heroHolds(this)) { lifeMode = 'hold'; this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 5); }
       else if (this.act && (lifeMode = lifeStep(this, dt, LIFE))) { /* sitting, chatting, queueing, working... */ }
       else if (this.waitT > 0) { this.waitT -= dt; this.face += Math.sin(G.elapsed * 1.3 + this.phase) * dt * 1.2; }
       else if (!this.wt || Math.hypot(this.wt.x - this.x, this.wt.z - this.z) < 1.5) {
@@ -384,6 +387,7 @@ class Hunter {
     this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08 - (this.cowerT > 0 ? 0.45 : 0), this.z);
     this.g.rotation.y = this.face;
     if (this.act || this.job) lifePose(this, dt, LIFE);
+    if (G.super) heroPersonPose(this, dt);
     const wary = this.state !== 'chase' && this.sus > 0.35 && d < 50;
     this.marker.visible = wary || (this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12));
     this.marker.material = wary || this.noticeT > 0 ? qMarkerMat : markerMat;
@@ -472,6 +476,53 @@ function hunterShoot(h, d) {
 // =====================================================================
 const CAR_COLORS = [0xe8c020, 0xe8c020, 0xb3202a, 0x2a4fa0, 0xdddddd, 0x222226, 0x2f6b45, 0x9aa0a8, 0x7a2a6a, 0xd0703a];
 const carGeoCache = new Map();
+// vehicle kinds: half length / half width, collision circles along the body, top speed
+const VKINDS = {
+  car: { hl: 2.25, hw: 1.0, offs: [1.25, -1.25], top: 28 },
+  hatch: { hl: 1.85, hw: 0.95, offs: [0.85, -0.85], top: 26 },
+  van: { hl: 2.6, hw: 1.08, offs: [1.5, -1.5], top: 24 },
+  truck: { hl: 3.5, hw: 1.2, offs: [2.4, 0, -2.4], top: 20 },
+  bus: { hl: 5.6, hw: 1.3, offs: [4.4, 1.5, -1.5, -4.4], top: 18 },
+};
+const BUS_COLORS = { 'PORT HALDEN': 0xc8282a, ASHFORD: 0x2a8a4a, 'SALTMARSH DOCKS': 0x2a5aa0 };
+function vehicleGeometry(kind, color) {
+  if (kind === 'car') return carGeometry(color, color === 0xe8c020);
+  const key = kind + color;
+  if (carGeoCache.has(key)) return carGeoCache.get(key);
+  const b = new GeoBuf(), K = VKINDS[kind], L = K.hl, W = K.hw, glass = 0x1e2638;
+  const wheels = (zs, r = 0.36) => { for (const z of zs) for (const x of [-W + 0.05, W - 0.05]) b.box(x - 0.15, x + 0.15, 0, r * 2, z - r, z + r, 0x111111); };
+  if (kind === 'hatch') {
+    b.box(-W, W, 0.35, 0.98, -L, L, color, { bottom: true }); b.box(-W + 0.1, W - 0.1, 0.98, 1.58, -L + 0.2, L - 0.9, glass); b.box(-W + 0.08, W - 0.08, 1.55, 1.63, -L + 0.2, L - 0.95, color);
+    wheels([L - 0.6, -L + 0.6], 0.33);
+  } else if (kind === 'van') {
+    b.box(-W, W, 0.4, 2.15, -L, L - 0.9, color, { bottom: true }); b.box(-W, W, 0.4, 1.25, L - 0.9, L, color);
+    b.box(-W + 0.06, W - 0.06, 1.25, 1.95, L - 0.95, L - 0.6, glass); b.box(-W - 0.01, W + 0.01, 1.3, 1.85, L - 1.6, L - 1.0, glass);
+    b.box(-W - 0.02, W + 0.02, 0.9, 1.2, -L + 0.4, L - 1.3, shadeHexG(color, 0.8));
+    wheels([L - 0.75, -L + 0.75]);
+  } else if (kind === 'truck') {
+    b.box(-W, W, 0.45, 2.3, L - 1.7, L, 0xe8e8e8, { bottom: true }); b.box(-W + 0.06, W - 0.06, 1.4, 2.1, L - 0.05, L + 0.02, glass);
+    b.box(-W - 0.01, W + 0.01, 1.4, 2.0, L - 1.3, L - 0.4, glass);
+    b.box(-W, W, 0.6, 3.1, -L, L - 1.8, color, { bottom: true }); b.box(-W - 0.02, W + 0.02, 1.0, 2.6, -L + 0.4, L - 2.2, shadeHexG(color, 1.25));
+    b.box(-W + 0.2, W - 0.2, 0.25, 0.6, -L, L, 0x2a2a2a);
+    wheels([L - 0.8, -L + 0.9, -L + 1.8], 0.42);
+  } else if (kind === 'bus') {
+    b.box(-W, W, 0.45, 3.1, -L, L, color, { bottom: true });
+    b.box(-W - 0.02, W + 0.02, 1.55, 2.55, -L + 0.4, L - 0.5, glass); b.box(-W + 0.06, W - 0.06, 1.3, 2.7, L - 0.02, L + 0.02, glass);
+    b.box(-W + 0.05, W - 0.05, 3.1, 3.2, -L + 0.3, L - 0.3, 0xdddddd); b.box(-W - 0.03, W + 0.03, 0.75, 0.95, -L, L, 0xf0f0f0);
+    b.box(-0.7, 0.7, 2.75, 3.0, L, L + 0.03, 0xffb020);
+    wheels([L - 1.3, -L + 1.4], 0.48);
+  }
+  for (const z of [L + 0.02, -L - 0.02]) b.box(-W + 0.05, W - 0.05, 0.3, 0.45, Math.min(z, z - Math.sign(z) * 0.1), Math.max(z, z - Math.sign(z) * 0.1), 0x333333);
+  const g = b.geometry(); carGeoCache.set(key, g); return g;
+}
+function shadeHexG(hex, k) { const c = new THREE.Color(hex); c.r = Math.min(1, c.r * k); c.g = Math.min(1, c.g * k); c.b = Math.min(1, c.b * k); return c.getHex(); }
+const lightGeoCache = new Map();
+function vehicleLights(kind) {
+  if (lightGeoCache.has(kind)) return lightGeoCache.get(kind);
+  const K = VKINDS[kind], L = K.hl, y = kind === 'bus' || kind === 'truck' ? 0.9 : 0.72, b = new GeoBuf();
+  for (const x of [-K.hw * 0.65, K.hw * 0.65]) { b.box(x - 0.22, x + 0.22, y, y + 0.2, L, L + 0.04, 0xfff6d0); b.box(x - 0.22, x + 0.22, y, y + 0.2, -L - 0.04, -L, 0xff2020); }
+  const g = b.geometry(); lightGeoCache.set(kind, g); return g;
+}
 function carGeometry(color, taxi) {
   const key = color + (taxi ? 't' : '');
   if (carGeoCache.has(key)) return carGeoCache.get(key);
@@ -502,17 +553,18 @@ function resolveCircleCar(p, r, car) {
 }
 
 class Car {
-  constructor(lane, along, parked) {
-    const color = mpick(CAR_COLORS);
-    this.taxi = color === 0xe8c020;
+  constructor(lane, along, parked, kind = 'car') {
+    this.kind = kind; const K = VKINDS[kind];
+    const color = kind === 'bus' ? BUS_COLORS[(lane && cityAt(lane.axis === 'z' ? lane.fixed : along, lane.axis === 'z' ? along : lane.fixed, 30) || {}).name] || 0xc8282a : kind === 'truck' ? mpick([0xd0d0d0, 0x2a5aa0, 0xb03020, 0xe0b020, 0x2a6a3a]) : mpick(CAR_COLORS);
+    this.taxi = kind === 'car' && color === 0xe8c020;
     this.g = new THREE.Group();
-    this.geo = carGeometry(color, this.taxi);
+    this.geo = vehicleGeometry(kind, color);
     this.body = new THREE.Mesh(this.geo, carMat); this.g.add(this.body);
-    this.g.add(new THREE.Mesh(lightGeo, lightMat));
+    this.g.add(new THREE.Mesh(kind === 'car' ? lightGeo : vehicleLights(kind), lightMat));
     this.marker = new THREE.Sprite(markerMat); this.marker.scale.setScalar(0.9); this.marker.position.y = 2.7; this.marker.visible = false;
     this.g.add(this.marker);
     scene.add(this.g);
-    this.hl = 2.25; this.hw = 1.0; this.smokeT = 0; this.far = false;
+    this.hl = K.hl; this.hw = K.hw; this.offs = K.offs; this.top = K.top; this.smokeT = 0; this.far = false; this.stopT = 0;
     if (parked) this.park(parked); else this.placeOnLane(lane, along);
   }
   reset() { this.speed = 0; this.throttle = 0; this.steer = 0; this.reverseT = 0; this.stuckT = 0; this.hp = 100; this.wrecked = false; this.body.material = carMat; this.honkT = 0; }
@@ -536,6 +588,7 @@ class Car {
   update(dt) {
     if (this.air) { // flying through the air, courtesy of the hero
       const A = this.air; A.vy -= 22 * dt; this.x += A.vx * dt; this.z += A.vz * dt; A.y += A.vy * dt; this.heading += A.spin * dt; A.roll += A.spin * 0.6 * dt;
+      if (G.super && !A.hitV) for (const V of villainsNear(this.x, A.y + 0.8, this.z, 2.6)) { A.hitV = true; villainHit(V, 30, HC, A.vx * 0.5, A.vz * 0.5); A.vx *= -0.2; A.vz *= -0.2; sfx.crash(); showMsg('CAR TO THE FACE', 1.2); }
       if (A.y <= 0 && A.vy < 0) {
         A.y = 0; this.air = null; this.speed = 0; this.damage(100); sfx.crash(); G.shake = Math.max(G.shake, 0.25);
         for (let i = 0; i < 6; i++) emitPuff(this.x + mr(-2, 2), 0.5, this.z + mr(-2, 2), { life: 1.2, vy: mr(1, 3), vx: mr(-3, 3), vz: mr(-3, 3), size0: 1, size1: 3, alpha: 0.5, color: 0x8a8070 });
@@ -561,14 +614,15 @@ class Car {
       for (const o of G.cars) {
         if (o === this || o.far) continue;
         const ax = o.x - this.x, az = o.z - this.z;
-        if (Math.abs(ax) > 10 || Math.abs(az) > 10) continue;
-        const ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx);
-        if (ahead > 0 && ahead < 9 && side < 2.2) target = Math.min(target, ahead < 5.5 ? 0 : o.speed * 0.9);
+        if (Math.abs(ax) > 16 || Math.abs(az) > 16) continue;
+        const ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx), gap = this.hl + o.hl;
+        if (ahead > 0 && ahead < gap + 4.5 && side < 2.2) target = Math.min(target, ahead < gap + 1 ? 0 : o.speed * 0.9);
       }
       if (!player.car) {
         const ax = player.x - this.x, az = player.z - this.z, ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx);
         if (ahead > 2 && ahead < 11 && side < 1.8) { target = 0; this.honkT -= dt; if (this.honkT < 0 && ahead < 9) { this.honkT = 2.5; if (G.mode === 'playing') sfx.horn(); } }
       }
+      if (this.kind === 'bus') target = busStopLogic(this, dt, target);
       throttle = this.speed < target ? 1 : 0; brake = this.speed > target + 0.5;
       this.wrap();
     } else if (this.driver === 'hunter') {
@@ -582,7 +636,7 @@ class Car {
       else if (Math.abs(this.speed) < 1.2) { this.stuckT += dt; if (this.stuckT > 1) { this.reverseT = 1.3; this.stuckT = 0; } }
       else this.stuckT = 0;
     } else if (this.driver === 'player') {
-      maxF = 28;
+      maxF = this.top;
       throttle = input.fwd; steer = -input.side; brake = input.jump;
       if (throttle < 0 && this.speed > 1) { brake = true; throttle = 0; }
     }
@@ -595,7 +649,7 @@ class Car {
     this.heading += steer * 1.9 * clamp(this.speed / 6, -1, 1) * dt;
     this.x += this.fx * this.speed * dt; this.z += this.fz * this.speed * dt;
     let hitWall = false;
-    for (const off of [1.25, -1.25]) {
+    for (const off of this.offs) {
       const c = { x: this.x + this.fx * off, z: this.z + this.fz * off }, ox = c.x, oz = c.z;
       if (resolveCircle(c, 1.05)) { this.x += c.x - ox; this.z += c.z - oz; hitWall = true; }
     }
@@ -620,13 +674,37 @@ class Car {
   }
 }
 
+// buses pull in at shelters, wait a moment, and whoever's waiting gets on
+function busStopLogic(bus, dt, target) {
+  if (bus.stopT > 0) {
+    bus.stopT -= dt;
+    if (bus.stopT <= 0 && bus.stopAt) {
+      let boarded = 0;
+      for (const h of G.hunters) if (!h.dead && h.act && h.act.kind === 'bus' && h.act.phase === 'do' && Math.hypot(h.x - bus.stopAt.x, h.z - bus.stopAt.z) < 10) { h.remove(); boarded++; }
+      bus.boarded = (bus.boarded || 0) + boarded;
+    }
+    return 0;
+  }
+  bus.scanT = (bus.scanT || 0) - dt;
+  if (bus.scanT > 0) return target;
+  bus.scanT = 0.4;
+  for (const sp of lifeSpots) {
+    if (sp.kind !== 'bus' || (bus.lastStop && Math.hypot(sp.x - bus.lastStop.x, sp.z - bus.lastStop.z) < 8)) continue;
+    const ax = sp.x - bus.x, az = sp.z - bus.z, ahead = ax * bus.fx + az * bus.fz, side = Math.abs(ax * bus.fz - az * bus.fx);
+    if (ahead > -1 && ahead < 3 && side < 9) {
+      bus.lastStop = sp;
+      if (lifeSpots.some((o) => o.kind === 'bus' && o.taken && Math.hypot(o.x - sp.x, o.z - sp.z) < 4) || Math.random() < 0.5) { bus.stopT = mr(3, 5); bus.stopAt = sp; if (G.mode === 'playing' && Math.hypot(bus.x - player.x, bus.z - player.z) < 40) sfx.horn(); return 0; }
+    }
+  }
+  return target;
+}
 function carInteractions() {
   const cars = G.cars.filter((c) => !c.far);
   for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) {
     const a = cars[i], b = cars[j];
-    if (Math.abs(a.x - b.x) > 6 || Math.abs(a.z - b.z) > 6) continue;
+    if (Math.abs(a.x - b.x) > a.hl + b.hl + 2 || Math.abs(a.z - b.z) > a.hl + b.hl + 2) continue;
     let touched = false;
-    for (const oa of [1.25, -1.25]) for (const ob of [1.25, -1.25]) {
+    for (const oa of a.offs) for (const ob of b.offs) {
       const ax = a.x + a.fx * oa, az = a.z + a.fz * oa, bx = b.x + b.fx * ob, bz = b.z + b.fz * ob;
       const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz);
       if (d < 2.1 && d > 1e-4) { const k = ((2.1 - d) / d) * 0.5; a.x -= dx * k; a.z -= dz * k; b.x += dx * k; b.z += dz * k; touched = true; }
@@ -640,7 +718,7 @@ function carInteractions() {
   for (const c of cars) {
     const sp = Math.abs(c.speed);
     for (const h of G.hunters) {
-      if (h.dead || Math.abs(h.x - c.x) > 3.5 || Math.abs(h.z - c.z) > 3.5) continue;
+      if (h.dead || Math.abs(h.x - c.x) > c.hl + 1.3 || Math.abs(h.z - c.z) > c.hl + 1.3) continue;
       const before = { x: h.x, z: h.z };
       if (resolveCircleCar(before, 0.4, c)) {
         if (sp > 5) { h.die({ x: c.fx * c.speed * 0.9 + mr(-1, 1), y: 3 + sp * 0.3, z: c.fz * c.speed * 0.9 + mr(-1, 1) }, 0.8, c.driver === 'player'); sfx.thud(); if (c.driver === 'player') c.damage(2); }
@@ -1017,7 +1095,7 @@ function rayCar(o, d, car, maxT) {
   const s = Math.sin(car.heading), c = Math.cos(car.heading), ox = o.x - car.x, oz = o.z - car.z;
   const lo = { f: ox * s + oz * c, r: ox * c - oz * s, y: o.y }, ld = { f: d.x * s + d.z * c, r: d.x * c - d.z * s, y: d.y };
   let t0 = 0, t1 = maxT;
-  for (const [k, mn, mx] of [['f', -car.hl, car.hl], ['r', -car.hw, car.hw], ['y', 0.1, 1.7]]) {
+  for (const [k, mn, mx] of [['f', -car.hl, car.hl], ['r', -car.hw, car.hw], ['y', 0.1, car.kind === 'bus' || car.kind === 'truck' ? 3.1 : car.kind === 'van' ? 2.2 : 1.7]]) {
     if (Math.abs(ld[k]) < 1e-8) { if (lo[k] < mn || lo[k] > mx) return -1; continue; }
     let a = (mn - lo[k]) / ld[k], b = (mx - lo[k]) / ld[k]; if (a > b) [a, b] = [b, a];
     t0 = Math.max(t0, a); t1 = Math.min(t1, b); if (t0 > t1) return -1;
@@ -1077,11 +1155,31 @@ function say(h, text) {
 }
 // what the city-life module needs to know about the game
 const LIFE = {
-  say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b),
+  say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b, HC),
   get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
   near: (x, z, r) => Math.abs(x - camera.position.x) < r && Math.abs(z - camera.position.z) < r,
 };
-function heroOverheard() {}
+// what the hero and villain modules need from the game
+const HC = {
+  G, player, say: (h, t) => say(h, t), sayAt: (V, t) => say(V, t), showMsg: (t, d) => showMsg(t, d), showBanner: (h, d) => showBanner(h, d),
+  dropCash: (h) => maybeDropCash(h), shake: (k) => { G.shake = Math.max(G.shake, k); },
+  spawnAt: (x, z, type, o = {}) => { const p = randomOpenPoint(x, z, 0, 6, 10); if (!p) return null; const h = new Hunter(p.x, p.z, type, false); Object.assign(h, o); G.hunters.push(h); return h; },
+  hurt: (dmg, V, knock = 4) => villainHurtPlayer(dmg, V, knock),
+  onBeaten: (V) => { HERO.saves++; HERO.approval = 99; heroFun(1, HC, true); G.villainsBeaten = (G.villainsBeaten || 0) + 1; },
+};
+// villains can actually hurt the hero (nothing else in town can)
+function villainHurtPlayer(dmg, V, knock) {
+  if (!player.alive || G.mode !== 'playing') return;
+  player.hp -= dmg; player.lastHurt = 0; G.hurtFlash = Math.min(1, G.hurtFlash + 0.3 + dmg / 40); G.shake = Math.min(0.5, G.shake + dmg / 50); sfx.hurt();
+  if (!player.car) { const dx = player.x - V.x, dz = player.z - V.z, d = Math.hypot(dx, dz) || 1; player.kx += (dx / d) * knock; player.kz += (dz / d) * knock; }
+  if (player.hp > 0) return;
+  // the unthinkable: the hero goes down. Nobody saw anything.
+  player.hp = 100; G.villainFight = null; V.state = 'lair'; V.hp = V.def.hp;
+  const p = randomOpenPoint(player.x, player.z, 70, 120, 30) || { x: 0, z: 0 };
+  player.x = p.x; player.z = p.z; player.y = floorAt(p.x, p.z, 1); player.flying = false; player.vx = player.vz = player.vy = 0;
+  HERO.real = Math.max(3, HERO.real - 15); HERO.bored = 0;
+  showBanner(`<small>${V.def.name} KNOCKED YOU OUT</small>NOBODY SAW. NOBODY WILL SAY.`, 4); sfx.sting();
+}
 function updateBubbles(dt) { for (const b of bubbles) if (b.life > 0) { b.life -= dt; if (b.life <= 0 || b.h.dead) { b.life = 0; b.s.removeFromParent(); } } }
 const _hd = new THREE.Vector3();
 function heroGrab() {
@@ -1096,7 +1194,7 @@ function heroThrow() {
   const h = G.held; if (!h) return;
   camera.getWorldDirection(_hd);
   launchHunter(h, 0, 0, true, { x: _hd.x * 34, y: _hd.y * 34 + 7, z: _hd.z * 34 });
-  sfx.swoosh(); sfx.scream(); G.shake = Math.max(G.shake, 0.12); showMsg(mpick(HOMERUN_LINES), 1);
+  sfx.swoosh(); sfx.scream(); G.shake = Math.max(G.shake, 0.12); showMsg(mpick(HOMERUN_LINES), 1); heroFun(0.1, HC, true); heroMenace(2);
   for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 30) o.panicT = mr(4, 7);
 }
 // a backhand that sends people and parked cars flying
@@ -1115,7 +1213,8 @@ function heroSwat() {
       c.driver = null; c.lane = null; c.air = { vx: fx * 26, vz: fz * 26, vy: 13, y: 0, spin: mr(-5, 5), roll: 0 }; any = true;
     }
   }
-  if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
+  for (const V of villainsNear(player.x + fx * 2.5, player.y + 1, player.z + fz * 2.5, 3)) { villainHit(V, 12, HC, fx * 14, fz * 14); any = true; }
+  if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); heroFun(0.06, HC); heroMenace(0.5); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
 }
 function heroSlam() {
   sfx.explode(); G.shake = 0.6; G.hitstopT = 0.12; G.fovKick = 14;
@@ -1126,7 +1225,8 @@ function heroSlam() {
     else if (d < 40) h.panicT = mr(5, 8);
   }
   for (const c of G.cars) { if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz); if (d < 8) { if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false); c.driver = null; c.lane = null; c.air = { vx: dx / (d || 1) * 10, vz: dz / (d || 1) * 10, vy: 9, y: 0, spin: mr(-3, 3), roll: 0 }; } }
-  showMsg('SUPERHERO LANDING', 1.5);
+  for (const V of villainsNear(player.x, player.y, player.z, 10)) { const dx = V.x - player.x, dz = V.z - player.z, d = Math.hypot(dx, dz) || 1; villainHit(V, 25, HC, dx / d * 18, dz / d * 18); }
+  showMsg('SUPERHERO LANDING', 1.5); heroFun(0.12, HC, true); heroMenace(1);
 }
 // superpower mode: two red beams straight out of your eyes
 const _eyeL = new THREE.Vector3(), _eyeR = new THREE.Vector3(), _lz = new THREE.Vector3();
@@ -1140,14 +1240,15 @@ function updateLaser(dt) { G.laserT = Math.max(0, (G.laserT || 0) - dt); if (G.l
 function fireLaser() {
   player.fireCd = WEAPONS.laser.cd; player.drawnT = 0; G.laserT = 0.12;
   camera.getWorldDirection(_aim);
-  const r = fireRay(_aim, 220, false), o = camera.position;
-  const t = r ? Math.hypot(r.h.x - o.x, r.h.z - o.z) : raycastWorld(o, _aim, 220).t;
+  let r = fireRay(_aim, 220, false), t = r ? Math.hypot(r.h.x - camera.position.x, r.h.z - camera.position.z) : raycastWorld(camera.position, _aim, 220).t;
+  const o = camera.position, vr = villainRay(o, _aim, Math.min(t, 220));
+  if (vr) { t = vr.t; r = null; villainHit(vr.V, 0.9, HC); }
   _lz.copy(o).addScaledVector(_aim, Math.min(t, 220));
   _eyeL.set(-0.07, -0.1, -0.45).applyMatrix4(camera.matrixWorld); _eyeR.set(0.07, -0.1, -0.45).applyMatrix4(camera.matrixWorld);
   laserBeam(0, _eyeL, _lz); laserBeam(1, _eyeR, _lz);
   if (Math.random() < 0.5) emitPuff(_lz.x, _lz.y, _lz.z, { life: 0.35, vy: 1, size0: 0.25, size1: 1, alpha: 0.8, color: Math.random() < 0.5 ? 0xff4020 : 0xffc040 });
   if (Math.random() < 0.3) sfx.zap ? sfx.zap() : sfx.smg();
-  if (r && !r.h.dead) { const dx = r.h.x - player.x, dz = r.h.z - player.z, dl = Math.hypot(dx, dz) || 1; launchHunter(r.h, dx / dl, dz / dl, !r.h.contract); showMsg(mpick(HOMERUN_LINES), 1); for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - r.h.x, h.z - r.h.z) < 30) h.panicT = mr(4, 7); }
+  if (r && !r.h.dead) { const dx = r.h.x - player.x, dz = r.h.z - player.z, dl = Math.hypot(dx, dz) || 1; launchHunter(r.h, dx / dl, dz / dl, !r.h.contract); showMsg(mpick(HOMERUN_LINES), 1); heroFun(0.05, HC); heroMenace(1); for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - r.h.x, h.z - r.h.z) < 30) h.panicT = mr(4, 7); }
 }
 // one bullet: returns the hunter it hit (damage is pooled so a shotgun blast lands as one hit)
 function fireRay(dir, range, tracer) {
@@ -1591,6 +1692,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') startReload();
   if (e.code === 'KeyF') playerShove();
   if (e.code === 'KeyM') G.bigMap = !G.bigMap;
+  if (e.code === 'KeyG' && G.super) heroPoseCmd(HC);
   if (e.code === 'Escape' || e.code === 'KeyP') pauseGame();
   if (e.code === 'Space') e.preventDefault();
 });
@@ -1770,12 +1872,29 @@ function drawMinimap() {
     }
   }
   { const T = mhTarget(); if (T) drawMapTarget(T, tp, range, yaw, W, big, sc); const R = mhRivalTarget(); if (R) drawMapTarget(R, tp, range, yaw, W, big, sc); }
+  if (G.super) { for (const M of heroMapMarks()) drawMapTarget(M, tp, range, yaw, W, big, sc); for (const M of villainMapMarks()) drawVillainMark(M, tp, range, yaw, W, big, sc); }
   mm.save(); mm.translate(W / 2, W / 2); if (big) mm.rotate(-(player.car ? player.car.heading + Math.PI + player.camOff : player.yaw));
   mm.fillStyle = '#5ab4ff'; mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
   mm.beginPath(); mm.moveTo(0, -8); mm.lineTo(6, 6); mm.lineTo(0, 3); mm.lineTo(-6, 6); mm.closePath(); mm.fill(); mm.stroke();
   mm.restore();
 }
 
+// a villain's lair on the minimap: a skull badge in their colour, or an arrow on the rim if off the edge
+function drawVillainMark(M, tp, range, yaw, W, big, sc) {
+  const dx = M.x - tp.x, dz = M.z - tp.z, dd = Math.hypot(dx, dz);
+  mm.save(); mm.fillStyle = M.color; mm.strokeStyle = '#111'; mm.lineWidth = 2;
+  if (dd < range * 0.92) {
+    const c = Math.cos(-yaw), s = Math.sin(-yaw), px = W / 2 + (dx * c - dz * s) * sc, pz = W / 2 + (dx * s + dz * c) * sc, k = (big ? 9 : 7) * (M.fighting ? 1 + Math.abs(Math.sin(G.elapsed * 6)) * 0.3 : 1);
+    mm.translate(px, pz); mm.beginPath(); mm.arc(0, 0, k, 0, Math.PI * 2); mm.fill(); mm.stroke();
+    mm.fillStyle = '#111'; mm.fillRect(-k * 0.5, -k * 0.25, k * 0.35, k * 0.35); mm.fillRect(k * 0.15, -k * 0.25, k * 0.35, k * 0.35); mm.fillRect(-k * 0.3, k * 0.35, k * 0.6, k * 0.15);
+    if (big) { mm.fillStyle = M.color; mm.font = 'bold 11px Arial'; mm.textAlign = 'center'; mm.fillText(M.name, 0, k + 12); }
+  } else if (!big) {
+    const a = Math.atan2(dz, dx) + yaw, R0 = W / 2 - 9;
+    mm.translate(W / 2 + Math.cos(a) * R0, W / 2 + Math.sin(a) * R0); mm.rotate(a);
+    mm.beginPath(); mm.moveTo(7, 0); mm.lineTo(-5, -6); mm.lineTo(-5, 6); mm.closePath(); mm.fill(); mm.stroke();
+  }
+  mm.restore();
+}
 // today's goal on the minimap: a diamond on the spot, or an arrow on the rim if it's off the edge
 function drawMapTarget(T, tp, range, yaw, W, big, sc) {
   const dx = T.x - tp.x, dz = T.z - tp.z, dd = Math.hypot(dx, dz);
@@ -1810,7 +1929,8 @@ function updateHUD(dt) {
   hud.stars.innerHTML = Array.from({ length: 5 }, (_, i) => `<span class="${i < G.level ? 'on' : ''}">★</span>`).join('');
   hud.pname.textContent = G.super ? 'THE PARAGON' : LEVEL_NAMES[G.level];
   const lo = LEVELS[G.level], hi = LEVELS[G.level + 1] ?? 330;
-  hud.heat.style.width = (clamp((G.heat - lo) / (hi - lo), 0, 1) * 100).toFixed(0) + '%';
+  hud.heat.style.width = (G.super ? HERO.bored * 100 : clamp((G.heat - lo) / (hi - lo), 0, 1) * 100).toFixed(0) + '%';
+  if (G.super) hud.stars.innerHTML = '<span class="on">BOREDOM</span>';
   const nh = G.helis.filter((a) => !a.dead && !a.leaving).length, nd = G.drones.filter((a) => !a.dead && !a.leaving).length;
   hud.air.textContent = nh || nd ? `${nh ? nh + (nh > 1 ? ' HELICOPTERS' : ' HELICOPTER') : ''}${nh && nd ? ' · ' : ''}${nd ? nd + (nd > 1 ? ' DRONES' : ' DRONE') : ''} SEARCHING` : '';
   hud.time.textContent = fmtTime(G.elapsed) + ' survived';
@@ -1820,7 +1940,7 @@ function updateHUD(dt) {
   else if (G.inSafe && G.inSafe.owned) { hud.alert.textContent = 'SAFEHOUSE BURNED'; hud.alert.className = 'hot'; }
   else if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR · GET UNDER COVER, UNDERGROUND OR INTO A CROWD'; hud.alert.className = 'hot'; }
   else if (chasing) { hud.alert.textContent = `${chasing} HUNTING YOU`; hud.alert.className = 'hot'; }
-  else if (G.super) { hud.alert.textContent = G.held ? 'HOLDING A FAN' : player.flying ? 'FLYING' : 'ADORED BY ALL'; hud.alert.className = 'calm'; }
+  else if (G.super) { const HH = heroHud(); hud.alert.textContent = G.villainFight ? `FIGHTING ${G.villainFight.def.name}` : `${HH.mood} · APPROVAL ${HH.approval}% (REAL: ${HH.real}%)`; hud.alert.className = G.villainFight ? 'hot' : HH.bored > 0.55 ? 'warm' : 'calm'; }
   else if (G.stareT > 0) { hud.alert.textContent = "SOMEONE'S STARING AT YOU"; hud.alert.className = 'warm'; }
   else if (G.unseenT > 10) { hud.alert.textContent = G.conspic < 0.3 && !player.car ? 'BLENDING IN' : 'HIDDEN'; hud.alert.className = 'calm'; }
   else { hud.alert.textContent = 'THEY LOST SIGHT OF YOU'; hud.alert.className = 'warm'; }
@@ -1832,8 +1952,11 @@ function updateHUD(dt) {
   hud.sus.innerHTML = ls > 0.02 ? `LOCALS ${ls < 0.25 ? 'CURIOUS' : ls < 0.55 ? 'WARY' : ls < 0.8 ? 'SUSPICIOUS' : 'ON TO YOU'} <span><i style="width:${(ls * 100).toFixed(0)}%"></i></span>` : '';
   hud.disg.innerHTML = nOut ? `DISGUISE <span><i style="width:${(player.disg * 100).toFixed(0)}%"></i></span>` : '';
   const CT = G.contract;
-  if (CT) { const dd = Math.hypot(CT.h.x - player.x, CT.h.z - player.z); hud.job.innerHTML = `<b>CONTRACT</b> ${CT.name}<br>${Math.round(dd)} m · ${fmtTime(CT.t)} left · pays $${CT.pay}`; }
-  hud.job.classList.toggle('hidden', !CT);
+  const VF = G.super && G.villainFight;
+  if (VF) hud.job.innerHTML = `<b style="color:${VF.def.css}">${VF.def.name}</b> ${VF.def.title}<br><span class="vbar"><i style="width:${Math.max(0, VF.hp / VF.def.hp * 100).toFixed(0)}%;background:${VF.def.css}"></i></span>`;
+  else if (G.super && HERO.call) { const dd = Math.hypot(HERO.call.x - player.x, HERO.call.z - player.z); hud.job.innerHTML = `<b>CALL</b> ${HERO.call.K.text(localeName(HERO.call.x, HERO.call.z))}<br>${Math.round(dd)} m · ${fmtTime(HERO.call.t)} left`; }
+  else if (CT) { const dd = Math.hypot(CT.h.x - player.x, CT.h.z - player.z); hud.job.innerHTML = `<b>CONTRACT</b> ${CT.name}<br>${Math.round(dd)} m · ${fmtTime(CT.t)} left · pays $${CT.pay}`; }
+  hud.job.classList.toggle('hidden', !CT && !VF && !(G.super && HERO.call));
   const al = G.allies.filter((a) => !a.dead);
   hud.allies.innerHTML = al.map((a) => `<span>${a.name} <em style="width:${Math.max(0, a.hp / a.T.hp * 100).toFixed(0)}%"></em></span>`).join('');
   hud.carbar.classList.toggle('hidden', !player.car);
@@ -1934,10 +2057,12 @@ function spawnTraffic(count) {
       const x = lane.axis === 'z' ? lane.fixed : along, z = lane.axis === 'z' ? along : lane.fixed;
       if (Math.hypot(x - player.x, z - player.z) < 14) continue;
       if (G.cars.some((c) => Math.abs(c.x - x) < 12 && Math.abs(c.z - z) < 12)) continue;
-      G.cars.push(new Car(lane, along)); break;
+      const vr = Math.random(), kind = vr < 0.07 ? 'bus' : vr < 0.15 ? 'truck' : vr < 0.28 ? 'van' : vr < 0.42 ? 'hatch' : 'car';
+      if (kind === 'bus' && !cityAt(x, z, 10)) continue;
+      G.cars.push(new Car(lane, along, null, kind)); break;
     }
   }
-  for (const p of parkedSpots) G.cars.push(new Car(null, 0, p));
+  for (const p of parkedSpots) { const r = Math.random(); G.cars.push(new Car(null, 0, p, r < 0.15 ? 'van' : r < 0.32 ? 'hatch' : 'car')); }
 }
 function resetGame() {
   clearWorld();
@@ -1959,6 +2084,7 @@ function resetGame() {
 function startGame(sup = G.super) {
   G.super = !!sup;
   initAudio(); resetGame(); resetWeather(); G.newsLook = {};
+  resetHero(); G.villainFight = null; G.villainsBeaten = 0; resetVillains(HC);
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
   updateSlots();
@@ -1968,7 +2094,7 @@ function startGame(sup = G.super) {
   $('hud').classList.remove('hidden');
   if (isTouch) $('touch').classList.remove('hidden');
   lockPointer();
-  if (G.super) { showBanner(`THE PARAGON<small>THE CITY'S GREATEST HERO. ASK ANYONE. THEY'RE TOO SCARED TO SAY OTHERWISE.</small>`, 4); showMsg('CLICK LASER · SPACE TWICE FLY · E GRAB · F SWAT · C SLAM', 7); }
+  if (G.super) { showBanner(`THE PARAGON<small>THE CITY'S GREATEST HERO. ASK ANYONE. THEY'RE TOO SCARED TO SAY OTHERWISE.</small>`, 4); showMsg('CLICK LASER · SPACE TWICE FLY · E GRAB · F SWAT · C SLAM · G POSE', 7); setTimeout(() => { if (G.mode === 'playing' && G.super) showMsg('STARE AT PEOPLE TO WATCH THEM CRUMBLE. VILLAINS ON THE MAP ONLY FIGHT IF YOU GO TO THEM', 5); }, 7500); }
   else {
     manhuntNewDay(mhCtx());
     showBanner(`DAY 1 OF ${CFG.days}<small>${runnersLeft()} RUNNERS. THREE TOWNS HUNTING. LAST ONE FREE WINS.</small>`, 4.5);
@@ -2428,6 +2554,7 @@ function newsState() {
   const bits = [];
   if (G.level >= 1 && !G.super) bits.push(`BOUNTY TARGET LAST SEEN NEAR ${seen}`, `PROFILE: ${LEVEL_NAMES[G.level]}`);
   if (G.level >= 3 && !G.super) bits.push('AIR UNITS SEARCHING', 'CALL CHANNEL 9 WITH ANY SIGHTINGS');
+  if (G.super) { bits.push(...heroNews()); for (const V of villains) if (V.state === 'lair') bits.push(`${V.def.name} SPOTTED ${V.def.lair} IN ${localeName(V.lair.x, V.lair.z)}`); }
   if (!G.super) bits.push(...manhuntNews(), `${runnersLeft()} OF ${MH.runners.length + 1} RUNNERS STILL FREE`);
   if (manhuntSweepCity()) bits.push(`POLICE SWEEP UNDER WAY IN ${manhuntSweepCity()}`);
   if (WX.festival) bits.push(`${FESTIVALS[WX.festival.city]} IN ${WX.festival.city} TODAY`);
@@ -2447,6 +2574,7 @@ function simulate(dt, t) {
     for (const h of G.hunters) if (!h.dead) h.update(dt);
     separateHunters();
     updateCityLife(dt, LIFE);
+    if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
     for (const a of G.helis) if (!a.dead) a.update(dt);
@@ -2482,4 +2610,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

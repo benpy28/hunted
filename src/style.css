@@ -218,3 +218,4 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 .is-touch #hud-slots { bottom: auto; top: calc(10px + env(safe-area-inset-top)); }
 .is-touch #hud-slots .slot-hint { bottom: auto; top: 100%; margin: 4px 0 0; }
 #hud-banner small { white-space: normal; max-width: min(680px, 86vw); margin: 6px auto; line-height: 1.4; }
+.vbar { display: block; width: 180px; height: 8px; margin-top: 5px; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.4); } .vbar i { display: block; height: 100%; }
