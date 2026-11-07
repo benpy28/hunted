@@ -12,7 +12,7 @@ import {
 } from './world.js';
 import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
-import { updateInteriors, zoneAt, undergroundRects, isUnderground } from './interiors.js';
+import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
@@ -48,6 +48,7 @@ const player = {
   x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: 0, pitch: 0, hp: 100, stam: 100, exhausted: false,
   lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, ammo: freshAmmo(), reloadT: 0, fireCd: 0,
   cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0,
+  outfit: {}, disg: 0,
   bob: 0, dragT: 0, carHitCd: 0, recoil: 0, shoveAnim: 0, camOff: 0, sprinting: false,
 };
 resetParkour(player);
@@ -138,7 +139,8 @@ class Hunter {
   alert(delay = 0) {
     if (this.state === 'chase') return;
     if (delay > 0) { if (this.alertT < 0) this.alertT = delay; return; }
-    this.state = 'chase'; this.lastSeen = 0; this.noticeT = mr(0.35, 1.1); // a double-take before they commit
+    this.state = 'chase'; this.lastSeen = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
+    if (player.disg > 0) wearDisguise(0.035);
   }
   remove() { scene.remove(this.g); this.dead = true; }
   die(impulse, hitY, byPlayer = false, loot = byPlayer) {
@@ -170,7 +172,7 @@ class Hunter {
       this.hasLOS = see;
       if (this.state !== 'chase') {
         const noisy = Math.abs(dy) > 3 ? 0 : player.car ? 30 : (player.sprinting ? 16 : player.crouch > 0.5 ? 3 : 7);
-        const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.5 : 1) * (1 + G.level * 0.08);
+        const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.5 : 1) * (1 + G.level * 0.08) * (player.car ? 1 : 1 - 0.6 * player.disg);
         if (d < noisy || (see && d < sight)) { this.alert(); shout(this); }
       } else if (see) { this.lastSeen = 0; if (d < 60) reportSighting(tp.x, tp.z); }
     }
@@ -723,7 +725,7 @@ class Aircraft {
       const see = los3D(this.x, fromY, this.z, tp.x, py, tp.z);
       const near = heli ? Math.hypot(this.bx - tp.x, this.bz - tp.z) < 9 : Math.hypot(this.x - tp.x, this.z - tp.z) < 17;
       if (this.state !== 'track') {
-        if (near && see) { this.seeT += dt; if (this.seeT > 0.25) { this.state = 'track'; this.lostT = 0; onSpotted(this.kind); } }
+        if (near && see) { this.seeT += dt; if (this.seeT > 0.25 + player.disg * 0.8) { this.state = 'track'; this.lostT = 0; onSpotted(this.kind); } }
         else this.seeT = 0;
       } else {
         const dist = Math.hypot(this.x - tp.x, this.z - tp.z);
@@ -1070,7 +1072,9 @@ function tryOpenShop(spot, ctx = shopCtx) {
 function leaveShop() { if (G.mode !== 'shop') return; closeShop(); G.mode = 'playing'; lockPointer(); }
 const shopCtx = {
   cash: () => player.cash,
+  items(kind, spot) { const all = CATALOG[kind]; return spot && spot.cats ? all.filter((it) => spot.cats.includes(it.cat)) : all; },
   state(it) {
+    if (it.slot) return player.outfit[it.slot] === it.id ? 'owned' : '';
     if (['crowbar', 'shotgun', 'smg'].includes(it.id) && player.owned.has(it.id)) return 'owned';
     if ((it.id === 'pal' || it.id === 'guard') && G.allies.filter((a) => !a.dead).length >= 2) return 'full';
     if (it.id === 'medkit' && player.hp >= 100) return 'full';
@@ -1085,6 +1089,7 @@ const shopCtx = {
     if (player.cash < it.price) return `YOU NEED $${it.price - player.cash} MORE`;
     player.cash -= it.price; sfx.cash();
     const id = it.id;
+    if (it.slot) { player.outfit[it.slot] = id; return putOnDisguise(); }
     if (id === 'crowbar' || id === 'shotgun' || id === 'smg') {
       player.owned.add(id);
       if (id !== 'crowbar') { const W = WEAPONS[id]; player.ammo[id].mag = W.mag; player.ammo[id].res += W.mag * 2; }
@@ -1187,6 +1192,33 @@ function updateContract(dt) {
   for (const g of C.h.guards || []) if (!g.dead && g.state !== 'chase' && !C.h.dead) { g.wt = { x: C.h.x + mr(-2, 2), z: C.h.z + mr(-2, 2) }; if (C.h.state === 'chase') g.alert(mr(0, 0.6)); }
 }
 
+// ---------------------------------------------------------------------
+// disguises: daft accessories that make you harder to recognise until people clock you
+// ---------------------------------------------------------------------
+const DISGUISE_LINES = ['NEW LOOK. NOBODY WILL EVER KNOW', 'A MASTER OF DISGUISE', 'YOUR OWN MUM WOULDN\'T KNOW YOU', 'INCOGNITO. TECHNICALLY.'];
+const outfitItem = (id) => CATALOG.costume.find((c) => c.id === id);
+function putOnDisguise() {
+  let sum = 0; for (const k in player.outfit) sum += outfitItem(player.outfit[k]).dg;
+  player.disg = Math.min(1, sum);
+  G.heat = Math.max(heatFloor(), G.heat - 14);
+  // anyone who's lost sight of you loses track of who they're looking for
+  for (const h of G.hunters) if (!h.dead && h.state === 'chase' && !h.hasLOS) { h.state = 'search'; h.wt = null; }
+  G.lastSeenT = Math.max(G.lastSeenT, 11);
+  updateOutfitView();
+  return mpick(DISGUISE_LINES);
+}
+function wearDisguise(n) {
+  if (player.disg <= 0) return;
+  player.disg = Math.max(0, player.disg - n);
+  if (player.disg === 0) { showMsg('THEY\'VE CLOCKED YOUR DISGUISE', 2.4); updateOutfitView(); }
+}
+const outfitEl = $('outfit');
+function updateOutfitView() {
+  const o = player.outfit;
+  outfitEl.className = Object.values(o).map((id) => 'o-' + id).join(' ') + (player.disg <= 0 && Object.keys(o).length ? ' burnt' : '');
+  vmSleeve.color.set(o.body === 'hivis' ? 0xff7a1a : 0x3a4a3a);
+}
+
 // one warm light that hops to whichever shop you're next to, so the interiors read at night
 const shopLight = new THREE.PointLight(0xffe6c0, 0, 16, 1.4); scene.add(shopLight);
 function updateShopLight() {
@@ -1237,7 +1269,7 @@ function recomputeKeys() {
 }
 window.addEventListener('keydown', (e) => {
   if (G.mode === 'shop') {
-    if (/^Digit[1-9]$/.test(e.code)) shopBuy(+e.code.slice(5) - 1);
+    if (/^Digit[0-9]$/.test(e.code)) shopBuy((+e.code.slice(5) + 9) % 10);
     if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyQ') leaveShop();
     return;
   }
@@ -1338,7 +1370,7 @@ const hud = {
   city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'),
   time: $('hud-time'), kills: $('hud-kills'), alert: $('hud-alert'), msg: $('hud-msg'), banner: $('hud-banner'),
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
-  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'),
+  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'),
 };
 function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
 let bannerT = 0;
@@ -1443,6 +1475,8 @@ function updateHUD(dt) {
   const W = WEAPONS[player.weapon], A = player.ammo[player.weapon];
   hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
   hud.cash.textContent = '$' + player.cash;
+  const nOut = Object.keys(player.outfit).length;
+  hud.disg.innerHTML = nOut ? `DISGUISE <span><i style="width:${(player.disg * 100).toFixed(0)}%"></i></span>` : '';
   const CT = G.contract;
   if (CT) { const dd = Math.hypot(CT.h.x - player.x, CT.h.z - player.z); hud.job.innerHTML = `<b>CONTRACT</b> ${CT.name}<br>${Math.round(dd)} m · ${fmtTime(CT.t)} left · pays $${CT.pay}`; }
   hud.job.classList.toggle('hidden', !CT);
@@ -1547,8 +1581,8 @@ function resetGame() {
   clearWorld();
   resetParkour(player);
   Object.assign(player, { x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: Math.PI / 4, pitch: 0, hp: 100, stam: 100, exhausted: false, lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, ammo: freshAmmo(), reloadT: 0, fireCd: 0, dragT: 0, carHitCd: 0, camOff: 0,
-    cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0 });
-  showWeaponModel();
+    cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0, outfit: {}, disg: 0 });
+  showWeaponModel(); updateOutfitView();
   Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false, hitstopT: 0, fovKick: 0, fireHeld: false });
   G.lkp = { x: 0, z: 0 };
   spawnTraffic(70);
@@ -1762,7 +1796,8 @@ function updateDirector(dt) {
   // profile
   G.lastSeenT += dt;
   const seenByHunters = G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS);
-  G.heat += dt * (0.25 + (G.airTracking ? 3 : 0) + (seenByHunters ? 0.8 : 0));
+  G.heat += dt * (0.25 + (G.airTracking ? 3 : 0) + (seenByHunters ? 0.8 * (1 - 0.5 * player.disg) : 0));
+  if (player.disg > 0) wearDisguise(dt * 0.0035);
   if (G.lastSeenT > 10) G.heat -= dt * 3.5;
   G.heat = clamp(G.heat, heatFloor(), 330);
   let lvl = 0; for (let i = 0; i < LEVELS.length; i++) if (G.heat >= LEVELS[i]) lvl = i;
@@ -1864,9 +1899,14 @@ function simulate(dt, t) {
 
 player.x = 0; player.z = 0;
 spawnShopkeepers(scene);
+// the Galleria's novelty shops sell disguises too, each its own speciality
+{
+  const MALL_CATS = { 'SPECS APPEAL': ['eyes'], 'BEARD BARN': ['face'], 'BIG HAT BARN': ['hat'], 'WIGS 4 U': ['wig'], 'SUIT YOURSELF': ['body', 'hat'] };
+  for (const m of mallShops) if (MALL_CATS[m.name]) shopSpots.push({ x: m.x, z: m.z, y: m.y, r: 1.8, kind: 'costume', name: m.name, city: 'PORT HALDEN', cats: MALL_CATS[m.name], face: 'mall' });
+}
 spawnTraffic(70);
 $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

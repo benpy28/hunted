@@ -174,12 +174,23 @@ export const CATALOG = {
     { id: 'pal', name: 'A PAL', price: 70, desc: 'Follows you about and throws hands at anyone who comes for you. Sticks around 3 days or until flattened.' },
     { id: 'guard', name: 'A BODYGUARD', price: 190, desc: 'Same deal but armed, tougher, and a slightly better attitude.' },
   ],
-  costume: [],
+  costume: [
+    { id: 'specs', slot: 'eyes', cat: 'eyes', name: 'ENORMOUS GLASSES', price: 25, dg: 0.25, desc: 'Lenses the size of saucers. Nobody looks past them.' },
+    { id: 'aviators', slot: 'eyes', cat: 'eyes', name: 'MIRRORED AVIATORS', price: 30, dg: 0.25, desc: 'Very cool. Slightly gold. You can see a bit less.' },
+    { id: 'tache', slot: 'face', cat: 'face', name: 'FAKE MOUSTACHE', price: 15, dg: 0.2, desc: 'Glue-on. Itchy. Distinguished.' },
+    { id: 'nose', slot: 'face', cat: 'face', name: 'NOSE & BROWS', price: 20, dg: 0.22, desc: 'A big pink conk with eyebrows attached. A classic.' },
+    { id: 'beard', slot: 'face', cat: 'face', name: 'WIZARD BEARD', price: 35, dg: 0.3, desc: 'Down to your belt. Nobody suspects a wizard.' },
+    { id: 'tophat', slot: 'head', cat: 'hat', name: 'TALL TOP HAT', price: 35, dg: 0.25, desc: 'Very tall. Very posh. Very visible, but not as you.' },
+    { id: 'cowboy', slot: 'head', cat: 'hat', name: 'GIANT FOAM COWBOY HAT', price: 40, dg: 0.3, desc: 'One size fits nobody.' },
+    { id: 'clownwig', slot: 'head', cat: 'wig', name: 'RAINBOW CLOWN WIG', price: 30, dg: 0.28, desc: 'Loud, proud and nothing like your real hair.' },
+    { id: 'mullet', slot: 'head', cat: 'wig', name: 'BUSINESS MULLET', price: 30, dg: 0.25, desc: 'Business at the front, witness protection at the back.' },
+    { id: 'hivis', slot: 'body', cat: 'body', name: 'HI-VIS VEST', price: 30, dg: 0.3, desc: 'Walk with purpose. Everyone assumes you work here.' },
+  ],
 };
 const BLURBS = {
   guns: ['"No questions. Well, one. Cash or cash?"', '"Saw you on the news. Lovely picture."', '"Crowbar\'s the bestseller this week. Can\'t think why."'],
   hire: ['"Everyone\'s got a price. Ours is lower."', '"Kevin\'s great. Don\'t ask Kevin about his ex."', '"No refunds if they get flattened."'],
-  costume: ['"Nobody will ever know it\'s you. Probably."'],
+  costume: ['"Nobody will ever know it\'s you. Probably."', '"Ooh, that\'s a look. That\'s definitely a look."', '"Wear it with confidence. Confidence is half the disguise."'],
 };
 
 // ---------------------------------------------------------------------
@@ -197,7 +208,7 @@ export function closeShop() { $('shop').classList.add('hidden'); shopOpen = null
 export const shopIsOpen = () => !!shopOpen;
 function renderShop(note = '') {
   if (!shopOpen) return;
-  const items = menuCtx.items ? menuCtx.items(shopOpen.kind) : CATALOG[shopOpen.kind];
+  const items = menuCtx.items ? menuCtx.items(shopOpen.kind, shopOpen) : CATALOG[shopOpen.kind];
   $('shop-cash').textContent = `WALLET $${menuCtx.cash()}`;
   $('shop-note').textContent = note;
   const list = $('shop-list'); list.innerHTML = '';
@@ -212,7 +223,7 @@ function renderShop(note = '') {
 }
 export function shopBuy(i) {
   if (!shopOpen) return;
-  const items = menuCtx.items ? menuCtx.items(shopOpen.kind) : CATALOG[shopOpen.kind];
+  const items = menuCtx.items ? menuCtx.items(shopOpen.kind, shopOpen) : CATALOG[shopOpen.kind];
   const it = items[i]; if (!it) return;
   const err = menuCtx.buy(it);
   renderShop(err || `BOUGHT: ${it.name}`);
