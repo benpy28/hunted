@@ -425,7 +425,7 @@ function cnUpdateAudience(dt, K) {
       if (watching) s = null;
       const h = watching || s ? K.spawnCivAt(S.i === 0 ? 264 : 314, S.z0 + 3) : null;
       if (h) {
-        h.cnAud = true; h.cnScreen = S.i; h.job = null;
+        h.cnAud = true; h.cnScreen = S.i; h.job = null; h.walkK = 1.4;
         if (s) { h.x = s.x; h.z = s.z; h.y = s.top; s.taken = h; h.cnSeat = s; K.lifeGo(h, 'sit', s.x, s.z, s.face, mr(60, 120), { spot: s }); }
         else cnTakeSeat(h, S, K);
         folk.push(h);
