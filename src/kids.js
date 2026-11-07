@@ -264,6 +264,9 @@ function updateKid(k, dt, K) {
     // wedged on something: pop back onto the grown-up's path
     if (spd > 0.5 && Math.hypot(k.x - bx, k.z - bz) < spd * dt * 0.25) k.stuckT = (k.stuckT || 0) + dt; else k.stuckT = 0;
     if (k.stuckT > 1.2) { const q = k.trail.length ? k.trail[Math.max(0, k.trail.length - 3)] : { x: O.x - Math.sin(O.face) * 0.7, z: O.z - Math.cos(O.face) * 0.7 }; k.x = q.x; k.z = q.z; k.stuckT = 0; k.trail.length = 0; }
+    // lost them altogether (the grown-up hopped a wall, or we slid along one): a kid always finds their way back
+    k.lostT = dO > 9 ? (k.lostT || 0) + dt : 0;
+    if (k.lostT > 2) { k.x = O.x - _kfx(O.face) * 0.7; k.z = O.z - _kfz(O.face) * 0.7; k.lostT = 0; k.stuckT = 0; k.trail.length = 0; }
     if (spd < 0.2 && dO < 1.4) k.face += angDiff(k.face, O.face) * Math.min(1, dt * 4);
     kidPose(k, spd, dt);
     if (dO < 1.0 && !O.pram) { k.p.armL.rotation.x = k.p.armR.rotation.x = 0; (k.side > 0 ? k.p.armR : k.p.armL).rotation.z = 0; (k.side > 0 ? k.p.armL : k.p.armR).rotation.x = -0.5; (k.side > 0 ? O.p.armR : O.p.armL).rotation.x = -0.35; } // holding hands
