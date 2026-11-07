@@ -19,6 +19,7 @@ import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } f
 import { atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
+import { WX, WX_NAMES, FESTIVALS, updateWeather, applyWeatherLook, resetWeather, forceWeather } from './weather.js';
 
 const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
 
@@ -210,8 +211,8 @@ class Hunter {
         const looking = d < 4 || ahead > 0.3 || this.huntT > 0 || this.sus > 0.4;
         let gain = 0;
         if (see && d < sight && looking) {
-          gain = G.conspic * knownFace() * lerp(1.8, 0.35, clamp(d / sight, 0, 1)) * 0.9;
-          if (d < 14 && !player.car) bumpLocal(tdt * 0.0025);
+          gain = G.conspic * knownFace() * lerp(1.8, 0.35, clamp(d / sight, 0, 1)) * 0.9 * (WX.crowd > 1 ? 0.65 : 1);
+          if (d < 14 && !player.car) bumpLocal(tdt * 0.0025 * (WX.crowd > 1 ? 0.5 : 1));
         }
         if (Math.abs(dy) < 3 && d < 14 && player.sprinting) gain += 0.5 * knownFace(); // pounding footsteps
         if (gain > 0) this.sus += gain * tdt; else this.sus = Math.max(0, this.sus - tdt * 0.06);
@@ -664,6 +665,7 @@ function useAction() {
   const shop = player.mode === 'move' ? shopNear(player.x, player.y, player.z) : null;
   if (shop) { tryOpenShop(shop); return; }
   const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
+  if (atm && WX.blackout && WX.blackout.city === WX.here) { showMsg('CASHPOINT IS DEAD. POWER CUT.', 2); return; }
   if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
   const Z = zipStartNear();
   if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
@@ -1548,7 +1550,7 @@ if (isTouch) {
 // HUD
 // =====================================================================
 const hud = {
-  city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'),
+  city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'), wx: $('hud-wx'),
   time: $('hud-time'), kills: $('hud-kills'), alert: $('hud-alert'), msg: $('hud-msg'), banner: $('hud-banner'),
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
   carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
@@ -1645,7 +1647,8 @@ function updateHUD(dt) {
   hud.city.textContent = G.locale;
   hud.day.textContent = `DAY ${Math.min(G.day, CFG.days)} / ${CFG.days}`;
   const hh = Math.floor(G.hour), mn = Math.floor(((G.hour - hh) * 60) / 15) * 15;
-  hud.clock.textContent = String(hh).padStart(2, '0') + ':' + String(mn).padStart(2, '0') + (G.dayAmt < 0.3 ? ' · NIGHT' : '');
+  hud.clock.textContent = String(hh).padStart(2, '0') + ':' + String(mn).padStart(2, '0') + (G.dayAmt < 0.3 ? ' · NIGHT' : '') + (WX.kind !== 'clear' ? ' · ' + WX_NAMES[WX.kind] : '');
+  hud.wx.textContent = WX.blackout && WX.blackout.city === WX.here ? 'POWER CUT: STREETS ARE DARK' : WX.festival && WX.festival.city === WX.here ? FESTIVALS[WX.here] + ': CROWDS' : '';
   hud.stars.innerHTML = Array.from({ length: 5 }, (_, i) => `<span class="${i < G.level ? 'on' : ''}">★</span>`).join('');
   hud.pname.textContent = G.super ? 'THE PARAGON' : LEVEL_NAMES[G.level];
   const lo = LEVELS[G.level], hi = LEVELS[G.level + 1] ?? 330;
@@ -1724,6 +1727,7 @@ function updateLighting(t) {
   }
   const win = 0.04 + (1 - dayAmt) * 1.05 + dusk * 0.2;
   for (const m of emissiveFacades) m.emissiveIntensity = win;
+  applyWeatherLook(hemi, sun, dayAmt, under);
   const blink = Math.sin(t * 3) > 0.2;
   beaconMat.opacity = blink ? 1 : 0.15;
   for (const a of animated) a.obj.rotation.z += a.spin * 0.016;
@@ -1746,7 +1750,7 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   const gunner = type !== 'brute' && Math.random() < Math.min(0.08 + (G.day - 1) * 0.022, 0.5);
   G.hunters.push(new Hunter(p.x, p.z, type, gunner, state));
 }
-const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min(26 + G.day * 1.2 + G.level * 2, 50) * localeFactor(tp.x, tp.z)); }; // everyday crowds to blend into
+const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min(26 + G.day * 1.2 + G.level * 2, 50) * localeFactor(tp.x, tp.z) * WX.crowd); }; // everyday crowds to blend into
 const maxChasers = () => Math.round(5 + G.level * 2 + G.day * 0.35);
 
 function clearWorld() {
@@ -1793,7 +1797,7 @@ function resetGame() {
 }
 function startGame(sup = G.super) {
   G.super = !!sup;
-  initAudio(); resetGame();
+  initAudio(); resetGame(); resetWeather();
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
   player.flying = false; player.slamming = false;
@@ -2066,6 +2070,10 @@ function napInSafehouse() {
 
 function updateDirector(dt) {
   G.hour = hourAt(G.elapsed);
+  { const tp0 = targetPos(), c0 = cityAt(tp0.x, tp0.z, 20);
+    const covered = !!G.inSafe || camera.position.y < -1 || (!player.car && !!zoneAt(player.x, player.y, player.z));
+    updateWeather(dt, { day: G.day, hour: G.hour, city: c0 ? c0.name : null, covered, say: (m) => showMsg(m, 3.5), banner: (h) => showBanner(h, 4) });
+    G.weatherSight = WX.sight; }
   const day = Math.floor(G.elapsed / CFG.dayLength) + 1;
   if (day > G.day) {
     G.day = day;
@@ -2209,4 +2217,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

@@ -97,3 +97,20 @@ export function setZipSound(v) {
 // superpower mode: screaming bystanders and eye lasers
 sfx.scream = () => { const f = 520 + Math.random() * 420; tone(f, 0.55, 'triangle', 0.06, 1.45); tone(f * 1.02, 0.55, 'sawtooth', 0.02, 1.45); };
 sfx.zap = () => { tone(1500 + Math.random() * 300, 0.07, 'sawtooth', 0.035, 0.5); };
+// weather: a rain hiss that follows the downpour, rolling thunder and festival fireworks
+let rainGain = null;
+export function setRain(v) {
+  if (!actx) return;
+  if (!rainGain) {
+    if (!noiseBuf) noise(0.01, 0.0001);
+    const src = actx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200;
+    rainGain = actx.createGain(); rainGain.gain.value = 0;
+    src.connect(hp); hp.connect(lp); lp.connect(rainGain); rainGain.connect(master); src.start();
+  }
+  rainGain.gain.setTargetAtTime(clamp(v, 0, 0.4), actx.currentTime, 0.4);
+}
+sfx.thunder = (near) => { const d = near ? 0 : 0.6 + Math.random() * 1.2; if (near) noise(0.25, 0.6, 1800, 0.4); noise(2.6, near ? 0.75 : 0.45, 90, 0.5, d); tone(42, 2.2, 'sine', near ? 0.25 : 0.14, 0.7, d); };
+sfx.firework = () => { const d = 0.5 + Math.random() * 0.4; tone(900, 0.5, 'sine', 0.03, 2.5); noise(0.5, 0.45, 260, 0.5, d); noise(0.9, 0.12, 3200, 1, d + 0.05); };
+sfx.powerDown = () => { tone(220, 1.2, 'sawtooth', 0.08, 0.2); noise(0.3, 0.2, 400, 0.6); };

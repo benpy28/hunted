@@ -948,10 +948,11 @@ function genCountryside() {
 
 // ---------------------------------------------------------------------
 export const lanes = [];
+export const baked = {}; // the big merged meshes, for weather and power cuts to tweak
 export function generateWorld() {
   const gb = new GeoBuf();
   for (const q of rectMinus({ x0: -2650, x1: 3350, z0: -2670, z1: 3330 }, groundHoles)) gb.flat(q.x0, q.x1, q.z0, q.z1, 0, 0x5a7d45);
-  gb.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  baked.grass = gb.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   genMetro(PH); genSuburb(ASH); genIndustrial(DOCKS);
   for (const h of HIGHWAYS) genHighway(h);
   genCountryside();
@@ -959,10 +960,10 @@ export function generateWorld() {
   for (const f of Object.values(FAC)) f.buf.build(f.mat);
   roofBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   propBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
-  glowBuf.build(new THREE.MeshBasicMaterial({ vertexColors: true }));
-  shopBuf.build(new THREE.MeshBasicMaterial({ map: shopTex, vertexColors: true }));
-  markBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
-  groundBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  baked.glow = glowBuf.build(new THREE.MeshBasicMaterial({ vertexColors: true }));
+  baked.shop = shopBuf.build(new THREE.MeshBasicMaterial({ map: shopTex, vertexColors: true }));
+  baked.mark = markBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  baked.ground = groundBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   waterBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0a1a2a }));
   lanes.push(...laneMap.values());
   buildBuckets();
