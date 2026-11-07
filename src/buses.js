@@ -40,6 +40,9 @@ const BS_STOPS = [
   { id: 'leisure', name: 'THE LEISURE PARK', x: -9.4, z: 296, axis: 'z', dir: -1 },
   { id: 'leisure-e', name: 'THE LEISURE PARK', x: 9.4, z: 296, axis: 'z', dir: 1 },
 ];
+// and a few stops in each town (just a pole on the pavement: COUNTY LINK STOP)
+for (const [x, nm] of [[-60, 'PORT HALDEN'], [120, 'PORT HALDEN'], [610, 'ASHFORD'], [760, 'ASHFORD']]) BS_STOPS.push({ id: `t9e${x}`, name: nm, x, z: -9.2, axis: 'x', dir: 1, flag: true }, { id: `t9w${x}`, name: nm, x, z: 9.2, axis: 'x', dir: -1, flag: true });
+for (const [z, nm] of [[-60, 'PORT HALDEN'], [120, 'PORT HALDEN'], [620, 'SALTMARSH DOCKS'], [760, 'SALTMARSH DOCKS']]) BS_STOPS.push({ id: `t4s${z}`, name: nm, x: 9.2, z, axis: 'z', dir: 1, flag: true }, { id: `t4n${z}`, name: nm, x: -9.2, z, axis: 'z', dir: -1, flag: true });
 
 // =====================================================================
 // Building it: the station, and shelters for the country stops
@@ -57,6 +60,11 @@ function bsShelter(S) {
   const [px, pz] = R(2.8, 0.2); propBuf.box(px - 0.05, px + 0.05, 0, 2.9, pz - 0.05, pz + 0.05, 0x8a8a90); propBuf.box(px - 0.3, px + 0.3, 2.5, 3.0, pz - 0.3, pz + 0.3, BS_ORANGE);
   const face = ax ? (out > 0 ? 0 : Math.PI) : (out > 0 ? Math.PI / 2 : -Math.PI / 2);
   for (const o of [-0.8, 0, 0.8]) { const [sx, sz] = R(o, 1.1), [wx, wz] = R(o, 0.3); lifeSpots.push({ kind: 'bus', x: wx, z: wz, sx, sz, face, bsStop: S.id }); }
+}
+function bsFlag(S) {
+  propBuf.box(S.x - 0.05, S.x + 0.05, 0.15, 2.9, S.z - 0.05, S.z + 0.05, 0x8a8a90); propBuf.box(S.x - 0.3, S.x + 0.3, 2.4, 3.0, S.z - 0.04, S.z + 0.04, BS_ORANGE);
+  const ax = S.axis === 'x', out = ax ? (S.z < 0 ? 1 : -1) : (S.x < 0 ? 1 : -1), face = ax ? (out > 0 ? 0 : Math.PI) : (out > 0 ? Math.PI / 2 : -Math.PI / 2);
+  for (const o of [-1.2, 1.2]) { const wx = S.x + (ax ? o : -out * 0.3), wz = S.z + (ax ? -out * 0.3 : o); lifeSpots.push({ kind: 'bus', x: wx, z: wz, sx: wx, sz: wz, face, bsStop: S.id }); }
 }
 function buildStation() {
   const S = station, P = BS_CLEAR, H = S.H;
@@ -100,7 +108,7 @@ function buildStation() {
   for (const ry of [0, Math.PI]) bsPlane(6.4, 2.0, S.boardTex, 296, 4.4, S.z1 - 0.4 + (ry ? 0 : 0.02), ry);
   propBuf.box(292.7, 299.3, 3.35, 5.45, S.z1 - 0.43, S.z1 - 0.39, 0x1a1a1e);
 }
-worldHooks.beforeBake.push(() => { buildStation(); for (const S of BS_STOPS) if (S.id !== 'station') bsShelter(S); station.built = true; });
+worldHooks.beforeBake.push(() => { buildStation(); for (const S of BS_STOPS) if (S.flag) bsFlag(S); else if (S.id !== 'station') bsShelter(S); station.built = true; });
 
 // =====================================================================
 // The county buses (and the night buses they turn into)
@@ -147,7 +155,8 @@ export function busLogic(bus, dt, target, K) {
     for (const S of BS_STOPS) {
       if (S.axis !== bus.cb.axis || S.dir !== bus.cb.dir) continue;
       if (bus.cbLast === S.id && bsNearStop(bus, S, -20, 30)) continue;
-      if (bsNearStop(bus, S, -1, 2.5, bus.hl - 1.3)) { bus.cbLast = S.id; // (pulls up with its front door at the stop) bus.stopT = mine && !R.bell ? 4 : 7; bus.stopAt = { x: S.x, z: S.z, kind: 'bus' }; bus.lastStop = bus.stopAt; BS_STATE.stops++; if (K.near(bus.x, bus.z, 50)) K.sfx.horn(); return 0; }
+      { const ah = (S.x - bus.x) * bus.fx + (S.z - bus.z) * bus.fz - (bus.hl - 1.3); if (ah > 0.6 && ah < 28 && Math.abs((S.x - bus.x) * bus.fz - (S.z - bus.z) * bus.fx) < 9) target = Math.min(target, Math.max(1.5, ah * 0.55)); } // (slowing down for it)
+      if (bsNearStop(bus, S, -1.5, 0.6, bus.hl - 1.3)) { bus.cbLast = S.id; /* (pulls up with its front door at the stop) */ bus.stopT = mine && !R.bell ? 4 : 7; bus.stopAt = { x: S.x, z: S.z, kind: 'bus' }; bus.lastStop = bus.stopAt; BS_STATE.stops++; if (K.near(bus.x, bus.z, 50)) K.sfx.horn(); return 0; }
     }
   }
   if (mine && R.bell) {
@@ -208,7 +217,7 @@ function bsDoorBus(K) {
   if (P.car || P.hide || P.bike || P.mode !== 'move' || BS_STATE.ride || P.y > 1.2) return null;
   for (const c of K.G.cars) {
     if (c.kind !== 'bus' || c.wrecked || c.driver !== 'traffic' || !(c.stopT > 0) || Math.abs(c.speed) > 0.5) continue;
-    const d = bsDoor(c); if (Math.hypot(d.x - P.x, d.z - P.z) < 2.6) return c;
+    const d = bsDoor(c); if (Math.hypot(d.x - P.x, d.z - P.z) < 3) return c;
   }
   return null;
 }
@@ -254,7 +263,9 @@ function bsRide(dt, K) {
   const lx = R.seat.x, lz = R.seat.z, sx = Math.cos(c.heading), sz = -Math.sin(c.heading);
   P.x = c.x + c.fx * lz + sx * lx; P.z = c.z + c.fz * lz + sz * lx; P.y = 0.5; P.vx = P.vz = 0; P.vy = 0; P.crouch = 0.6; P.sprinting = false;
   P.stam = Math.min(100, P.stam + 12 * dt);
-  // the end of the line (the road runs out and the bus just sits there)
+  // the end of the line: the lane runs out at the edge of town
+  if (c.lane) { const al = c.lane.axis === 'z' ? c.z : c.x; if ((c.lane.dir > 0 && al > c.lane.a1 - 25) || (c.lane.dir < 0 && al < c.lane.a0 + 25)) { c.speed = 0; c.stopT = Math.max(c.stopT, 2); BS_STATE.kicked++; bsGetOff(K, 'END OF THE LINE. ALL CHANGE, PLEASE'); return false; } }
+  // (or the road's blocked and the bus just sits there)
   if (Math.abs(c.speed) < 0.3 && !(c.stopT > 0)) R.stillT += dt; else R.stillT = 0;
   if (R.stillT > 6) { BS_STATE.kicked++; bsGetOff(K, 'END OF THE LINE. THE DRIVER TURNS THE ENGINE OFF'); return false; }
   // it's stopped at a stop: off you get if you rang

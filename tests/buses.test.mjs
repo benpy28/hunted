@@ -54,11 +54,11 @@ test('get the X9: it calls at the station, you pay and sit down, ride along Rout
     const B = H.buses, K = H.TDK;
     H.goTo(H, 296, -7.2, 0);
     const c = H.placeBus(H, 'X9', 1, 250);
-    const called = H.stepAt(H, 15, 12, () => c.stopT > 0 && Math.abs(c.x - 296) < 6);
+    const called = H.stepAt(H, 15, 12, () => c.stopT > 0 && Math.abs(c.x - 296) < 8 && Math.abs(c.speed) < 0.5);
     const T = B.useTarget(K), cash0 = H.player.cash;
     if (T && T.kind === 'board') B.use(T, K);
     const on = !!B.BS_STATE.ride, paid = cash0 - H.player.cash;
-    H.stepAt(H, 4, 12);
+    H.stepAt(H, 12, 12);
     const k = H.conspicNow(), roofed = H.underRoof(), y = H.player.y, x1 = H.player.x, withBus = Math.hypot(H.player.x - c.x, H.player.z - c.z) < 4;
     const bell = B.useTarget(K); B.use(bell, K);
     const off = H.stepAt(H, 60, 12, () => !B.BS_STATE.ride);
@@ -78,16 +78,16 @@ test('night buses: after eleven the blinds change, it\'s $3, a DAY RIDER covers 
     const B = H.buses, K = H.TDK;
     H.goTo(H, 296, -7.2, 0);
     const c = H.placeBus(H, 'X9', 1, 250);
-    H.stepAt(H, 15, 23.5, () => c.stopT > 0 && Math.abs(c.x - 296) < 6);
+    H.stepAt(H, 15, 23.5, () => c.stopT > 0 && Math.abs(c.x - 296) < 8 && Math.abs(c.speed) < 0.5);
     const night = c.blind.night, fare = B.busFare(23.5);
     // a hunter right behind you
     const h = new H.Hunter(292, -9, 'cop', false, 'chase'); H.G.hunters.push(h); h.state = 'chase';
-    const T = B.useTarget(K); B.use(T, K); const refused = !B.BS_STATE.ride && B.BS_STATE.refused === 1;
+    H.G.hour = 23.5; const T = B.useTarget(K); B.use(T, K); const refused = !B.BS_STATE.ride && B.BS_STATE.refused === 1;
     h.remove(); H.G.hunters.length = 0;
     // the day rider
     B.BS_STATE.rider = H.G.day; const c2 = H.placeBus(H, 'X9', 1, 250);
-    H.stepAt(H, 15, 23.5, () => c2.stopT > 0 && Math.abs(c2.x - 296) < 6);
-    const cash0 = H.player.cash, T2 = B.useTarget(K); if (T2 && T2.kind === 'board') B.use(T2, K);
+    H.stepAt(H, 15, 23.5, () => c2.stopT > 0 && Math.abs(c2.x - 296) < 8 && Math.abs(c2.speed) < 0.5);
+    H.G.hour = 23.5; const cash0 = H.player.cash, T2 = B.useTarget(K); if (T2 && T2.kind === 'board') B.use(T2, K);
     const free = !!B.BS_STATE.ride && cash0 === H.player.cash, nightRide = B.BS_STATE.nightRides;
     H.stepAt(H, 3, 23.5);
     const off = B.useTarget(K);
