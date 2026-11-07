@@ -28,6 +28,8 @@ import { MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, mark
 import { KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, updateKids, kidsConspic, resetKids, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, grownupHears, kidsDebug } from './kids.js';
 import { TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, isSchoolDay, eventsOn, eventOn, folkMix, folkWants, crowdMul, tdPlan, tdVisit, tdWants, townUseTarget, townUsePrompt, townUse, updateTownDay, townDayConspic, tdStaffShare, tdBigMarket, diaryHTML, resetTownDay, buildTownDay, townDayDebug, funRun, fete, todayLine } from './townday.js';
 import { mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUsePrompt, mdUse, mdConspic, updateMatchDay, mdPlan, resetMatchDay, mdDiaryBits, matchDayDebug, mdInternals } from './matchday.js';
+import { CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUsePrompt, cnUse, cnConspic, cnSeatPlayer, cnSit, cnStand, updateCinema, cnPlan, resetCinema, cnDiaryBits, cinemaDebug, cnInternals } from './cinema.js';
+import { LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUsePrompt, lnUse, lnConspic, updateLaunderettes, resetLaunderettes, lnDiaryBits, launderetteDebug, lnInternals } from './launderette.js';
 import { IC_STATE, icLogic, icHatch, icHatchNear, icMenu, icDistracted, updateIceCream, icConspic, resetIceCream, iceCreamDebug, shopHours, shopOpenAt, shutLine, hoursLine } from './icecream.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, dressCivilian, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
@@ -105,7 +107,7 @@ function conspicuous() {
   const held = heldSus();
   k += held * (player.drawnT < 4 ? 1.1 : 0.75); // whatever's in your hands, and more so if you just used it
   if (player.drawnT < 4 && held > 0) k += 0.15;
-  if (player.mode !== 'move' || player.y > 1.6) k += 0.6; // climbing about, up on the rooftops
+  if (player.mode !== 'move' || (player.y > 1.6 && !inCinema(player.x, player.z))) k += 0.6; // climbing about, up on the rooftops (not up the back of the cinema)
   if (player.crouch > 0.5) k += 0.15;
   if (player.hp < 45) k += 0.15; // looking roughed up
   k += stealthConspic(); // smelling of bins
@@ -113,6 +115,7 @@ function conspicuous() {
   k += marketConspic(MK); // lost in the market crowd, or hiding behind a bunch of flowers
   k += townDayConspic(TDK) + kidsConspic(TDK); // a runner in the fun run, a face at the fete, a tired parent with a pram
   k += mdConspic(TDK) + icConspic(TDK); // one of hundreds on the terrace, head bowed in a pew, licking a cone
+  k += cnConspic(TDK) + lnConspic(TDK); // a face in the dark in row J, a bored person waiting for their wash
   return Math.max(0, k);
 }
 const knownFace = () => (0.3 + G.level * 0.55) * (1 - 0.6 * player.disg) * (1 + 2.5 * localSus()) * (1 + (G.day - 1) * 0.015);
@@ -833,6 +836,8 @@ function useAction() {
     const k = kidNear(player.x, player.z); if (k) { showMsg(greetKid(k, TDK), 2.4); return; }
     const T = townUseTarget(TDK); if (T) { townUse(T, TDK); return; }
     const MT = mdUseTarget(TDK); if (MT) { mdUse(MT, TDK); return; }
+    const CT = cnUseTarget(TDK); if (CT) { cnUse(CT, TDK); return; }
+    const LT = lnUseTarget(TDK); if (LT) { lnUse(LT, TDK); return; }
     const VAN = icHatchNear(TDK); if (VAN) { tryOpenShop({ name: 'MR WHIPPLE\'S ICES', kind: 'ices', blurbs: ['"WHAT CAN I GET YOU, LOVE?"', '"SPRINKLES ARE EXTRA. ONLY JOKING."', '"QUICK, BEFORE THE KIDS SEE."'] }, icMenu(TDK)); return; }
     const P = !G.super && !player.bike ? pramNear(player.x, player.z) : null; if (P) { grabPram(P, TDK); return; }
   }
@@ -1063,6 +1068,7 @@ function underRoof() {
   if (safeAt(x, y, z) || zoneAt(x, y, z) || y < -1) return true;
   for (const r of shopRooms) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
   for (const r of mdRoofs) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
+  for (const r of cnRoofs) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1 && y < r.h - 0.5) return true;
   return false;
 }
 function onSpotted(kind) {
@@ -1327,6 +1333,8 @@ const TDK = {
   get festival() { return WX.festival ? FESTIVALS[WX.festival.city] : null; }, get festivalCity() { return WX.festival ? WX.festival.city : ''; },
   bumpLocal: (n) => bumpLocal(n), coolHeat: (n) => { G.heat = Math.max(heatFloor(), G.heat - n); },
   openMenu: (spot, ctx) => tryOpenShop(spot, ctx), distracted: (k) => icDistracted(k, TDK),
+  get input() { return input; }, isOpen: (kind, city) => shopOpenAt(kind, city, G.day, G.hour), freshen: () => putOnDisguise(),
+  refreshOutfit: () => { let sum = 0; for (const k in player.outfit) sum += outfitItem(player.outfit[k]).dg; player.disg = Math.min(1, sum); updateOutfitView(); },
 };
 const LIFE = {
   say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b, HC),
@@ -1335,7 +1343,7 @@ const LIFE = {
   get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
   near: (x, z, r) => Math.abs(x - camera.position.x) < r && Math.abs(z - camera.position.z) < r,
   // the town's calendar: everyone keeps their own hours, and the school run, market days and events pull people about
-  plan: (h, hr) => (G.super ? false : mdPlan(h, hr, TDK) || tdPlan(h, hr, TDK)), wants: (h, hr) => tdWants(h, hr, TDK), visit: (h, want) => tdVisit(h, want, TDK),
+  plan: (h, hr) => (G.super ? false : mdPlan(h, hr, TDK) || cnPlan(h, hr, TDK) || tdPlan(h, hr, TDK)), wants: (h, hr) => tdWants(h, hr, TDK), visit: (h, want) => tdVisit(h, want, TDK),
   isShut: (W) => !shopOpenAt(W.kind, W.city, G.day, G.hour), // shop hours: nobody pops into a shop that's shut
 };
 // what the hero and villain modules need from the game
@@ -2198,6 +2206,8 @@ function updateHUD(dt) {
   else if (!player.car && player.mode === 'move' && kidNear(player.x, player.z)) prompt = G.super ? `${useK} to sign an autograph` : MK_STATE.sweets > 0 && kidNear(player.x, player.z).hushDay !== G.day ? `${useK} to give them a sweet (keeps them quiet today)` : `${useK} to high-five`;
   else if (townUseTarget(TDK)) prompt = townUsePrompt(townUseTarget(TDK), TDK, useK);
   else if (mdUseTarget(TDK)) prompt = mdUsePrompt(mdUseTarget(TDK), TDK, useK);
+  else if (cnUseTarget(TDK)) prompt = cnUsePrompt(cnUseTarget(TDK), TDK, useK);
+  else if (lnUseTarget(TDK)) prompt = lnUsePrompt(lnUseTarget(TDK), TDK, useK);
   else if (icHatchNear(TDK)) prompt = `${useK} to buy an ice cream`;
   else if (!G.super && !player.car && !player.bike && player.mode === 'move' && pramNear(player.x, player.z)) prompt = `${useK} to push the pram (you blend in, but you can't run)`;
   else if (safeDoorNear(player.x, player.y, player.z) && !safeDoorNear(player.x, player.y, player.z).owned) { const S = safeDoorNear(player.x, player.y, player.z); prompt = `${isTouch ? 'Tap USE' : 'Press E'} to rent ${S.name} for $${S.price}`; }
@@ -2324,7 +2334,7 @@ function resetGame() {
   G.lkp = { x: 0, z: 0 };
   for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
   resetManhunt(CFG.days);
-  player.hide = null; resetStealth(SK); resetGigs(); resetMarkets(); resetKids(TDK); resetTownDay(); resetMatchDay(); resetIceCream();
+  player.hide = null; resetStealth(SK); resetGigs(); resetMarkets(); resetKids(TDK); resetTownDay(); resetMatchDay(); resetIceCream(); resetCinema(); resetLaunderettes();
   Object.assign(G, { airGapT: 0, shook: false, safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
   spawnTraffic(84);
   navRecenter(0, 0, true); computeFlow(0, 0);
@@ -2361,7 +2371,8 @@ function extraDiaryHTML() {
   let h = `<div class="dsec">SHOP HOURS TODAY: ${T}</div><div class="drow"><span>${kinds.map(([k, n]) => `${n} ${hoursLine(k, T, G.day)}`).join(' · ')}</span></div>`;
   const M = matchNow(G.day, G.hour) || matchNow(G.day + 1, 0);
   if (M) h += `<div class="drow"><span>FOOTBALL: HARRIERS v ${opponentOn(M === matchNow(G.day, G.hour) ? G.day : G.day + 1).full}${M === matchNow(G.day, G.hour) ? '' : ' (TOMORROW)'}</span></div>`;
-  const bits = mdDiaryBits(TDK); if (IC_STATE.coneT > 0) bits.push('AN ICE CREAM');
+  h += `<div class="drow"><span>PICTUREDROME: 1 · ${filmOn(0, G.day).title} · 2 · ${filmOn(1, G.day).title}</span></div>`;
+  const bits = [...mdDiaryBits(TDK), ...cnDiaryBits(TDK), ...lnDiaryBits(TDK)]; if (IC_STATE.coneT > 0) bits.push('AN ICE CREAM');
   if (bits.length) h += `<div class="drow"><span>${bits.join(' · ')}</span></div>`;
   return h;
 }
@@ -2448,6 +2459,7 @@ function updatePlayer(dt) {
   }
   if (!player.alive) return;
   if (gigRidePlayer(dt, GJ)) { input.jumpEdge = false; return; }
+  if (cnSeatPlayer(dt, TDK)) { input.jumpEdge = false; return; } // sat in a cinema seat or a launderette chair
   if (player.hide) { player.vx = player.vz = 0; player.sprinting = false; player.stam = Math.min(100, player.stam + 18 * dt); input.jumpEdge = false; return; }
   const moving = input.fwd !== 0 || input.side !== 0;
   const pushing = !!pramHeld(); // pushing a pram: no running, no jumping
@@ -2854,7 +2866,7 @@ function simulate(dt, t) {
     updatePlayer(dt);
     for (const h of G.hunters) if (!h.dead) h.update(dt);
     separateHunters();
-    updateKids(dt, TDK); updateTownDay(dt, TDK); updateMatchDay(dt, TDK); updateIceCream(dt, TDK);
+    updateKids(dt, TDK); updateTownDay(dt, TDK); updateMatchDay(dt, TDK); updateIceCream(dt, TDK); updateCinema(dt, TDK); updateLaunderettes(dt, TDK);
     G.keeperT = (G.keeperT || 0) - dt; if (G.keeperT <= 0) { G.keeperT = 1; showShopkeepers((kind, city) => shopOpenAt(kind, city, G.day, G.hour)); }
     updateCityLife(dt, LIFE); updateKnockFX(dt);
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
@@ -2897,4 +2909,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
