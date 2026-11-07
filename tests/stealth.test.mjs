@@ -65,7 +65,7 @@ test('anyone who watched you climb in comes over and hauls you out', async () =>
     // somewhere a few metres off on the open side, with a clear view of the bin (not wedged behind it between other bins)
     let hp = null;
     for (let a = 0; a < 6.28 && !hp; a += 0.3) for (const r of [4, 5, 3]) { const x = spot.stand.x + Math.sin(a) * r, z = spot.stand.z + Math.cos(a) * r; if (!H.blockedAt(x, z) && !H.solidAt(x, 0.6, z, 0) && H.losSolid(x, 1.6, z, spot.stand.x, 1.6, spot.stand.z) && (x - spot.stand.x) * spot.stand.ux + (z - spot.stand.z) * spot.stand.uz > 0.5) { hp = { x, z }; break; } }
-    const h = H.person(H, hp.x, hp.z, { waitT: 0 });
+    const h = H.person(H, hp.x, hp.z, { waitT: 0, role: 'rusher' }); // not a hesitant one, who won't go in alone
     h.state = 'chase'; h.hasLOS = true; h.lastSeen = 0; h.noticeT = 0;
     H.enterHide(spot, H.SK);
     const marked = h.checkSpot === spot;
