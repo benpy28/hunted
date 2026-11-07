@@ -11,6 +11,8 @@ import {
 import { solid, ib, floorB, lightB, glassB, lamp, interiorZones } from './interiors.js';
 
 export const walkIns = []; // {x, z, name, kind, city, keeper:{x,z,face}, rect}
+// places townsfolk go to do things: sit on a bench, wait for the bus, queue at a food cart
+export const lifeSpots = []; // {kind: 'bench'|'bus'|'cart', x, z, face, sx, sz} (sx,sz: where you sit or stand)
 
 // ---------------------------------------------------------------------
 // local frame for a lot: a runs along the street front, b goes in from the front (0) to the back (D)
@@ -218,6 +220,8 @@ function bench(x, z, alongX, faceSign) {
   propBuf.box(x + bx - (alongX ? lx : 0.04), x + bx + (alongX ? lx : 0.04), 0.7, 1.05, z + bz - (alongX ? 0.04 : lz), z + bz + (alongX ? 0.04 : lz), wood);
   for (const s of [-0.75, 0.75]) { const px = x + (alongX ? s : 0), pz = z + (alongX ? 0 : s); propBuf.box(px - 0.05, px + 0.05, 0, 1.05, pz - 0.2, pz + 0.2, iron); }
   col(x, z, lx, lz, 0.62);
+  const fxs = alongX ? 0 : faceSign, fzs = alongX ? faceSign : 0, face = Math.atan2(fxs, fzs);
+  for (const o of [-0.45, 0.45]) lifeSpots.push({ kind: 'bench', x: x + fxs * 0.9 + (alongX ? o : 0), z: z + fzs * 0.9 + (alongX ? 0 : o), face, sx: x + fxs * 0.05 + (alongX ? o : 0), sz: z + fzs * 0.05 + (alongX ? 0 : o) });
 }
 function bin(x, z) { propBuf.cyl(x, z, 0.3, 0.33, 0.15, 1.0, 0x2a4a3a, 10); propBuf.cyl(x, z, 0.36, 0.2, 1.0, 1.15, 0x1a2a22, 10); col(x, z, 0.3, 0.3, 1.1); }
 function hydrant(x, z) {
@@ -281,6 +285,7 @@ function foodCart(x, z, alongX) {
   const uc = spick(AWNINGS); for (let k = 0; k < 8; k++) { const a0 = (k / 8) * Math.PI * 2, a1 = ((k + 1) / 8) * Math.PI * 2; for (const [y, ny] of [[2.6, 1], [2.59, -1]]) propBuf.quad([x, y + 0.45, z], ny > 0 ? [x + Math.cos(a1) * 1.5, y, z + Math.sin(a1) * 1.5] : [x + Math.cos(a0) * 1.5, y, z + Math.sin(a0) * 1.5], ny > 0 ? [x + Math.cos(a0) * 1.5, y, z + Math.sin(a0) * 1.5] : [x + Math.cos(a1) * 1.5, y, z + Math.sin(a1) * 1.5], [x, y + 0.45, z], [0, ny, 0], [0, 0, 1, 0, 1, 1, 0, 1], new THREE.Color(k % 2 ? 0xf2eee6 : uc)); }
   glowBuf.box(x - lx + 0.1, x + lx - 0.1, 1.16, 1.3, z - lz + 0.1, z + lz - 0.1, 0xffd890);
   col(x, z, lx, lz, 1.16);
+  lifeSpots.push({ kind: 'cart', x, z, alongX, face: 0, sx: x, sz: z });
 }
 function busShelter(x, z, side) {
   const I = { out: side[0] === 'p' ? 1 : -1 }, ax = side[1] === 'z'; // shelter's long axis runs along the street
@@ -297,6 +302,7 @@ function busShelter(x, z, side) {
   staticMesh(ad, ax ? [spick(adMats), spick(adMats), edgeMat, edgeMat, edgeMat, edgeMat] : [edgeMat, edgeMat, edgeMat, edgeMat, spick(adMats), spick(adMats)], mx, 1.4, mz);
   const [px, pz] = R(L + 0.6, Dp * I.out); propBuf.cyl(px, pz, 0.05, 0.05, 0.15, 2.9, 0x8a8a90, 6); propBuf.box(px - 0.3, px + 0.3, 2.5, 3.0, pz - 0.3, pz + 0.3, 0x2a6ab0);
   { const [p0, q0] = R(-L, back - 0.05), [p1, q1] = R(L, back + 0.05); addCollider(Math.min(p0, p1), Math.max(p0, p1), Math.min(q0, q1), Math.max(q0, q1), 2.5); }
+  for (const o of [-0.8, 0, 0.8]) { const [sx, sz] = R(o, back + I.out * 0.3), [wx, wz] = R(o, back + I.out * 1.2); lifeSpots.push({ kind: 'bus', x: wx, z: wz, sx, sz, face: ax ? (I.out > 0 ? 0 : Math.PI) : (I.out > 0 ? Math.PI / 2 : -Math.PI / 2) }); }
   { const [p0, q0] = R(-L, -Dp - 0.1), [p1, q1] = R(L, Dp + 0.1); addCollider(Math.min(p0, p1), Math.max(p0, p1), Math.min(q0, q1), Math.max(q0, q1), 2.62, { y0: 2.5 }); }
 }
 function utilityPole(x, z, alongX) {

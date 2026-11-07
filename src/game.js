@@ -14,7 +14,8 @@ import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
 import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
-import { walkIns } from './streets.js';
+import { walkIns, lifeSpots } from './streets.js';
+import { assignJob, releaseJob, lifeStart, lifeStep, lifePose, lifeInterrupt, updateCityLife, clearCityLife, cityLifeDebug } from './citylife.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
 import { shopRooms, atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
@@ -176,9 +177,10 @@ class Hunter {
     this.state = 'chase'; this.lastSeen = 0; this.sus = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
     if (player.disg > 0) wearDisguise(0.035);
   }
-  remove() { scene.remove(this.g); this.dead = true; }
+  remove() { scene.remove(this.g); this.dead = true; releaseJob(this); lifeInterrupt(this); }
   die(impulse, hitY, byPlayer = false, loot = byPlayer) {
     if (this.dead) return;
+    lifeInterrupt(this); releaseJob(this);
     this.dead = true; this.marker.visible = false;
     this.g.position.set(this.x, this.y, this.z);
     addRagdoll(this.p, this.T.scale, { x: this.vx + this.kx, y: 0, z: this.vz + this.kz }, impulse, hitY);
@@ -215,7 +217,7 @@ class Hunter {
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
-      const see = d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 || this.y < -1 || player.y < -1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
+      const see = !this.inside && d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 || this.y < -1 || player.y < -1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
       this.hasLOS = see;
       const tdt = Math.min(0.5, G.elapsed - this.thinkAt); this.thinkAt = G.elapsed;
       if (this.state !== 'chase' && !G.super) {
@@ -236,7 +238,7 @@ class Hunter {
       } else if (see) { this.lastSeen = 0; if (d < 60) reportSighting(tp.x, tp.z); }
     }
 
-    let tvx = 0, tvz = 0;
+    let tvx = 0, tvz = 0, lifeMode = null;
     if (this.stun > 0) {
       this.stun -= dt;
     } else if (this.state === 'chase') {
@@ -317,9 +319,11 @@ class Hunter {
         if (blockedAt(this.x + ax * 2.5, this.z + az * 2.5)) { const n = this.navTo({ x: this.x + ax * 10, z: this.z + az * 10 }); if (n) { ox2 = n.x; oz2 = n.z; } }
         tvx = ox2 * T.speed * 0.9; tvz = oz2 * T.speed * 0.9; this.wt = null;
       } else if (this.sus > 0.45 && this.hasLOS && d < 40) { this.waitT = Math.max(this.waitT, 0.3); this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 4); } // "hang on, is that...?"
+      else if (this.act && (lifeMode = lifeStep(this, dt, LIFE))) { /* sitting, chatting, queueing, working... */ }
       else if (this.waitT > 0) { this.waitT -= dt; this.face += Math.sin(G.elapsed * 1.3 + this.phase) * dt * 1.2; }
       else if (!this.wt || Math.hypot(this.wt.x - this.x, this.wt.z - this.z) < 1.5) {
-        if (this.wt && Math.random() < 0.6) this.waitT = mr(1, 3.5); // stop and look around
+        if (this.wt && this.huntT <= 0 && Math.random() < 0.5 && lifeStart(this, LIFE)) { /* off to do something */ }
+        else if (this.wt && Math.random() < 0.6) this.waitT = mr(1, 3.5); // stop and look around
         const hunting = this.huntT > 0 && Math.random() < 0.8;
         const guess = hunting ? G.lkp : this.home;
         this.wt = randomOpenPoint(guess.x, guess.z, hunting ? 2 : 5, hunting ? 25 : 40) || { x: this.x, z: this.z };
@@ -329,7 +333,7 @@ class Hunter {
       let ox = ex / ed, oz = ez / ed;
       if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
       if (!(this.panicT > 0) && !(this.cowerT > 0)) {
-      const w = this.waitT > 0 ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1);
+      const w = this.waitT > 0 || lifeMode === 'hold' ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1) * (this.walkK || 1);
       tvx = ox * w; tvz = oz * w;
       this.progT += dt;
       if (this.progT > 2) { if (Math.hypot(this.x - this.lx, this.z - this.lz) < 0.6) this.wt = null; this.progT = 0; this.lx = this.x; this.lz = this.z; }
@@ -379,6 +383,7 @@ class Hunter {
     if (!(this.cowerT > 0)) { p.armL.rotation.z = 0; p.armR.rotation.z = 0; }
     this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08 - (this.cowerT > 0 ? 0.45 : 0), this.z);
     this.g.rotation.y = this.face;
+    if (this.act || this.job) lifePose(this, dt, LIFE);
     const wary = this.state !== 'chase' && this.sus > 0.35 && d < 50;
     this.marker.visible = wary || (this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12));
     this.marker.material = wary || this.noticeT > 0 ? qMarkerMat : markerMat;
@@ -1070,6 +1075,13 @@ function say(h, text) {
   b.s.material.map = t; b.s.material.needsUpdate = true; b.s.scale.set(2.6, 0.49, 1); b.s.position.set(0, 2.75, 0);
   h.g.add(b.s); b.life = 2.4; b.h = h;
 }
+// what the city-life module needs to know about the game
+const LIFE = {
+  say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b),
+  get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
+  near: (x, z, r) => Math.abs(x - camera.position.x) < r && Math.abs(z - camera.position.z) < r,
+};
+function heroOverheard() {}
 function updateBubbles(dt) { for (const b of bubbles) if (b.life > 0) { b.life -= dt; if (b.life <= 0 || b.h.dead) { b.life = 0; b.s.removeFromParent(); } } }
 const _hd = new THREE.Vector3();
 function heroGrab() {
@@ -1077,7 +1089,7 @@ function heroGrab() {
   let best = null, bd = 3.2;
   for (const h of G.hunters) { if (h.dead || h.contract) continue; const d = Math.hypot(h.x - player.x, h.z - player.z); if (d < bd && Math.abs(h.y - player.y) < 2) { bd = d; best = h; } }
   if (!best) return false;
-  G.held = best; best.held = true; best.cowerT = 0; best.panicT = 0; sfx.scream(); say(best, 'AAAAH!'); showMsg(mpick(HERO_LINES), 1.5);
+  lifeInterrupt(best); G.held = best; best.held = true; best.cowerT = 0; best.panicT = 0; sfx.scream(); say(best, 'AAAAH!'); showMsg(mpick(HERO_LINES), 1.5);
   return true;
 }
 function heroThrow() {
@@ -1218,6 +1230,7 @@ function launchHunter(h, ux, uz, getsUp, imp) {
   if (h.dead) return;
   const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
   if (h.held) { h.held = false; if (G.held === h) G.held = null; }
+  lifeInterrupt(h); releaseJob(h);
   h.dead = true; h.marker.visible = false; h.g.position.set(h.x, h.y, h.z);
   addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, imp || { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
   const rag = ragdolls[ragdolls.length - 1];
@@ -1894,13 +1907,14 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   const r = Math.random(), copChance = G.level >= 2 ? (G.level - 1) * 0.08 : 0;
   const type = r < copChance ? 'cop' : r < copChance + 0.15 ? 'brute' : r < copChance + 0.4 ? 'runner' : 'civ';
   const gunner = type !== 'brute' && Math.random() < Math.min(0.08 + (G.day - 1) * 0.022, 0.5);
-  G.hunters.push(new Hunter(p.x, p.z, type, gunner, state));
+  const nh = new Hunter(p.x, p.z, type, gunner, state); G.hunters.push(nh);
+  if (state !== 'chase') assignJob(nh, LIFE);
 }
 const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min((26 + G.day * 1.2 + G.level * 2) * MH.bountyMul, 58) * localeFactor(tp.x, tp.z) * WX.crowd); }; // everyday crowds to blend into
 const maxChasers = () => Math.round((5 + G.level * 2 + G.day * 0.35) * (0.5 + MH.bountyMul * 0.5));
 
 function clearWorld() {
-  for (const h of G.hunters) h.remove(); G.hunters.length = 0;
+  for (const h of G.hunters) h.remove(); G.hunters.length = 0; clearCityLife();
   for (const r of ragdolls) r.dispose(); ragdolls.length = 0;
   for (const c of G.cars) scene.remove(c.g); G.cars.length = 0;
   for (const a of [...G.helis, ...G.drones]) a.remove(); G.helis.length = 0; G.drones.length = 0;
@@ -2432,6 +2446,7 @@ function simulate(dt, t) {
     updatePlayer(dt);
     for (const h of G.hunters) if (!h.dead) h.update(dt);
     separateHunters();
+    updateCityLife(dt, LIFE);
     for (const c of G.cars) c.update(dt);
     carInteractions();
     for (const a of G.helis) if (!a.dead) a.update(dt);
@@ -2467,4 +2482,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
