@@ -21,7 +21,7 @@ import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
 import { updateNews, newsTex } from './news.js';
 import { PFX, renderFrame, initPostFX } from './postfx.js';
-import { MH, resetManhunt, manhuntNewDay, updateManhunt, trySecondChance, mhTarget, manhuntNews, manhuntSweepCity, runnersLeft } from './manhunt.js';
+import { MH, resetManhunt, manhuntNewDay, updateManhunt, trySecondChance, mhTarget, mhRivalTarget, mhRivalCaughtByYou, mhRivalGone, manhuntNews, manhuntSweepCity, runnersLeft } from './manhunt.js';
 import { WX, WX_NAMES, FESTIVALS, updateWeather, applyWeatherLook, resetWeather, forceWeather } from './weather.js';
 
 const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
@@ -184,6 +184,7 @@ class Hunter {
     if (byPlayer) { G.kills++; addHeat(this.type === 'cop' ? 22 : 14); }
     if (loot) maybeDropCash(this);
     if (this.contract) contractTargetDown(this);
+    if (this.rival) rivalDown(this);
   }
   damage(n, dirX, dirZ, hitY, byPlayer = true) {
     this.hp -= n; this.alert();
@@ -418,7 +419,7 @@ function shout(h) {
 }
 // someone sees what's in your hands: a crowbar gets a funny look, a gun gets screams and a phone call
 function reactToItem(h, d, tdt) {
-  const s = heldSus(); if (s <= 0 || d > 22 || h.contract || h.guard) return;
+  const s = heldSus(); if (s <= 0 || d > 22 || h.contract || h.guard || h.rival) return;
   h.itemT = (h.itemT || 0) + tdt * s;
   if (h.itemT < 0.6 || h.reacted) return;
   h.reacted = true;
@@ -725,6 +726,7 @@ class Aircraft {
     this.kind = kind; this.x = x; this.z = z; this.vx = 0; this.vz = 0; this.yaw = 0; this.t = Math.random() * 100;
     this.phase = Math.random() * Math.PI * 2; this.state = 'search'; this.lostT = 0; this.bx = x; this.bz = z;
     this.leaving = false; this.dead = false; this.crashing = false; this.vy = 0; this.fireCd = 3; this.seeT = 0; this.wp = null;
+    this.fuel = kind === 'heli' ? mr(95, 130) : mr(70, 95); // they can't stay up forever: when it runs out they go home
     this.g = new THREE.Group(); scene.add(this.g);
     const dark = lam(0x1d2a4a), white = lam(0xe8e8ee), black = lam(0x151515);
     const add = (geo, mat, x2, y2, z2, parent = this.g) => { const m = new THREE.Mesh(geo, mat); m.position.set(x2, y2, z2); parent.add(m); return m; };
@@ -835,6 +837,14 @@ class Aircraft {
     this.g.position.set(this.x, this.y, this.z);
     this.g.rotation.set(sp * 0.012, this.yaw, 0, 'YXZ');
     if (this.leaving && Math.hypot(this.x - tp.x, this.z - tp.z) > 320) { this.remove(); return; }
+    if (!this.leaving) {
+      this.fuel -= dt * (this.state === 'track' ? 1.6 : 1);
+      if (this.fuel <= 0) {
+        this.leaving = true; this.state = 'search';
+        G.airGapT = Math.max(G.airGapT || 0, heli ? 45 : 30); // a gap before anything replaces it
+        showMsg(heli ? 'THE HELICOPTER IS LOW ON FUEL AND HEADING HOME' : 'THE DRONE\'S BATTERY DIED. IT\'S FLYING HOME', 3.5);
+      }
+    }
 
     // detection
     if (!this.leaving && player.alive) {
@@ -847,8 +857,11 @@ class Aircraft {
       } else {
         const dist = Math.hypot(this.x - tp.x, this.z - tp.z);
         // they only keep you while they've a clear view: duck between buildings or indoors and they lose you
-        if (see && dist < (heli ? 80 : 35)) { this.lostT = 0; G.lkp.x = tp.x; G.lkp.z = tp.z; G.airTracking++; }
-        else { this.lostT += dt; if (this.lostT > (heli ? 1.2 : 0.9)) { this.state = 'search'; this.seeT = 0; showMsg(heli ? 'THE HELICOPTER LOST YOU' : 'THE DRONE LOST YOU', 2); } }
+        // from up there, someone walking calmly in a crowd looks like everyone else
+        let crowd = 0;
+        if (!player.car && !player.sprinting && G.conspic < 0.4) for (const h of G.hunters) if (!h.dead && h.state !== 'chase' && Math.abs(h.x - tp.x) < 7 && Math.abs(h.z - tp.z) < 7 && ++crowd >= 3) break;
+        if (see && crowd < 3 && dist < (heli ? 65 : 32)) { this.lostT = 0; G.lkp.x = tp.x; G.lkp.z = tp.z; G.airTracking++; }
+        else { this.lostT += dt; if (this.lostT > (heli ? 1.2 : 0.9)) { this.state = 'search'; this.seeT = 0; showMsg(crowd >= 3 ? 'LOST IN THE CROWD' : heli ? 'THE HELICOPTER LOST YOU' : 'THE DRONE LOST YOU', 2); G.shook = true; } }
         if (!heli && Math.random() < dt * 1.5) sfx.drone();
       }
     }
@@ -883,13 +896,13 @@ function onSpotted(kind) {
   const tp = targetPos(); sendLooking(tp.x, tp.z, 70, 20);
 }
 function manageAircraft(dt) {
-  G.airT -= dt;
+  G.airT -= dt; G.airGapT = Math.max(0, (G.airGapT || 0) - dt);
   if (G.airT > 0) return;
   G.airT = 2;
   const tp = targetPos();
   for (const [list, want, kind] of [[G.helis, HELIS_AT[G.level], 'heli'], [G.drones, DRONES_AT[G.level], 'drone']]) {
     const active = list.filter((a) => !a.leaving && !a.crashing);
-    if (active.length < want) {
+    if (active.length < want && !(G.airGapT > 0)) {
       const a = Math.random() * Math.PI * 2, d = kind === 'heli' ? 240 : 140;
       list.push(new Aircraft(kind, tp.x + Math.cos(a) * d, tp.z + Math.sin(a) * d));
       if (kind === 'heli' && active.length === 0) showMsg('A POLICE HELICOPTER IS SEARCHING FOR YOU', 3);
@@ -1198,7 +1211,8 @@ function launchHunter(h, ux, uz, getsUp, imp) {
   addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, imp || { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
   const rag = ragdolls[ragdolls.length - 1];
   rag.launchFrom = { x: h.x, z: h.z };
-  if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
+  if (h.rival) rivalDown(h);
+  else if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
   else { G.kills++; addHeat(h.type === 'cop' ? 22 : 14); maybeDropCash(h); if (h.contract) contractTargetDown(h); }
 }
 function updateGetUps(dt) {
@@ -1377,6 +1391,48 @@ const atmCtx = {
     return `JOB TAKEN: ${o.target}. FOLLOW THE YELLOW MARKER. 4 MINUTES.`;
   },
 };
+// ---------------------------------------------------------------------
+// rival runners: they're being hunted too. Pin one down and their share is yours; but when
+// the town knows where YOU are, so do they, and they'd happily do the same to you.
+// ---------------------------------------------------------------------
+const isFleeingRival = (h) => !!(h.rival && h.fleer);
+function spawnRival(r) {
+  const tp = targetPos();
+  let p = null;
+  for (let i = 0; i < 16 && !p; i++) { const c = randomOpenPoint(tp.x, tp.z, 70, 130, 4); if (c && !safeAt(c.x, 0, c.z) && !los(c.x, c.z, tp.x, tp.z)) p = c; }
+  if (!p) return false;
+  const h = new Hunter(p.x, p.z, 'runner', false, 'search');
+  h.rival = r; r.h = h; h.fleer = true; h.hp = 3; h.spdMul = 1.05;
+  const green = lam(0x2fd07a); h.p.torso.material = green; h.p.armL.material = h.p.armR.material = green;
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(256, 64, (ctx, W, H) => { ctx.fillStyle = 'rgba(10,30,18,.8)'; ctx.fillRect(0, 8, W, H - 16); ctx.fillStyle = '#6aff9a'; ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`RUNNER ${r.num} · ${r.name}`, W / 2, H / 2); }), depthTest: false, transparent: true }));
+  tag.scale.set(2.4, 0.6, 1); tag.position.y = 2.7; h.g.add(tag);
+  G.hunters.push(h);
+  return true;
+}
+function rivalDown(h) {
+  const r = h.rival; if (!r) return;
+  h.rival = null; r.h = null;
+  if (!h.dead) h.die({ x: Math.sin(player.yaw) * -3, y: 2, z: Math.cos(player.yaw) * -3 }, h.y + 1, false, false);
+  mhRivalCaughtByYou(r, mhCtx());
+  G.hitstopT = 0.25; G.fovKick = 6;
+}
+function updateRival(dt) {
+  const r = MH.rival; if (!r || !r.h || G.super) return;
+  const h = r.h; if (h.dead) return;
+  const d = Math.hypot(h.x - player.x, h.z - player.z);
+  if (d > 280) { h.remove(); r.h = null; mhRivalGone(); showMsg(`RUNNER ${r.name} GOT AWAY`, 2.5); return; }
+  // the town knows where you are, so they do too
+  const hunting = G.level >= 2 && G.lastSeenT < 15 && d < 150 && !G.safe;
+  if (hunting) {
+    if (h.fleer || h.state !== 'chase') { h.fleer = false; h.state = 'search'; h.alert(); if (!r.warned) { r.warned = true; showMsg(`RUNNER ${r.name} KNOWS WHERE YOU ARE. THEY WANT YOUR SHARE`, 4); sfx.alarm(); } }
+    r.trackedT = Math.max(r.trackedT || 0, 4);
+  } else {
+    h.fleer = true;
+    if (h.state !== 'chase' && d < 30 && h.hasLOS) h.alert(); // seen you coming: legs it
+  }
+  // knocked off their feet and you're right there: pinned
+  if (h.stun > 0.2 && d < 1.9 && !player.car && player.alive) rivalDown(h);
+}
 function dressTarget(h, C) {
   h.contract = C; C.h = h;
   h.p.torso.material = lam(0xe8b820); h.p.armL.material = h.p.armR.material = lam(0xe8b820);
@@ -1689,7 +1745,7 @@ function drawMinimap() {
       mm.fillStyle = '#ffd23a'; mm.beginPath(); mm.moveTo(7, 0); mm.lineTo(-5, -6); mm.lineTo(-5, 6); mm.closePath(); mm.fill(); mm.restore();
     }
   }
-  { const T = mhTarget(); if (T) drawMapTarget(T, tp, range, yaw, W, big, sc); }
+  { const T = mhTarget(); if (T) drawMapTarget(T, tp, range, yaw, W, big, sc); const R = mhRivalTarget(); if (R) drawMapTarget(R, tp, range, yaw, W, big, sc); }
   mm.save(); mm.translate(W / 2, W / 2); if (big) mm.rotate(-(player.car ? player.car.heading + Math.PI + player.camOff : player.yaw));
   mm.fillStyle = '#5ab4ff'; mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
   mm.beginPath(); mm.moveTo(0, -8); mm.lineTo(6, 6); mm.lineTo(0, 3); mm.lineTo(-6, 6); mm.closePath(); mm.fill(); mm.stroke();
@@ -1735,10 +1791,10 @@ function updateHUD(dt) {
   hud.air.textContent = nh || nd ? `${nh ? nh + (nh > 1 ? ' HELICOPTERS' : ' HELICOPTER') : ''}${nh && nd ? ' · ' : ''}${nd ? nd + (nd > 1 ? ' DRONES' : ' DRONE') : ''} SEARCHING` : '';
   hud.time.textContent = fmtTime(G.elapsed) + ' survived';
   hud.kills.textContent = G.kills ? G.kills + (G.kills === 1 ? ' takedown' : ' takedowns') : '';
-  const chasing = G.hunters.filter((h) => !h.dead && h.state === 'chase').length + G.cars.filter((c) => c.driver === 'hunter').length;
+  const chasing = G.hunters.filter((h) => !h.dead && h.state === 'chase' && !isFleeingRival(h)).length + G.cars.filter((c) => c.driver === 'hunter').length;
   if (G.safe) { hud.alert.textContent = 'SAFEHOUSE · LYING LOW'; hud.alert.className = 'calm'; }
   else if (G.inSafe && G.inSafe.owned) { hud.alert.textContent = 'SAFEHOUSE BURNED'; hud.alert.className = 'hot'; }
-  else if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR'; hud.alert.className = 'hot'; }
+  else if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR · GET UNDER COVER, UNDERGROUND OR INTO A CROWD'; hud.alert.className = 'hot'; }
   else if (chasing) { hud.alert.textContent = `${chasing} HUNTING YOU`; hud.alert.className = 'hot'; }
   else if (G.super) { hud.alert.textContent = G.held ? 'HOLDING A FAN' : player.flying ? 'FLYING' : 'ADORED BY ALL'; hud.alert.className = 'calm'; }
   else if (G.stareT > 0) { hud.alert.textContent = "SOMEONE'S STARING AT YOU"; hud.alert.className = 'warm'; }
@@ -1867,7 +1923,7 @@ function resetGame() {
   G.lkp = { x: 0, z: 0 };
   for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
   resetManhunt(CFG.days);
-  Object.assign(G, { safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
+  Object.assign(G, { airGapT: 0, shook: false, safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
   spawnTraffic(70);
   navRecenter(0, 0, true); computeFlow(0, 0);
   for (let i = 0; i < targetHunters(); i++) spawnHunter(40, 170);
@@ -2188,6 +2244,8 @@ function mhCtx(seen = false) {
     minHeat: (n) => { if (G.heat < n) G.heat = Math.min(G.heat + 0.6, n); },
     restoreStamina: () => { player.stam = 100; player.exhausted = false; },
     win: () => endGame(true),
+    spawnRival,
+    despawnRival: (r) => { if (r.h && !r.h.dead) { const h = r.h; h.rival = null; r.h = null; h.remove(); } },
     spawnTrackers: (n) => {
       const ox = G.lastSeenT < 900 ? G.lkp.x : tp.x + mr(-120, 120), oz = G.lastSeenT < 900 ? G.lkp.z : tp.z + mr(-120, 120);
       let made = 0;
@@ -2239,11 +2297,16 @@ function updateDirector(dt) {
   }
   // profile
   G.lastSeenT += dt;
-  const seenByHunters = G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS);
-  const anyChasing = G.hunters.some((h) => !h.dead && h.state === 'chase');
-  G.heat += dt * ((G.airTracking ? 0.8 : 0) + (seenByHunters ? 0.8 * (1 - 0.5 * player.disg) : 0));
+  const seenByHunters = G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS && !isFleeingRival(h));
+  const anyChasing = G.hunters.some((h) => !h.dead && h.state === 'chase' && !isFleeingRival(h));
+  G.heat += dt * ((G.airTracking && G.heat < LEVELS[3]) ? 0.8 : 0) + dt * ( (seenByHunters ? 0.8 * (1 - 0.5 * player.disg) : 0));
   if (player.disg > 0) wearDisguise(dt * 0.0035);
   G.unseenT = seenByHunters || G.airTracking ? 0 : G.unseenT + dt;
+  if (G.shook && G.unseenT > 14 && !anyChasing && G.level >= 2) {
+    G.shook = false; G.heat = Math.max(heatFloor(), LEVELS[G.level - 1] + 5);
+    showMsg("YOU SHOOK THEM OFF. THEY DON'T KNOW WHERE YOU WENT", 3.5); sfx.whoosh();
+  }
+  if (G.airTracking || seenByHunters) G.shook = G.shook && !seenByHunters;
   if (G.unseenT > 6) G.heat -= dt * (anyChasing ? 2.5 : 4) * (G.conspic < 0.3 ? 1.4 : 1); // lying low cools you off
   { const here = localKey(tp.x, tp.z); for (const k in G.localSus) G.localSus[k] = Math.max(0, G.localSus[k] - dt * (k === here ? 0.003 : 0.012)); }
   G.heat = clamp(G.heat, heatFloor(), 330);
@@ -2261,10 +2324,10 @@ function updateDirector(dt) {
   if (G.spawnT <= 0) {
     G.spawnT = 0.6;
     if (alive.length < targetHunters()) spawnHunter();
-    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
-    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
+    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && !h.rival && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
+    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && !h.rival && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
     // not everyone joins in: past the cap, the furthest ones who can't see you go back to searching
-    const ch = alive.filter((h) => h.state === 'chase' && !h.contract);
+    const ch = alive.filter((h) => h.state === 'chase' && !h.contract && !h.rival);
     if (ch.length > maxChasers()) {
       ch.sort((a, b) => Math.hypot(b.x - tp.x, b.z - tp.z) - Math.hypot(a.x - tp.x, a.z - tp.z));
       for (let i = 0; i < ch.length - maxChasers(); i++) if (!ch[i].hasLOS || Math.hypot(ch[i].x - tp.x, ch[i].z - tp.z) > 30) { ch[i].state = 'search'; ch[i].wt = null; ch[i].alertT = -1; }
@@ -2299,7 +2362,7 @@ function updateDirector(dt) {
   if (G.flowT <= 0) { G.flowT = 0.35; computeFlow(tp.x, tp.z); }
   // heartbeat + aircraft hum
   let nearest = 1e9;
-  for (const h of G.hunters) if (h.state === 'chase') nearest = Math.min(nearest, Math.hypot(h.x - player.x, h.z - player.z));
+  for (const h of G.hunters) if (h.state === 'chase' && !isFleeingRival(h)) nearest = Math.min(nearest, Math.hypot(h.x - player.x, h.z - player.z));
   G.nearestChaser = nearest;
   G.heartT -= dt;
   if (nearest < 22 && G.heartT <= 0) { sfx.heart(0.25 * (1 - nearest / 22) + 0.05); G.heartT = 0.35 + (nearest / 22) * 0.6; }
@@ -2363,7 +2426,7 @@ function simulate(dt, t) {
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
     updateSafehouse(dt);
-    updateGetUps(dt); updateDrops(dt, t); updateLaser(dt); updateBubbles(dt); updateContract(dt); updateAllies(dt); updateShopLight();
+    updateGetUps(dt); updateDrops(dt, t); updateLaser(dt); updateBubbles(dt); updateContract(dt); updateRival(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
     updateNews(dt, newsState());

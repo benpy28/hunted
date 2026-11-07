@@ -160,4 +160,33 @@ test('the final day opens an extraction you can hold to escape clean', async () 
   assert.equal(s.title, 'CLEAN ESCAPE');
 });
 
+
+
+test('aircraft run out of fuel and leave, with a gap before the next one', async () => {
+  const s = await g.run((H) => {
+    H.addHeat(150); H.step(4);
+    const a = H.G.helis[0] || H.G.drones[0]; if (!a) return { none: true };
+    a.fuel = 0.01; H.step(0.2);
+    return { leaving: a.leaving, gap: H.G.airGapT };
+  });
+  assert.ok(!s.none, 'an aircraft came up at WANTED');
+  assert.ok(s.leaving);
+  assert.ok(s.gap > 20);
+});
+
+test('a rival runner can show up, and pinning them takes them out of the game', async () => {
+  const s = await g.run((H) => {
+    H.G.elapsed = H.CFG.dayLength * 2 + 1; H.step(0.2);
+    H.MH.rivalT = 0; H.step(0.2);
+    const r = H.MH.rival; if (!r || !r.h) return { none: true };
+    const left0 = 1 + H.MH.runners.filter((x) => !x.caught).length, lives0 = H.MH.lifelines;
+    r.h.x = H.player.x + 1; r.h.z = H.player.z; r.h.stun = 1; H.step(0.1);
+    return { caught: r.caught, left: 1 + H.MH.runners.filter((x) => !x.caught).length, left0, lives: H.MH.lifelines - lives0 };
+  });
+  assert.ok(!s.none, 'a rival spawned');
+  assert.ok(s.caught);
+  assert.equal(s.left, s.left0 - 1);
+  assert.equal(s.lives, 1);
+});
+
 test('no script errors across the whole session', () => { assert.deepEqual(g.errors, []); });

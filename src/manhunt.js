@@ -25,7 +25,7 @@ export const MH_MILESTONES = {
 export const MH = {
   runners: [], lifelines: 1, usedLifelines: 0, objective: null, done: 0, streak: 0, closeCalls: 0, spotted: 0,
   sweeps: [], dayLog: null, recapT: 0, closeArm: 0, closeT: 0, wasSeen: false, newsBits: [], invulnT: 0, bountyMul: 1,
-  extract: null, escaped: false, lastCaught: null,
+  extract: null, escaped: false, lastCaught: null, rival: null, rivalT: 60, yourCatches: 0,
 };
 
 // ---------------------------------------------------------------------
@@ -76,7 +76,7 @@ export function resetManhunt(days) {
   const times = Array.from({ length: n - 1 }, () => mr(0.6, days - 2.2)).sort((a, b) => a - b);
   times.push(days - 1 + mr(0.3, 0.75));
   MH.runners = MH_RUNNER_NAMES.map((name, i) => ({ name, num: i + 2, at: times[i], caught: false }));
-  Object.assign(MH, { lifelines: 1, usedLifelines: 0, objective: null, done: 0, streak: 0, closeCalls: 0, spotted: 0, sweeps: [], recapT: 0, closeArm: 0, closeT: 0, wasSeen: false, newsBits: [], invulnT: 0, bountyMul: 1, extract: null, escaped: false, lastCaught: null });
+  Object.assign(MH, { lifelines: 1, usedLifelines: 0, objective: null, done: 0, streak: 0, closeCalls: 0, spotted: 0, sweeps: [], recapT: 0, closeArm: 0, closeT: 0, wasSeen: false, newsBits: [], invulnT: 0, bountyMul: 1, extract: null, escaped: false, lastCaught: null, rival: null, rivalT: mr(50, 90), yourCatches: 0 });
   MH.dayLog = mhFreshLog();
   mhCrate.visible = false; mhExtract.visible = false;
   const H = mhEnsureHud(); H.recap.classList.add('hidden'); H.stamp.classList.remove('show');
@@ -182,6 +182,7 @@ export function updateManhunt(dt, ctx) {
   const dayF = ctx.elapsed / ctx.dayLength;
   // other runners get caught, and it makes the news
   for (const r of MH.runners) if (!r.caught && dayF >= r.at) {
+    if (MH.rival === r) { ctx.despawnRival(r); MH.rival = null; }
     r.caught = true; MH.lastCaught = r; MH.dayLog.caught.push(r.name);
     const where = mpick(CITIES).name, left = runnersLeft();
     ctx.say(`NEWS: RUNNER ${r.num} · ${r.name} ${mpick(MH_CATCH_LINES)} ${where}. ${left === 1 ? 'YOU ARE THE LAST ONE LEFT' : left + ' LEFT'}`, 5);
@@ -189,6 +190,19 @@ export function updateManhunt(dt, ctx) {
     if (left === 1) ctx.banner(`LAST ONE STANDING<small>EVERY OTHER RUNNER HAS BEEN CAUGHT. IT'S JUST YOU NOW.</small>`, 4.5);
     ctx.sfx('alarm');
   }
+  // now and then a rival runner gets spotted nearby: a chance to take them out of the game
+  if (ctx.day >= 2) {
+    MH.rivalT -= dt;
+    if (MH.rivalT <= 0) {
+      MH.rivalT = mr(70, 140);
+      const cand = MH.runners.filter((r) => !r.caught && r.at - dayF > 0.15);
+      if (!MH.rival && cand.length) {
+        const r = mpick(cand);
+        if (ctx.spawnRival(r)) { MH.rival = r; r.trackedT = 60; r.warned = false; ctx.say(`CHANNEL 9: RUNNER ${r.num} · ${r.name} WAS SPOTTED NEAR YOU. KNOCK THEM DOWN AND PIN THEM FOR THEIR SHARE`, 5.5); ctx.sfx('alarm'); }
+      }
+    }
+  }
+  if (MH.rival) MH.rival.trackedT = (MH.rival.trackedT || 0) - dt;
   // spotted counter: a new sighting after a quiet spell
   if (ctx.seen && !MH.wasSeen) { MH.spotted++; MH.dayLog.spotted++; }
   MH.wasSeen = ctx.seen;
@@ -267,3 +281,18 @@ export function trySecondChance(ctx) {
 }
 export function manhuntNews() { return MH.newsBits; }
 export function manhuntSweepCity() { const S = MH.sweeps.find((s) => s.active); return S ? S.city : null; }
+
+// a rival on the map while they're being tracked (or while they're coming for you)
+export function mhRivalTarget() {
+  const r = MH.rival;
+  return r && r.h && !r.h.dead && r.trackedT > 0 ? { x: r.h.x, z: r.h.z, color: '#3cff8a' } : null;
+}
+export function mhRivalGone() { MH.rival = null; }
+export function mhRivalCaughtByYou(r, ctx) {
+  r.caught = true; MH.rival = null; MH.lastCaught = r; MH.yourCatches++; MH.dayLog.caught.push(r.name);
+  MH.lifelines = Math.min(3, MH.lifelines + 1); ctx.giveCash(40 + ctx.day * 2); ctx.coolOff(30);
+  const left = runnersLeft();
+  MH.newsBits = [`RUNNER ${r.name} PINNED BY ANOTHER RUNNER`, `${left} RUNNERS STILL FREE`];
+  ctx.banner(`YOU CAUGHT ${r.name}<small>THEIR SHARE IS YOURS · +1 SECOND CHANCE${left === 1 ? ' · YOU ARE THE LAST ONE LEFT' : ` · ${left} LEFT`}</small>`, 4);
+  mhStamp('TAKEDOWN', `RUNNER ${r.num}`); ctx.sfx('cash');
+}
