@@ -20,11 +20,13 @@ import { atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, C
 import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
 import { updateNews, newsTex } from './news.js';
+import { PFX, renderFrame, initPostFX } from './postfx.js';
 import { WX, WX_NAMES, FESTIVALS, updateWeather, applyWeatherLook, resetWeather, forceWeather } from './weather.js';
 
 const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
 
 generateWorld();
+initPostFX();
 
 // =====================================================================
 // Game state
@@ -1844,6 +1846,15 @@ $('btn-play').addEventListener('click', () => startGame(false));
 $('btn-super').addEventListener('click', () => startGame(true));
 $('btn-again').addEventListener('click', () => startGame());
 $('btn-resume').addEventListener('click', resumeGame);
+// graphics: HIGH = reflections + post effects, MEDIUM = post effects only, LOW = neither (for slow machines)
+{
+  const GFX = ['HIGH', 'MEDIUM', 'LOW'];
+  let saved = 'HIGH'; try { saved = localStorage.getItem('hunted-gfx') || 'HIGH'; } catch { /* storage unavailable */ }
+  let gi = Math.max(0, GFX.indexOf(saved));
+  const apply = () => { PFX.on = gi < 2; PFX.refl = gi === 0; $('btn-gfx').textContent = 'GRAPHICS: ' + GFX[gi]; try { localStorage.setItem('hunted-gfx', GFX[gi]); } catch { /* private mode */ } };
+  $('btn-gfx').addEventListener('click', () => { gi = (gi + 1) % GFX.length; apply(); });
+  apply();
+}
 $('btn-quit').addEventListener('click', toMenu);
 $('btn-menu').addEventListener('click', toMenu);
 $('shop-leave').addEventListener('click', leaveShop);
@@ -2157,6 +2168,7 @@ function updateDirector(dt) {
   // heartbeat + aircraft hum
   let nearest = 1e9;
   for (const h of G.hunters) if (h.state === 'chase') nearest = Math.min(nearest, Math.hypot(h.x - player.x, h.z - player.z));
+  G.nearestChaser = nearest;
   G.heartT -= dt;
   if (nearest < 22 && G.heartT <= 0) { sfx.heart(0.25 * (1 - nearest / 22) + 0.05); G.heartT = 0.35 + (nearest / 22) * 0.6; }
   let hd = 1e9, dd = 1e9;
@@ -2173,9 +2185,19 @@ function frame() {
   simulate(dt, t);
   updateLighting(t);
   updateCamera(dt, t);
-  renderer.clear();
-  renderer.render(scene, camera);
-  if (vm.visible && G.mode !== 'menu') { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
+  PFX.frameMs = lerp(PFX.frameMs, dt * 1000, 0.05);
+  // adrenaline: how fast you're going and how close they are drive the screen effects
+  const playing = G.mode === 'playing';
+  const hs = player.car ? Math.abs(player.car.speed) / 3 : Math.hypot(player.vx, player.vz);
+  const spd = playing ? clamp((hs - 5.5) / 5, 0, 1) * 0.7 + (player.slideT > 0 ? 0.35 : 0) + (player.mode === 'zip' ? clamp(player.zipV / 18, 0, 0.8) : 0) : 0;
+  G.pfxSpeed = lerp(G.pfxSpeed || 0, clamp(spd, 0, 1), Math.min(1, dt * 5));
+  const near = G.nearestChaser ?? 1e9;
+  const danger = playing && !G.super ? clamp(1 - near / 25, 0, 1) * 0.7 + clamp((45 - player.hp) / 45, 0, 1) * 0.5 + G.hurtFlash * 0.4 : 0;
+  G.pfxDanger = lerp(G.pfxDanger || 0, clamp(danger, 0, 1), Math.min(1, dt * 3));
+  const zn = player.car ? null : zoneAt(player.x, player.y, player.z);
+  const indoor = playing && !player.car && (!!zn || !!G.inSafe || camera.position.y < -1);
+  if (player.grounded) G.floorY = player.y;
+  renderFrame({ drawVM: vm.visible && G.mode !== 'menu', indoor, floorY: G.floorY ?? 0, speed: G.pfxSpeed, danger: G.pfxDanger, kick: clamp(G.fovKick / 8, 0, 1) });
 }
 // Channel 9: what the billboards and TVs are saying about you
 function newsState() {
@@ -2235,4 +2257,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
