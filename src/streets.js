@@ -5,7 +5,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { clamp, lerp, srand, sr, spick } from './core.js';
 import {
-  CITIES, SW, blockRects, siteOverrides, blockKey, worldHooks, lotHooks, keepClear, navOpen, groundHoles, pointBlocked, inHole, addCollider,
+  CITIES, SW, colliders, blockRects, siteOverrides, blockKey, worldHooks, lotHooks, keepClear, navOpen, groundHoles, pointBlocked, inHole, addCollider,
   propBuf, glowBuf, markBuf, SIDES, sideInfo, shopSign, outBox, slope, blob, addTree, AWNINGS, GREENS, SHOP_NAMES, staticMesh, adMats, edgeMat,
 } from './world.js';
 import { solid, ib, floorB, lightB, glassB, lamp, interiorZones } from './interiors.js';
@@ -24,11 +24,12 @@ function frameOf(L, side) {
   return {
     I, D, A0: I.a0, A1: I.a1, side, toXZ, rect,
     box(buf, a0, a1, b0, b1, y0, y1, col, collide, extra) {
+      this.n = (this.n || 0) + 1;
       const [x0, x1, z0, z1] = rect(a0, a1, b0, b1);
       if (collide) return solid(buf, x0, x1, y0, y1, z0, z1, col, extra);
       buf.box(x0, x1, y0, y1, z0, z1, col, { bottom: true });
     },
-    cyl(buf, a, b, r, rt, y0, y1, col, segs = 10, cap = true) { const [x, z] = toXZ(a, b); buf.cyl(x, z, r, rt, y0, y1, col, segs, cap); },
+    cyl(buf, a, b, r, rt, y0, y1, col, segs = 10, cap = true) { this.n = (this.n || 0) + 1; const [x, z] = toXZ(a, b); buf.cyl(x, z, r, rt, y0, y1, col, segs, cap); },
     lamp(a0, a1, b0, b1, y, col) { const [x0, x1, z0, z1] = rect(a0, a1, b0, b1); lamp(x0, x1, y, z0, z1, col); },
     glow(a0, a1, b0, b1, y0, y1, col) { const [x0, x1, z0, z1] = rect(a0, a1, b0, b1); lightB.box(x0, x1, y0, y1, z0, z1, col, { bottom: true }); },
   };
@@ -156,13 +157,21 @@ const KIND_POOL = {
 
 // a walk-in ground floor for lot L with its shopfront on `side`. The building above starts at H_IN.
 export function walkIn(L, side, city, kindArg) {
-  const F = frameOf(L, side), { A0, A1, D } = F, T = 0.25;
+  const F = frameOf(L, side), fullD = F.D;
+  F.D = Math.min(F.D, 16); // deep lots get a shop at the front and solid storage behind
+  const { A0, A1, D } = F, T = 0.25;
   if (D < 6.5 || A1 - A0 < 6.4) return false;
+  if (A1 - A0 > 26) return false;
   { // don't open a door onto a stairwell or manhole
     const [hx0, hx1, hz0, hz1] = F.rect(A0 - 1, A1 + 1, -SW - 0.5, 0);
     if (groundHoles.some((h) => h.x1 > hx0 && h.x0 < hx1 && h.z1 > hz0 && h.z0 < hz1)) return false;
   }
+  { // never build a shop into a room something solid already stands in
+    const [rx0, rx1, rz0, rz1] = F.rect(A0, A1, 0, D);
+    if (colliders.some((c) => c.h > 1 && (c.y0 || 0) < 1 && c.x1 > rx0 + 0.3 && c.x0 < rx1 - 0.3 && c.z1 > rz0 + 0.3 && c.z0 < rz1 - 0.3)) return false;
+  }
   const kind = kindArg || spick(KIND_POOL[city.style] || KIND_POOL.metro), K = KINDS[kind], nameIdx = spick(K.names), name = SHOP_NAMES[nameIdx][0];
+  if (fullD > D + 0.1) { const [fx0, fx1, fz0, fz1] = F.rect(A0, A1, D, fullD); addCollider(fx0, fx1, fz0, fz1, H_IN, { filler: true }); propBuf.box(fx0, fx1, 0.15, H_IN, fz0, fz1, 0x6e6660); }
   F.box(floorB, A0, A1, 0, D, 0.15, 0.21, 0xffffff);
   F.box(ib, A0, A1, D - T, D, 0, H_IN, K.wall, true);
   F.box(ib, A0, A0 + T, 0, D, 0, H_IN, K.wall, true); F.box(ib, A1 - T, A1, 0, D, 0, H_IN, K.wall, true);
@@ -185,7 +194,9 @@ export function walkIn(L, side, city, kindArg) {
   const [ox, oz] = F.toXZ(dm, -0.6);
   glowBuf.box(ox - 0.15, ox + 0.15, 3.1, 3.3, oz - 0.15, oz + 0.15, 0xfff0c8); // light over the door
   F.dm = dm;
+  const nBefore = F.n || 0;
   K.fill(F);
+  const items = (F.n || 0) - nBefore;
   for (let b = 1.5; b < D - 1; b += 3) F.lamp(A0 + 1, A1 - 1, b, b + 0.4, H_IN - 0.32, kind === 'arcade' || kind === 'bar' ? 0xffb070 : 0xfff4dc);
   const [rx0, rx1, rz0, rz1] = F.rect(A0, A1, 0, D);
   interiorZones.push({ x0: rx0, x1: rx1, z0: rz0, z1: rz1, y0: -0.5, y1: H_IN - 0.25, name });
@@ -194,7 +205,7 @@ export function walkIn(L, side, city, kindArg) {
   { const [nx0, nx1, nz0, nz1] = F.rect(dm - 1.15, dm + 1.15, -2.2, 2.2); navOpen.push({ x0: nx0, x1: nx1, z0: nz0, z1: nz1 }); }
   const [dx, dz] = F.toXZ(dm, 0.5), [kx, kz] = F.toXZ((A0 + A1) / 2, D - 1.2);
   const path = [-1.5, -0.5, 0.5, 1.4].map((b) => F.toXZ(dm, b));
-  walkIns.push({ path, x: dx, z: dz, name, kind, city: city.name, keeper: { x: kx, z: kz }, rect: { x0: rx0, x1: rx1, z0: rz0, z1: rz1 }, side });
+  walkIns.push({ path, x: dx, z: dz, name, kind, city: city.name, keeper: { x: kx, z: kz }, rect: { x0: rx0, x1: rx1, z0: rz0, z1: rz1 }, side, items });
   return true;
 }
 lotHooks.walkIn = walkIn;
@@ -487,3 +498,57 @@ function dressStreets() {
 }
 worldHooks.afterGen.push(dressStreets);
 void CITIES;
+
+// ---------------------------------------------------------------------
+// homes: the suburban houses you can walk into (living room, kitchen, and a bed if there's room)
+// ---------------------------------------------------------------------
+const HOME_WALLS = [0xf0e8d8, 0xe8f0e8, 0xf4e4e0, 0xe0e8f4, 0xf8f4e8, 0xe8dcc8];
+const HOME_NAMES = ['A FAMILY HOME', 'SOMEONE\'S HOUSE', 'A SEMI', 'A BUNGALOW', 'A TERRACED HOUSE', 'A COSY HOUSE'];
+export function houseInside(L, side, am, h, col) {
+  const F = frameOf(L, side), { A0, A1, D } = F, T = 0.2, CEIL = 2.9;
+  if (D < 5 || A1 - A0 < 6) return false;
+  if (colliders.some((c) => c.h > 1 && (c.y0 || 0) < 1 && c.x1 > Math.min(L.x0, L.x1) + 0.3 && c.x0 < L.x1 - 0.3 && c.z1 > L.z0 + 0.3 && c.z0 < L.z1 - 0.3)) return false;
+  { const [qx0, qx1, qz0, qz1] = F.rect(am - 1, am + 1, -2.6, 0); if (colliders.some((c) => c.h > 0.4 && (c.y0 || 0) < 1 && c.x1 > qx0 && c.x0 < qx1 && c.z1 > qz0 && c.z0 < qz1)) return false; }
+  const wall = spick(HOME_WALLS), wood = spick([0x8a5a32, 0x6a4a2a, 0xa07a4a]), sofaC = spick([0x5a6a8a, 0x8a3a3a, 0x4a6a4a, 0x6a5a7a, 0xb08a5a]);
+  // walls: collisions on the shell, a doorway in the front
+  // (the outer 0.2 m is the house's own textured shell; the painted inner face sits just inside it)
+  const W2 = T + 0.06;
+  const wallAt = (a0, a1, b0, b1, y0, y1, va0, va1, vb0, vb1) => { F.box(ib, va0, va1, vb0, vb1, y0, y1, wall); const [x0, x1, z0, z1] = F.rect(a0, a1, b0, b1); if (y0 < 1) addCollider(x0, x1, z0, z1, y1, { y0: 0 }); };
+  wallAt(A0, A1, D - W2, D, 0.15, CEIL, A0 + T, A1 - T, D - W2, D - T); // back
+  wallAt(A0, A0 + W2, 0, D, 0.15, CEIL, A0 + T, A0 + W2, T, D - T); wallAt(A1 - W2, A1, 0, D, 0.15, CEIL, A1 - W2, A1 - T, T, D - T); // sides
+  wallAt(A0, am - 0.65, 0, W2, 0.15, CEIL, A0 + T, am - 0.65, T, W2); wallAt(am + 0.65, A1, 0, W2, 0.15, CEIL, am + 0.65, A1 - T, T, W2); // front, either side of the door
+  F.box(ib, am - 0.65, am + 0.65, T, W2, 2.45, CEIL, wall);
+  F.box(ib, am - 0.75, am - 0.65, -0.02, T + 0.02, 0.15, 2.45, 0xf0f0f0); F.box(ib, am + 0.65, am + 0.75, -0.02, T + 0.02, 0.15, 2.45, 0xf0f0f0);
+  F.box(floorB, A0, A1, 0, D, 0.15, 0.2, spick([0xb08a5a, 0x9a7a5a, 0xc8b8a0, 0x8a6a4a]));
+  F.box(ib, A0, A1, 0, D, CEIL - 0.02, CEIL, 0xf4f4f0);
+  // living room on one side of the door, kitchen at the back, a bed if it's deep enough
+  const nBefore = F.n || 0;
+  const left = am > (A0 + A1) / 2 ? A0 + T : am + 1, right = am > (A0 + A1) / 2 ? am - 1 : A1 - T;
+  const lw = right - left;
+  if (lw > 2.4) {
+    const sa = (left + right) / 2;
+    F.box(ib, sa - Math.min(1.1, lw / 2 - 0.2), sa + Math.min(1.1, lw / 2 - 0.2), 1.0, 1.85, 0.2, 0.62, sofaC, true); // sofa
+    F.box(ib, sa - Math.min(1.1, lw / 2 - 0.2), sa + Math.min(1.1, lw / 2 - 0.2), 1.6, 1.85, 0.62, 1.05, sofaC);
+    F.box(ib, sa - 0.5, sa + 0.5, 2.4, 2.9, 0.2, 0.48, wood, true); // coffee table
+    F.box(ib, sa - 1.2, sa + 1.2, 2.0, 3.4, 0.2, 0.22, spick([0xa83a3a, 0x3a5a8a, 0xc8a050, 0x5a8a6a])); // rug
+    if (D > 5.2) { F.box(ib, sa - 0.8, sa + 0.8, 3.55, 3.95, 0.2, 0.6, 0x2a2a2a, true); F.box(ib, sa - 0.65, sa + 0.65, 3.7, 3.78, 0.6, 1.4, 0x111111); F.glow(sa - 0.6, sa + 0.6, 3.68, 3.7, 0.65, 1.35, spick([0x3a6ac8, 0x5ac88a, 0xc8a03a])); } // TV
+  }
+  // kitchen counter and fridge along the back wall
+  F.box(ib, A0 + T, Math.min(A1 - T, A0 + T + 3.2), D - T - 0.65, D - T, 0.2, 0.95, spick([0xe8e8e8, 0x8a9aa8, 0x6a4a3a]), true);
+  F.box(ib, A0 + T, Math.min(A1 - T, A0 + T + 3.2), D - T - 0.67, D - T, 0.95, 1.0, 0x3a3a3a);
+  F.box(ib, A1 - T - 0.8, A1 - T - 0.05, D - T - 0.75, D - T, 0.2, 1.9, 0xf0f0f0, true);
+  // dining table
+  if (D > 6.5) { const ta = (A0 + A1) / 2 + (am > (A0 + A1) / 2 ? -1.5 : 1.5), tb = D * 0.62; F.box(ib, ta - 0.6, ta + 0.6, tb - 0.45, tb + 0.45, 0.85, 0.9, wood, true); for (const [da, db] of [[-0.8, 0], [0.8, 0]]) chair(F, ta + da, tb + db, wood); }
+  if (D > 7.5 && lw > 2.4) { const ba = right - 1.1; F.box(ib, ba - 0.9, ba + 0.9, D - T - 2.9, D - T - 0.9, 0.2, 0.6, 0xf0f0f0, true); F.box(ib, ba - 0.9, ba + 0.9, D - T - 2.9, D - T - 2.2, 0.6, 0.7, spick([0x8a3a5a, 0x3a5a8a, 0x5a8a5a])); } // bed
+  F.lamp(A0 + 1, A1 - 1, D / 2 - 0.2, D / 2 + 0.2, CEIL - 0.02, 0xfff0d0);
+  const [rx0, rx1, rz0, rz1] = F.rect(A0, A1, 0, D);
+  const name = spick(HOME_NAMES), items = (F.n || 0) - nBefore;
+  interiorZones.push({ x0: rx0, x1: rx1, z0: rz0, z1: rz1, y0: -0.5, y1: CEIL - 0.1, name, home: true });
+  const [kx0, kx1, kz0, kz1] = F.rect(am - 1.6, am + 1.6, -4.5, 1.2); keepClear.push({ x0: kx0, x1: kx1, z0: kz0, z1: kz1 });
+  { const [nx0, nx1, nz0, nz1] = F.rect(am - 1.1, am + 1.1, -2.2, 2.2); navOpen.push({ x0: nx0, x1: nx1, z0: nz0, z1: nz1 }); }
+  const [dx, dz] = F.toXZ(am, 0.5), [kx, kz] = F.toXZ(am, D * 0.5);
+  const path = [-1.5, -0.5, 0.5, 1.4].map((b) => F.toXZ(am, b));
+  walkIns.push({ path, x: dx, z: dz, name, kind: 'home', city: 'ASHFORD', keeper: { x: kx, z: kz }, rect: { x0: rx0, x1: rx1, z0: rz0, z1: rz1 }, side, home: true, items });
+  return true;
+}
+lotHooks.house = houseInside;

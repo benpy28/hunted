@@ -2,7 +2,7 @@
 // and only fights you if you go to them. All original characters with their own attacks.
 import * as THREE from '../vendor/three.module.min.js';
 import { clamp, lerp, mr, mpick, angDiff, scene, canvasTex, puffTex } from './core.js';
-import { CITIES, floorAt, randomOpenPoint, resolveBody } from './world.js';
+import { CITIES, floorAt, randomOpenPoint, resolveBody, moveBody } from './world.js';
 import { buildPerson, setMood } from './people.js';
 import { emitPuff } from './fx.js';
 import { sfx } from './audio.js';
@@ -164,8 +164,8 @@ export function updateVillains(dt, C) {
       V.tauntT -= dt; if (V.tauntT <= 0) { V.tauntT = mr(7, 12); C.sayAt(V, mpick(V.def.taunts)); }
     }
     V.vx = lerp(V.vx, tvx, Math.min(1, dt * 3)); V.vz = lerp(V.vz, tvz, Math.min(1, dt * 3));
-    V.x += V.vx * dt; V.z += V.vz * dt;
-    resolveBody(V, 0.5 * V.def.scale, V.y, 2 * V.def.scale);
+    const vox = V.x, voz = V.z; V.x += V.vx * dt; V.z += V.vz * dt;
+    moveBody(V, vox, voz, 0.5 * V.def.scale, V.y, 2 * V.def.scale);
     V.y = lerp(V.y, floorAt(V.x, V.z, V.y + 1), Math.min(1, dt * 8));
     const sp = Math.hypot(V.vx, V.vz), sw = Math.sin(V.phase * 6) * Math.min(1, sp / 3) * 0.7, p = V.p;
     p.legL.rotation.x = sw; p.legR.rotation.x = -sw;

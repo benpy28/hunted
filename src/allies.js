@@ -1,7 +1,7 @@
 // Allies: people you've paid to be on your side for a few days. Pals throw hands, bodyguards shoot.
 import * as THREE from '../vendor/three.module.min.js';
 import { lerp, angDiff, mr, mpick, canvasTex, scene } from './core.js';
-import { resolveBody, floorAt, navTarget, los, blockedAt, randomOpenPoint } from './world.js';
+import { resolveBody, moveBody, floorAt, navTarget, los, blockedAt, randomOpenPoint } from './world.js';
 import { buildPerson, SKINS, HAIRS, addRagdoll } from './people.js';
 import { spawnTracer } from './fx.js';
 import { sfx } from './audio.js';
@@ -101,8 +101,8 @@ export class Ally {
     const el = Math.hypot(ex, ez) || 1;
     const k = want * spd * (pd > 12 && !h ? 1.15 : pd < 5 && !h ? 0.55 : 1);
     this.vx = lerp(this.vx, (ex / el) * k, Math.min(1, dt * 8)); this.vz = lerp(this.vz, (ez / el) * k, Math.min(1, dt * 8));
-    this.x += this.vx * dt; this.z += this.vz * dt;
-    resolveBody(this, 0.35, this.y, 1.8);
+    const aox = this.x, aoz = this.z; this.x += this.vx * dt; this.z += this.vz * dt;
+    moveBody(this, aox, aoz, 0.35, this.y, 1.8);
     const prevY = this.y; this.vy -= 22 * dt; this.y += this.vy * dt;
     const floor = floorAt(this.x, this.z, Math.max(prevY, this.y));
     if (this.y <= floor || (prevY - floor < 0.45 && this.vy <= 0 && this.y - floor < 0.45)) { this.y = floor; this.vy = 0; }

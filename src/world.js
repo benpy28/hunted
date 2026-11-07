@@ -716,7 +716,7 @@ function citySkeleton(city, canalRow = -1) {
 // Perimeter blocks: a ring of attached buildings of different widths, heights and styles around a
 // courtyard, with alleys cutting through. Some ground floors are walk-in shops (lotHooks.walkIn).
 // ---------------------------------------------------------------------
-export const lotHooks = { walkIn: null, courtyard: null };
+export const lotHooks = { walkIn: null, courtyard: null, house: null };
 export const courtyards = []; // {x0,x1,z0,z1,city} open yards inside blocks
 export function perimeterBlock(I, P) {
   const { ix0, ix1, iz0, iz1 } = I;
@@ -754,10 +754,10 @@ export function perimeterBlock(I, P) {
     const front = SIDES.find((sd) => s[sd]);
     const fi = front && sideInfo(front, L.x0, L.x1, L.z0, L.z1);
     let base = 0;
-    if (front && fi.a1 - fi.a0 >= 6.5 && h >= 9 && lotHooks.walkIn && srand() < (P.walkIn ?? 0.3)) {
+    if (front && fi.a1 - fi.a0 >= 6.5 && h >= 6 && lotHooks.walkIn && srand() < (P.walkIn ?? 0.85)) {
       if (lotHooks.walkIn(L, front, curCity)) base = 4.6;
     }
-    const tc = L.corner && srand() < (P.turret ?? 0.2) ? [L.corner[0] + (L.corner[0] === ix0 ? 1.4 : -1.4), L.corner[1] + (L.corner[1] === iz0 ? 1.4 : -1.4)] : null;
+    const tc = !base && L.corner && srand() < (P.turret ?? 0.2) ? [L.corner[0] + (L.corner[0] === ix0 ? 1.4 : -1.4), L.corner[1] + (L.corner[1] === iz0 ? 1.4 : -1.4)] : null;
     const backSide = !L.corner && front ? { px: 'nx', nx: 'px', pz: 'nz', nz: 'pz' }[front] : null;
     building(key, L.x0, L.x1, L.z0, L.z1, h, s, { backSide, base, tank: srand() < 0.5, signs: P.signs ?? 0.3, shops: P.shops ?? 0.85, turret: tc, tint: P.tint?.() });
   }
@@ -825,9 +825,11 @@ function genMetro(city) {
     const hAt = () => Math.round((downtown ? sr(40, 100) : midtown ? sr(15, 42) : sr(9, 21)) / 3) * 3;
     const lot = (x0, x1, z0, z1) => {
       const key = pickKey(), h = hAt(), s = st(x0, x1, z0, z1);
+      // most city buildings have a shop, cafe or lobby you can walk into on the ground floor
+      let wbase = 0; { const front = SIDES.find((sd) => s[sd]); if (front && lotHooks.walkIn && srand() < 0.8 && lotHooks.walkIn({ x0, x1, z0, z1 }, front, curCity)) wbase = 4.6; }
       if (downtown && GLASS_KEYS.includes(key) && srand() < 0.5 && x1 - x0 > 14) {
         // podium + setback tower
-        building(spick(OFFICE_KEYS), x0, x1, z0, z1, 12, s, { signs: 0 });
+        building(spick(OFFICE_KEYS), x0, x1, z0, z1, 12, s, { signs: 0, base: wbase });
         const inset = 3;
         facadeBox(key, x0 + inset, x1 - inset, 12, h, z0 + inset, z1 - inset);
         roofBuf.flat(x0 + inset, x1 - inset, z0 + inset, z1 - inset, h, C.roof);
@@ -835,7 +837,7 @@ function genMetro(city) {
         addRoof(x0 + inset, x1 - inset, z0 + inset, z1 - inset, h, { city: curCity });
         if (srand() < 0.5) { propBuf.box((x0 + x1) / 2 - 0.15, (x0 + x1) / 2 + 0.15, h, h + sr(8, 18), (z0 + z1) / 2 - 0.15, (z0 + z1) / 2 + 0.15, 0x999999); beacons.push({ x: (x0 + x1) / 2, y: h + 18, z: (z0 + z1) / 2 }); }
       } else {
-        building(key, x0, x1, z0, z1, h, s, { tank: !downtown, signs: downtown ? 0.05 : 0.35 });
+        building(key, x0, x1, z0, z1, h, s, { tank: !downtown, signs: downtown ? 0.05 : 0.35, base: wbase });
         if (midtown && !downtown && srand() < 0.12) {
           const side = SIDES.find((sd) => s[sd]);
           if (side) { const { fixed, a0, a1, out } = sideInfo(side, x0, x1, z0, z1); const am = (a0 + a1) / 2; if (side[1] === 'x') addBillboard(fixed - out * 2, am, h + 0.7, Math.PI / 2 * out, 8, 4, false); else addBillboard(am, fixed - out * 2, h + 0.7, out > 0 ? 0 : Math.PI, 8, 4, false); }
@@ -845,7 +847,7 @@ function genMetro(city) {
     if (!downtown && srand() < 0.8) {
       perimeterBlock({ ix0, ix1, iz0, iz1 }, {
         h: midtown ? [12, 27] : [6, 16], key: () => (srand() < (midtown ? 0.72 : 0.9) ? spick(BRICK_KEYS) : spick(OFFICE_KEYS)),
-        walkIn: midtown ? 0.3 : 0.4, signs: midtown ? 0.35 : 0.2, turret: midtown ? 0.25 : 0.15,
+        walkIn: midtown ? 0.85 : 0.9, signs: midtown ? 0.35 : 0.2, turret: midtown ? 0.25 : 0.15,
       });
     } else {
     const rr = srand();
@@ -901,7 +903,19 @@ function hipRoof(buf, x0, x1, z0, z1, y, rh, col, alongX) {
 const TRIM = [0xf4f2ee, 0xe8e0d0, 0x3a3a40, 0x5a3a2a, 0x2a4a3a];
 function house(x0, x1, z0, z1, frontSide) {
   const two = srand() < 0.35, h = two ? 6 : 3.2, col = spick(HOUSE_COLORS), roof = spick(ROOF_COLORS), trim = spick(TRIM);
-  facadeBox('siding', x0, x1, 0.15, h, z0, z1, col);
+  const doorSide = srand() < 0.5 ? -1.4 : 1.4;
+  // most homes have a front door you can actually go through
+  const fi0 = sideInfo(frontSide, x0, x1, z0, z1), am0 = (fi0.a0 + fi0.a1) / 2 + doorSide;
+  const open = lotHooks.house && srand() < 0.8 && lotHooks.house({ x0, x1, z0, z1 }, frontSide, am0, h, col);
+  if (!open) facadeBox('siding', x0, x1, 0.15, h, z0, z1, col);
+  else { // the shell as four textured walls with a doorway in the front one
+    const T = 0.2, slab = (sd, a0, a1, y0, y1) => { const I = sideInfo(sd, x0, x1, z0, z1), f0 = I.fixed - I.out * T, lo = Math.min(I.fixed, f0), hi = Math.max(I.fixed, f0); if (sd[1] === 'x') facadeBox('siding', lo, hi, y0, y1, a0, a1, col); else facadeBox('siding', a0, a1, y0, y1, lo, hi, col); };
+    for (const sd of SIDES) {
+      const I = sideInfo(sd, x0, x1, z0, z1);
+      if (sd !== frontSide) slab(sd, I.a0, I.a1, 0.15, h);
+      else { slab(sd, I.a0, am0 - 0.65, 0.15, h); slab(sd, am0 + 0.65, I.a1, 0.15, h); slab(sd, am0 - 0.65, am0 + 0.65, 2.45, h); }
+    }
+  }
   propBuf.box(x0 - 0.06, x1 + 0.06, 0.15, 0.6, z0 - 0.06, z1 + 0.06, 0x8a8478); // foundation
   for (const [cx, cz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) propBuf.box(cx - 0.12, cx + 0.12, 0.6, h, cz - 0.12, cz + 0.12, trim); // corner boards
   propBuf.box(x0 - 0.1, x1 + 0.1, h - 0.25, h, z0 - 0.1, z1 + 0.1, trim); // eaves board
@@ -910,8 +924,8 @@ function house(x0, x1, z0, z1, frontSide) {
   if (hip) hipRoof(propBuf, x0 - ov, x1 + ov, z0 - ov, z1 + ov, h, rh, roof, alongX);
   else propBuf.prism(x0 - ov, x1 + ov, z0 - ov, z1 + ov, h, rh, roof, alongX);
   // door, porch deck, porch roof on posts, steps, path to the pavement
-  const { fixed, a0, a1, out } = sideInfo(frontSide, x0, x1, z0, z1), am = (a0 + a1) / 2 + (srand() < 0.5 ? -1.4 : 1.4);
-  outBox(frontSide, fixed, am - 0.6, am + 0.6, 0.6, 2.4, 0.06, spick([0x5a3a28, 0x2a4a6a, 0x8a2a2a, 0x2a5a3a, 0xf0f0f0]));
+  const { fixed, a0, a1, out } = sideInfo(frontSide, x0, x1, z0, z1), am = am0;
+  if (!open) outBox(frontSide, fixed, am - 0.6, am + 0.6, 0.6, 2.4, 0.06, spick([0x5a3a28, 0x2a4a6a, 0x8a2a2a, 0x2a5a3a, 0xf0f0f0]));
   glowBuf.face(frontSide, fixed + out * 0.07, am - 0.12, am + 0.12, 1.8, 2.2, 0xffe8b0);
   const pw = 1.9, pd = 1.8;
   outBox(frontSide, fixed, am - pw, am + pw, 0.15, 0.6, pd, 0xb8a890);
@@ -941,7 +955,7 @@ function house(x0, x1, z0, z1, frontSide) {
   }
   if (srand() < 0.55) { propBuf.box(x0 + 0.8, x0 + 1.5, h - 1, h + 2.8, z0 + 0.8, z0 + 1.5, 0x8a4a3a); propBuf.box(x0 + 0.7, x0 + 1.6, h + 2.8, h + 2.95, z0 + 0.7, z0 + 1.6, 0x5a3a2a); } // chimney
   if (srand() < 0.35) { const sx = srand() < 0.5 ? x0 + 1.5 : x1 - 1.5; propBuf.box(sx - 0.04, sx + 0.04, h + rh * 0.5, h + rh * 0.5 + 0.6, (z0 + z1) / 2 - 0.04, (z0 + z1) / 2 + 0.04, 0x8a8a8a); propBuf.cyl(sx, (z0 + z1) / 2, 0.08, 0.4, h + rh * 0.5 + 0.5, h + rh * 0.5 + 0.7, 0xdddddd, 8); } // dish
-  addRoof(x0, x1, z0, z1, h + rh * 0.55, { city: curCity, house: true });
+  addRoof(x0, x1, z0, z1, h + rh * 0.55, { city: curCity, house: true, y0: open ? 2.9 : 0 });
 }
 // back-garden things for the shared yard in the middle of a suburban block
 function gardenThing(x, z) {
@@ -1097,7 +1111,7 @@ function genIndustrial(city) {
     const st = (x0, x1, z0, z1) => streetFaces(x0, x1, z0, z1, ix0, ix1, iz0, iz1);
     const kind = j === city.n - 1 ? 'yard' : spick(['warehouse', 'warehouse', 'yard', 'tanks', 'factory', 'row', 'row']);
     if (kind === 'row') { // old harbour terrace: pubs, chippies and flats around a yard
-      perimeterBlock({ ix0, ix1, iz0, iz1 }, { h: [6, 13], key: () => (srand() < 0.85 ? spick(BRICK_KEYS) : spick(OFFICE_KEYS)), walkIn: 0.35, signs: 0.15, turret: 0.1, shops: 0.6 });
+      perimeterBlock({ ix0, ix1, iz0, iz1 }, { h: [6, 13], key: () => (srand() < 0.85 ? spick(BRICK_KEYS) : spick(OFFICE_KEYS)), walkIn: 0.8, signs: 0.15, turret: 0.1, shops: 0.6 });
       if ((i + j) % 2 === 0) addStreetLight(r.x0 + 0.7, r.z0 + 0.7, -1, 0, C.sodium, 8); else addStreetLight(r.x1 - 0.7, r.z1 - 0.7, 1, 0, C.sodium, 8);
       continue;
     }
@@ -1245,6 +1259,7 @@ function scarecrow(x, z) {
 }
 function farmstead(x, z, front) {
   // farmhouse, red barn, silo, sheds, a tractor and a muddy yard; lots of corners to break line of sight
+  for (const [cx, cz] of [[x - 34, z - 26], [x + 54, z - 26], [x - 34, z + 30], [x + 54, z + 30], [x + 10, z]]) if (cityAt(cx, cz, 12)) return; // never on top of a town
   groundBuf.flat(x - 30, x + 50, z - 22, z + 26, 0.009, 0x7a6a50);
   fieldRects.push({ x0: x - 34, x1: x + 54, z0: z - 26, z1: z + 30 });
   house(x, x + 10, z, z + 8, front);
@@ -1770,7 +1785,7 @@ export function randomOpenPoint(cx, cz, rMin, rMax, tries = 20) {
   for (let t = 0; t < tries; t++) {
     const a = Math.random() * Math.PI * 2, r = rMin + Math.random() * (rMax - rMin);
     const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
-    if (!blockedAt(x, z)) return { x, z };
+    if (!blockedAt(x, z) && !pointBlocked(x, z, 0.4)) return { x, z };
   }
   return null;
 }
@@ -1800,4 +1815,42 @@ export function los3D(ax, ay, az, bx, by, bz) {
   _o.set(ax, ay, az); _d.set(bx - ax, by - ay, bz - az);
   const dist = _d.length(); _d.divideScalar(dist || 1);
   return raycastWorld(_o, _d, dist).t >= dist - 0.6;
+}
+// debugging/tests: the collider a body standing at (x, y, z) is stuck inside, if any (deeper than `inset`)
+export function solidAt(x, y, z, inset = 0.15, minSize = 0, minTall = 0) {
+  for (const c of bucketAt(x, z)) {
+    if (c.water || !blocksBody(c, y, 1.7) || Math.min(c.x1 - c.x0, c.z1 - c.z0) < minSize || c.h - y < minTall) continue;
+    if (x > c.x0 + inset && x < c.x1 - inset && z > c.z0 + inset && z < c.z1 - inset) return c;
+  }
+  return null;
+}
+export function unbucketedColliders() { const out = []; for (const c of colliders) { const cx = (c.x0 + c.x1) / 2, cz = (c.z0 + c.z1) / 2; if (!bucketAt(cx, cz).includes(c)) out.push(c); } return out; }
+// move a body from (ox, oz) to where it is now in small steps, so nothing fast (a sprint at a low
+// frame rate, a shove, a crowd pushing, flying) can tunnel through a thin wall
+export function moveBody(p, ox, oz, r, feetY, tall = 1.8) {
+  const dx = p.x - ox, dz = p.z - oz, d = Math.hypot(dx, dz), n = Math.min(40, Math.ceil(d / Math.min(0.15, r * 0.5)));
+  if (n <= 1) return resolveBody(p, r, feetY, tall);
+  p.x = ox; p.z = oz;
+  let hit = false;
+  for (let i = 0; i < n; i++) { p.x += dx / n; p.z += dz / n; if (resolveBody(p, r, feetY, tall)) hit = true; }
+  return hit;
+}
+// precise line of sight through solid geometry (glass counts as see-through), using the collision buckets
+const _seen = new Set();
+export function losSolid(ax, ay, az, bx, by, bz) {
+  const dx = bx - ax, dy = by - ay, dz = bz - az, dist = Math.hypot(dx, dy, dz);
+  if (dist < 0.5) return true;
+  _seen.clear();
+  const steps = Math.ceil(dist / (BUCKET * 0.5)) + 1;
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    for (const c of bucketAt(ax + dx * t, az + dz * t)) {
+      if (_seen.has(c)) continue; _seen.add(c);
+      if (c.water || c.glass || c.pole || c.h - c.y0 < 0.3) continue;
+      let t0 = 0.02, t1 = 0.98;
+      const sl = (o, d, mn, mx) => { if (Math.abs(d) < 1e-9) return o > mn && o < mx; let a = (mn - o) / d, b = (mx - o) / d; if (a > b) { const q = a; a = b; b = q; } t0 = Math.max(t0, a); t1 = Math.min(t1, b); return t0 < t1; };
+      if (sl(ax, dx, c.x0, c.x1) && sl(az, dz, c.z0, c.z1) && sl(ay, dy, c.y0, c.h)) return false;
+    }
+  }
+  return true;
 }

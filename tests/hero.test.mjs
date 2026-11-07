@@ -47,9 +47,11 @@ test('stare at someone long enough and they crumble', async () => {
     for (const V of H.villains) { V.state = 'gone'; V.downT = 0; V.g.visible = false; }
     const x = H.player.x, z = H.player.z, y = H.player.y;
     for (const o of H.G.hunters) if (Math.hypot(o.x - x, o.z - z) < 45) o.remove();
-    const h = new H.Hunter(x, z + 8, 'civ', false); h.y = y; H.G.hunters.push(h);
+    // pick a side with a clear view (the player may be standing next to a wall)
+    const [ox, oz] = [[0, 8], [0, -8], [8, 0], [-8, 0], [6, 6], [-6, -6]].find(([a, b]) => H.losSolid(x, y + 1.6, z, x + a, y + 1.6, z + b)) || [0, 8];
+    const h = new H.Hunter(x + ox, z + oz, 'civ', false); h.y = y; H.G.hunters.push(h);
     let crumbled = false;
-    for (let i = 0; i < 90 && !crumbled; i++) { h.x = x; h.z = z + 8; H.camera.position.set(x, y + 1.6, z); H.camera.lookAt(h.x, h.y + 1.6, h.z); H.camera.updateMatrixWorld(); H.step(1 / 30); crumbled = !!h.crumbled; }
+    for (let i = 0; i < 120 && !crumbled; i++) { h.x = x + ox; h.z = z + oz; h.inside = false; H.camera.position.set(x, y + 1.6, z); H.camera.lookAt(h.x, h.y + 1.6, h.z); H.camera.updateMatrixWorld(); H.step(1 / 30); crumbled = !!h.crumbled; }
     return { crumbled, cower: h.cowerT };
   });
   assert.ok(s.crumbled, 'they should crumble under the stare');

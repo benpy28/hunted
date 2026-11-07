@@ -8,7 +8,7 @@ import {
   CITIES, HIGHWAYS, WORLD, RIVER, colliders, blockRects, parkedSpots, beacons, animated, waterRects, lanes, emissiveFacades,
   generateWorld, cityAt, localeName, resolveCircle, pointBlocked, maxHeightNear, groundY,
   navRecenter, computeFlow, navTarget, los, los3D, blockedAt, randomOpenPoint, raycastWorld,
-  floorAt, resolveBody, stackTop, ladders, ziplines, zipNear, ladderNear, roofs,
+  floorAt, resolveBody, stackTop, ladders, ziplines, zipNear, ladderNear, roofs, solidAt, unbucketedColliders, moveBody, losSolid, headroom,
 } from './world.js';
 import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
@@ -17,6 +17,7 @@ import { links } from './world.js';
 import { walkIns, lifeSpots } from './streets.js';
 import { HERO, resetHero, heroFun, heroMenace, heroPoseCmd, heroOverheard, updateHero, heroPersonPose, heroHolds, heroNews, heroMapMarks, heroHud } from './hero.js';
 import { villains, resetVillains, updateVillains, villainHit, villainsNear, villainRay, villainMapMarks } from './villains.js';
+import { knockFX, hitFX, updateKnockFX, knockDebug } from './knockfx.js';
 import { assignJob, releaseJob, lifeStart, lifeStep, lifePose, lifeInterrupt, updateCityLife, clearCityLife, cityLifeDebug } from './citylife.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
@@ -186,6 +187,7 @@ class Hunter {
     this.dead = true; this.marker.visible = false;
     this.g.position.set(this.x, this.y, this.z);
     addRagdoll(this.p, this.T.scale, { x: this.vx + this.kx, y: 0, z: this.vz + this.kz }, impulse, hitY);
+    { const il = Math.hypot(impulse.x, impulse.z) || 1; knockFX(ragdolls[ragdolls.length - 1], hitKindNow(), hitY, impulse.x / il, impulse.z / il); }
     if (byPlayer) { G.kills++; addHeat(this.type === 'cop' ? 22 : 14); }
     if (loot) maybeDropCash(this);
     if (this.contract) contractTargetDown(this);
@@ -193,6 +195,7 @@ class Hunter {
   }
   damage(n, dirX, dirZ, hitY, byPlayer = true) {
     this.hp -= n; this.alert();
+    if (this.hp > 0) hitFX(this.x, this.y + 1.8 * this.T.scale, this.z, hitKindNow());
     if (this.hp <= 0) this.die({ x: dirX * 7, y: 2.5, z: dirZ * 7 }, hitY, byPlayer, true);
     else { this.stun = Math.max(this.stun, 0.25); this.kx += dirX * 2.5 * this.T.knock; this.kz += dirZ * 2.5 * this.T.knock; }
   }
@@ -219,7 +222,7 @@ class Hunter {
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
-      const see = !this.inside && d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 || this.y < -1 || player.y < -1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
+      const see = !this.inside && d < 90 && (d > 50 ? los(this.x, this.z, tp.x, tp.z) : true) && losSolid(this.x, this.y + 1.6, this.z, tp.x, player.car ? 1.2 : playerEyeY(), tp.z);
       this.hasLOS = see;
       const tdt = Math.min(0.5, G.elapsed - this.thinkAt); this.thinkAt = G.elapsed;
       if (this.state !== 'chase' && !G.super) {
@@ -348,13 +351,14 @@ class Hunter {
     this.kx *= Math.max(0, 1 - dt * 5); this.kz *= Math.max(0, 1 - dt * 5);
     const ox = this.x, oz = this.z;
     this.x += (this.vx + this.kx) * dt; this.z += (this.vz + this.kz) * dt;
-    const wall = resolveBody(this, 0.35 * T.scale, this.y, 1.8);
-    if (this.y < 0.5) for (const c of G.cars) if (Math.abs(c.x - this.x) < 4 && Math.abs(c.z - this.z) < 4) resolveCircleCar(this, 0.35, c);
+    const wall = moveBody(this, ox, oz, 0.35 * T.scale, this.y, 1.8);
+    if (this.y < 0.5) { const cx0 = this.x, cz0 = this.z; for (const c of G.cars) if (Math.abs(c.x - this.x) < c.hl + 2 && Math.abs(c.z - this.z) < c.hl + 2) resolveCircleCar(this, 0.35, c); if (this.x !== cx0 || this.z !== cz0) moveBody(this, cx0, cz0, 0.35 * T.scale, this.y, 1.8); }
+    keepOutOfSolids(this);
     // scramble up walls to get at you (runners are good at it, brutes hopeless)
     if (wall && this.state === 'chase' && dy > 0.8 && d < 9 && this.stun <= 0 && this.noticeT <= 0 && Math.hypot(this.x - ox, this.z - oz) < dt * 1.5) {
       const ux = dx / (d || 1), uz = dz / (d || 1), top = stackTop(this.x + ux * 0.7, this.z + uz * 0.7, this.y);
       const maxUp = { runner: 4.3, cop: 3.1, civ: 2.5, brute: 1.4 }[this.type];
-      if (top > 0 && top - this.y <= maxUp && floorAt(this.x + ux * 1.2, this.z + uz * 1.2, top + 0.02) >= top - 0.05) {
+      if (top > 0 && top - this.y <= maxUp && floorAt(this.x + ux * 1.2, this.z + uz * 1.2, top + 0.02) >= top - 0.05 && headroom(this.x, this.z, this.y + 0.1, top - this.y + 1.7)) {
         this.climb = { t: 0, dur: 0.5 + (top - this.y) * 0.3, fx: this.x, fy: this.y, fz: this.z, tx: this.x + ux * 1.2, ty: top, tz: this.z + uz * 1.2 };
       }
     }
@@ -647,11 +651,14 @@ class Car {
     if (!throttle && !brake) this.speed -= Math.sign(this.speed) * Math.min(Math.abs(this.speed), 2 * dt);
     this.speed = clamp(this.speed, -8, maxF);
     this.heading += steer * 1.9 * clamp(this.speed / 6, -1, 1) * dt;
-    this.x += this.fx * this.speed * dt; this.z += this.fz * this.speed * dt;
     let hitWall = false;
-    for (const off of this.offs) {
-      const c = { x: this.x + this.fx * off, z: this.z + this.fz * off }, ox = c.x, oz = c.z;
-      if (resolveCircle(c, 1.05)) { this.x += c.x - ox; this.z += c.z - oz; hitWall = true; }
+    const nsub = Math.max(1, Math.ceil(Math.abs(this.speed * dt) / 0.35));
+    for (let sub = 0; sub < nsub; sub++) {
+      this.x += this.fx * this.speed * dt / nsub; this.z += this.fz * this.speed * dt / nsub;
+      for (const off of this.offs) {
+        const c = { x: this.x + this.fx * off, z: this.z + this.fz * off }, ox = c.x, oz = c.z;
+        if (resolveCircle(c, 1.05)) { this.x += c.x - ox; this.z += c.z - oz; hitWall = true; }
+      }
     }
     if (hitWall && Math.abs(this.speed) > 2) {
       const impact = Math.abs(this.speed);
@@ -721,8 +728,8 @@ function carInteractions() {
       if (h.dead || Math.abs(h.x - c.x) > c.hl + 1.3 || Math.abs(h.z - c.z) > c.hl + 1.3) continue;
       const before = { x: h.x, z: h.z };
       if (resolveCircleCar(before, 0.4, c)) {
-        if (sp > 5) { h.die({ x: c.fx * c.speed * 0.9 + mr(-1, 1), y: 3 + sp * 0.3, z: c.fz * c.speed * 0.9 + mr(-1, 1) }, 0.8, c.driver === 'player'); sfx.thud(); if (c.driver === 'player') c.damage(2); }
-        else { h.x = before.x; h.z = before.z; }
+        if (sp > 5) { setHitKind('car'); h.die({ x: c.fx * c.speed * 0.9 + mr(-1, 1), y: 3 + sp * 0.3, z: c.fz * c.speed * 0.9 + mr(-1, 1) }, 0.8, c.driver === 'player'); sfx.thud(); if (c.driver === 'player') c.damage(2); }
+        else { const hx0 = h.x, hz0 = h.z; h.x = before.x; h.z = before.z; moveBody(h, hx0, hz0, 0.35 * h.T.scale, h.y, 1.8); }
       }
     }
     if (!player.car && player.alive && c.driver !== 'player') {
@@ -732,7 +739,7 @@ function carInteractions() {
           player.carHitCd = 1.2;
           hurtPlayer(Math.min(55, sp * 2.4), c.x - c.fx * 3, c.z - c.fz * 3, 6 + sp * 0.5);
           sfx.thud(); c.speed *= 0.5;
-        } else { player.x = p.x; player.z = p.z; }
+        } else { const px0 = player.x, pz0 = player.z; player.x = p.x; player.z = p.z; moveBody(player, px0, pz0, 0.4, player.y, 1.8); }
       }
     }
   }
@@ -1124,6 +1131,7 @@ function playerShoot() {
     const r = fireRay(_camDir, W.range || 160, k < 4);
     if (r) { hits.set(r.h, (hits.get(r.h) || 0) + r.dmg); if (r.head) headHit = true; }
   }
+  setHitKind(player.weapon);
   for (const [h, dmg] of hits) {
     const dx = h.x - player.x, dz = h.z - player.z, dl = Math.hypot(dx, dz) || 1;
     h.damage(dmg, dx / dl, dz / dl, h.y + 1.2);
@@ -1191,6 +1199,7 @@ function heroGrab() {
   return true;
 }
 function heroThrow() {
+  setHitKind('super');
   const h = G.held; if (!h) return;
   camera.getWorldDirection(_hd);
   launchHunter(h, 0, 0, true, { x: _hd.x * 34, y: _hd.y * 34 + 7, z: _hd.z * 34 });
@@ -1199,6 +1208,7 @@ function heroThrow() {
 }
 // a backhand that sends people and parked cars flying
 function heroSwat() {
+  setHitKind('super');
   if (player.shoveCd > 0) return; player.shoveCd = 0.45; player.shoveAnim = 1; sfx.shove();
   camera.getWorldDirection(_hd); const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
   let any = false;
@@ -1217,6 +1227,7 @@ function heroSwat() {
   if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); heroFun(0.06, HC); heroMenace(0.5); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
 }
 function heroSlam() {
+  setHitKind('super');
   sfx.explode(); G.shake = 0.6; G.hitstopT = 0.12; G.fovKick = 14;
   for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; emitPuff(player.x + Math.cos(a) * 1.5, player.y + 0.3, player.z + Math.sin(a) * 1.5, { life: 1, vx: Math.cos(a) * 9, vz: Math.sin(a) * 9, vy: 0.6, size0: 0.8, size1: 3, alpha: 0.6, color: 0x9a9080 }); }
   for (const h of G.hunters) {
@@ -1238,6 +1249,7 @@ const laserMeshes = [0, 1].map(() => { const g = new THREE.Group();
 function laserBeam(i, from, to) { const g = laserMeshes[i]; g.visible = true; g.position.copy(from); g.lookAt(to); g.scale.set(1, 1, from.distanceTo(to)); }
 function updateLaser(dt) { G.laserT = Math.max(0, (G.laserT || 0) - dt); if (G.laserT <= 0) for (const g of laserMeshes) g.visible = false; }
 function fireLaser() {
+  setHitKind('laser');
   player.fireCd = WEAPONS.laser.cd; player.drawnT = 0; G.laserT = 0.12;
   camera.getWorldDirection(_aim);
   let r = fireRay(_aim, 220, false), t = r ? Math.hypot(r.h.x - camera.position.x, r.h.z - camera.position.z) : raycastWorld(camera.position, _aim, 220).t;
@@ -1304,6 +1316,7 @@ function meleeTargets(range, cone) {
   return out.sort((a, b) => a.d - b.d);
 }
 function crowbarImpact(heavy) {
+  setHitKind('crowbar');
   if (!heavy) {
     const t = meleeTargets(2.5, 0.45)[0];
     if (!t) return;
@@ -1327,6 +1340,9 @@ function crowbarImpact(heavy) {
   addHeat(4); alertAround(player.x, player.z, 20, 1);
 }
 // sends someone flying 5 to 10 m; unless that finished them off, they get back up a few seconds later
+// what just hit someone (so the knockdown can be drawn in that weapon's style)
+function setHitKind(k) { G.hitKind = k; G.hitKindAt = G.elapsed; }
+function hitKindNow() { return G.elapsed - (G.hitKindAt ?? -9) < 0.2 ? G.hitKind : 'oof'; }
 function launchHunter(h, ux, uz, getsUp, imp) {
   if (h.dead) return;
   const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
@@ -1335,6 +1351,7 @@ function launchHunter(h, ux, uz, getsUp, imp) {
   h.dead = true; h.marker.visible = false; h.g.position.set(h.x, h.y, h.z);
   addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, imp || { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
   const rag = ragdolls[ragdolls.length - 1];
+  { const kx = imp ? imp.x : ux, kz = imp ? imp.z : uz, kl = Math.hypot(kx, kz) || 1; knockFX(rag, hitKindNow(), h.y + 1.2 * h.T.scale, kx / kl, kz / kl); }
   rag.launchFrom = { x: h.x, z: h.z };
   if (h.rival) rivalDown(h);
   else if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
@@ -1357,6 +1374,7 @@ function updateGetUps(dt) {
     const hx = (U.rag.p[3].x + U.rag.p[4].x) / 2, hz = (U.rag.p[3].z + U.rag.p[4].z) / 2, hy = Math.min(U.rag.p[3].y, U.rag.p[4].y);
     U.rag.dispose(); ragdolls.splice(idx, 1); G.getUps.splice(i, 1);
     const p = { x: hx, z: hz }; resolveCircle(p, 0.4);
+    if (solidAt(p.x, Math.max(0, hy), p.z, 0) || pointBlocked(p.x, p.z, 0.1)) { const q = randomOpenPoint(p.x, p.z, 0, 10, 20); if (q) { p.x = q.x; p.z = q.z; } }
     const nh = new Hunter(p.x, p.z, U.type, U.gunner, 'chase');
     nh.y = floorAt(p.x, p.z, hy + 0.6); nh.hp = U.hp; nh.stun = 1.4; nh.noticeT = 0;
     if (U.contract) dressTarget(nh, U.contract); nh.guard = U.guard; nh.fleer = U.fleer;
@@ -1636,6 +1654,7 @@ function startReload() {
   player.reloadT = W.reload; sfx.reload();
 }
 function playerShove() {
+  setHitKind('shove');
   if (G.super && !player.car && player.alive) { heroSwat(); return; }
   if (player.car || player.shoveCd > 0 || !player.alive) return;
   player.shoveCd = 0.55; player.shoveAnim = 1; sfx.shove();
@@ -2215,8 +2234,9 @@ function flyMove(dt) {
   const k = Math.min(1, dt * (player.slamming ? 12 : 4));
   player.vx = lerp(player.vx, wx, k); player.vz = lerp(player.vz, wz, k); player.vy = lerp(player.vy, wy, k);
   const prevY = player.y;
+  const fox = player.x, foz = player.z;
   player.x += player.vx * dt; player.z += player.vz * dt; player.y = Math.min(260, player.y + player.vy * dt);
-  resolveBody(player, 0.4, player.y, 1.8);
+  moveBody(player, fox, foz, 0.4, player.y, 1.8);
   const fl = floorAt(player.x, player.z, Math.max(prevY, player.y) + 0.3);
   if (player.y <= fl) { player.y = fl; if (player.vy < 0.5) { if (player.slamming) heroSlam(); else for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - player.x, h.z - player.z) < 25) h.panicT = mr(3, 6); player.flying = false; player.slamming = false; player.grounded = true; player.vy = 0; } }
   player.sprinting = false; player.bob += dt * 2;
@@ -2240,14 +2260,22 @@ const parkourCb = {
   stepSound: (k) => { stepAcc += k; if (stepAcc > 1) { stepAcc = 0; sfx.climb(); } },
   zipSound: (v) => setZipSound(v),
 };
+// the safety net: if anyone ever ends up inside a solid wall, put them back where they last stood
+function keepOutOfSolids(b, r = 0.35) {
+  if (solidAt(b.x, b.y, b.z, 0.02)) { if (b.goodX !== undefined) { b.x = b.goodX; b.z = b.goodZ; } else { const p = randomOpenPoint(b.x, b.z, 0, 8, 12); if (p) { b.x = p.x; b.z = p.z; } } }
+  else { b.goodX = b.x; b.goodZ = b.z; }
+}
 function separateHunters() {
   const hs = G.hunters;
+  for (const h of hs) { h.sx = h.x; h.sz = h.z; }
   for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) {
     const a = hs[i], b = hs[j], dx = b.x - a.x, dz = b.z - a.z;
     if (dx > 0.9 || dx < -0.9 || dz > 0.9 || dz < -0.9) continue;
     const d = Math.hypot(dx, dz);
     if (d < 0.8 && d > 1e-4) { const k = ((0.8 - d) / d) * 0.5; a.x -= dx * k; a.z -= dz * k; b.x += dx * k; b.z += dz * k; }
   }
+  // a crowd pushing never shoves anyone into or through a wall
+  for (const h of hs) if (!h.dead && !h.held && !h.climb && !h.ladder && (h.x !== h.sx || h.z !== h.sz)) moveBody(h, h.sx, h.sz, 0.35 * h.T.scale, h.y, 1.8);
 }
 function updateCamera(dt, t) {
   G.shake = Math.max(0, G.shake - dt * 1.5);
@@ -2573,7 +2601,7 @@ function simulate(dt, t) {
     updatePlayer(dt);
     for (const h of G.hunters) if (!h.dead) h.update(dt);
     separateHunters();
-    updateCityLife(dt, LIFE);
+    updateCityLife(dt, LIFE); updateKnockFX(dt);
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
@@ -2610,4 +2638,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

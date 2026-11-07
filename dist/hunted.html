@@ -1288,7 +1288,7 @@ function citySkeleton(city, canalRow = -1) {
 // Perimeter blocks: a ring of attached buildings of different widths, heights and styles around a
 // courtyard, with alleys cutting through. Some ground floors are walk-in shops (lotHooks.walkIn).
 // ---------------------------------------------------------------------
-const lotHooks = { walkIn: null, courtyard: null };
+const lotHooks = { walkIn: null, courtyard: null, house: null };
 const courtyards = []; // {x0,x1,z0,z1,city} open yards inside blocks
 function perimeterBlock(I, P) {
   const { ix0, ix1, iz0, iz1 } = I;
@@ -1326,10 +1326,10 @@ function perimeterBlock(I, P) {
     const front = SIDES.find((sd) => s[sd]);
     const fi = front && sideInfo(front, L.x0, L.x1, L.z0, L.z1);
     let base = 0;
-    if (front && fi.a1 - fi.a0 >= 6.5 && h >= 9 && lotHooks.walkIn && srand() < (P.walkIn ?? 0.3)) {
+    if (front && fi.a1 - fi.a0 >= 6.5 && h >= 6 && lotHooks.walkIn && srand() < (P.walkIn ?? 0.85)) {
       if (lotHooks.walkIn(L, front, curCity)) base = 4.6;
     }
-    const tc = L.corner && srand() < (P.turret ?? 0.2) ? [L.corner[0] + (L.corner[0] === ix0 ? 1.4 : -1.4), L.corner[1] + (L.corner[1] === iz0 ? 1.4 : -1.4)] : null;
+    const tc = !base && L.corner && srand() < (P.turret ?? 0.2) ? [L.corner[0] + (L.corner[0] === ix0 ? 1.4 : -1.4), L.corner[1] + (L.corner[1] === iz0 ? 1.4 : -1.4)] : null;
     const backSide = !L.corner && front ? { px: 'nx', nx: 'px', pz: 'nz', nz: 'pz' }[front] : null;
     building(key, L.x0, L.x1, L.z0, L.z1, h, s, { backSide, base, tank: srand() < 0.5, signs: P.signs ?? 0.3, shops: P.shops ?? 0.85, turret: tc, tint: P.tint?.() });
   }
@@ -1397,9 +1397,11 @@ function genMetro(city) {
     const hAt = () => Math.round((downtown ? sr(40, 100) : midtown ? sr(15, 42) : sr(9, 21)) / 3) * 3;
     const lot = (x0, x1, z0, z1) => {
       const key = pickKey(), h = hAt(), s = st(x0, x1, z0, z1);
+      // most city buildings have a shop, cafe or lobby you can walk into on the ground floor
+      let wbase = 0; { const front = SIDES.find((sd) => s[sd]); if (front && lotHooks.walkIn && srand() < 0.8 && lotHooks.walkIn({ x0, x1, z0, z1 }, front, curCity)) wbase = 4.6; }
       if (downtown && GLASS_KEYS.includes(key) && srand() < 0.5 && x1 - x0 > 14) {
         // podium + setback tower
-        building(spick(OFFICE_KEYS), x0, x1, z0, z1, 12, s, { signs: 0 });
+        building(spick(OFFICE_KEYS), x0, x1, z0, z1, 12, s, { signs: 0, base: wbase });
         const inset = 3;
         facadeBox(key, x0 + inset, x1 - inset, 12, h, z0 + inset, z1 - inset);
         roofBuf.flat(x0 + inset, x1 - inset, z0 + inset, z1 - inset, h, C.roof);
@@ -1407,7 +1409,7 @@ function genMetro(city) {
         addRoof(x0 + inset, x1 - inset, z0 + inset, z1 - inset, h, { city: curCity });
         if (srand() < 0.5) { propBuf.box((x0 + x1) / 2 - 0.15, (x0 + x1) / 2 + 0.15, h, h + sr(8, 18), (z0 + z1) / 2 - 0.15, (z0 + z1) / 2 + 0.15, 0x999999); beacons.push({ x: (x0 + x1) / 2, y: h + 18, z: (z0 + z1) / 2 }); }
       } else {
-        building(key, x0, x1, z0, z1, h, s, { tank: !downtown, signs: downtown ? 0.05 : 0.35 });
+        building(key, x0, x1, z0, z1, h, s, { tank: !downtown, signs: downtown ? 0.05 : 0.35, base: wbase });
         if (midtown && !downtown && srand() < 0.12) {
           const side = SIDES.find((sd) => s[sd]);
           if (side) { const { fixed, a0, a1, out } = sideInfo(side, x0, x1, z0, z1); const am = (a0 + a1) / 2; if (side[1] === 'x') addBillboard(fixed - out * 2, am, h + 0.7, Math.PI / 2 * out, 8, 4, false); else addBillboard(am, fixed - out * 2, h + 0.7, out > 0 ? 0 : Math.PI, 8, 4, false); }
@@ -1417,7 +1419,7 @@ function genMetro(city) {
     if (!downtown && srand() < 0.8) {
       perimeterBlock({ ix0, ix1, iz0, iz1 }, {
         h: midtown ? [12, 27] : [6, 16], key: () => (srand() < (midtown ? 0.72 : 0.9) ? spick(BRICK_KEYS) : spick(OFFICE_KEYS)),
-        walkIn: midtown ? 0.3 : 0.4, signs: midtown ? 0.35 : 0.2, turret: midtown ? 0.25 : 0.15,
+        walkIn: midtown ? 0.85 : 0.9, signs: midtown ? 0.35 : 0.2, turret: midtown ? 0.25 : 0.15,
       });
     } else {
     const rr = srand();
@@ -1473,7 +1475,19 @@ function hipRoof(buf, x0, x1, z0, z1, y, rh, col, alongX) {
 const TRIM = [0xf4f2ee, 0xe8e0d0, 0x3a3a40, 0x5a3a2a, 0x2a4a3a];
 function house(x0, x1, z0, z1, frontSide) {
   const two = srand() < 0.35, h = two ? 6 : 3.2, col = spick(HOUSE_COLORS), roof = spick(ROOF_COLORS), trim = spick(TRIM);
-  facadeBox('siding', x0, x1, 0.15, h, z0, z1, col);
+  const doorSide = srand() < 0.5 ? -1.4 : 1.4;
+  // most homes have a front door you can actually go through
+  const fi0 = sideInfo(frontSide, x0, x1, z0, z1), am0 = (fi0.a0 + fi0.a1) / 2 + doorSide;
+  const open = lotHooks.house && srand() < 0.8 && lotHooks.house({ x0, x1, z0, z1 }, frontSide, am0, h, col);
+  if (!open) facadeBox('siding', x0, x1, 0.15, h, z0, z1, col);
+  else { // the shell as four textured walls with a doorway in the front one
+    const T = 0.2, slab = (sd, a0, a1, y0, y1) => { const I = sideInfo(sd, x0, x1, z0, z1), f0 = I.fixed - I.out * T, lo = Math.min(I.fixed, f0), hi = Math.max(I.fixed, f0); if (sd[1] === 'x') facadeBox('siding', lo, hi, y0, y1, a0, a1, col); else facadeBox('siding', a0, a1, y0, y1, lo, hi, col); };
+    for (const sd of SIDES) {
+      const I = sideInfo(sd, x0, x1, z0, z1);
+      if (sd !== frontSide) slab(sd, I.a0, I.a1, 0.15, h);
+      else { slab(sd, I.a0, am0 - 0.65, 0.15, h); slab(sd, am0 + 0.65, I.a1, 0.15, h); slab(sd, am0 - 0.65, am0 + 0.65, 2.45, h); }
+    }
+  }
   propBuf.box(x0 - 0.06, x1 + 0.06, 0.15, 0.6, z0 - 0.06, z1 + 0.06, 0x8a8478); // foundation
   for (const [cx, cz] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) propBuf.box(cx - 0.12, cx + 0.12, 0.6, h, cz - 0.12, cz + 0.12, trim); // corner boards
   propBuf.box(x0 - 0.1, x1 + 0.1, h - 0.25, h, z0 - 0.1, z1 + 0.1, trim); // eaves board
@@ -1482,8 +1496,8 @@ function house(x0, x1, z0, z1, frontSide) {
   if (hip) hipRoof(propBuf, x0 - ov, x1 + ov, z0 - ov, z1 + ov, h, rh, roof, alongX);
   else propBuf.prism(x0 - ov, x1 + ov, z0 - ov, z1 + ov, h, rh, roof, alongX);
   // door, porch deck, porch roof on posts, steps, path to the pavement
-  const { fixed, a0, a1, out } = sideInfo(frontSide, x0, x1, z0, z1), am = (a0 + a1) / 2 + (srand() < 0.5 ? -1.4 : 1.4);
-  outBox(frontSide, fixed, am - 0.6, am + 0.6, 0.6, 2.4, 0.06, spick([0x5a3a28, 0x2a4a6a, 0x8a2a2a, 0x2a5a3a, 0xf0f0f0]));
+  const { fixed, a0, a1, out } = sideInfo(frontSide, x0, x1, z0, z1), am = am0;
+  if (!open) outBox(frontSide, fixed, am - 0.6, am + 0.6, 0.6, 2.4, 0.06, spick([0x5a3a28, 0x2a4a6a, 0x8a2a2a, 0x2a5a3a, 0xf0f0f0]));
   glowBuf.face(frontSide, fixed + out * 0.07, am - 0.12, am + 0.12, 1.8, 2.2, 0xffe8b0);
   const pw = 1.9, pd = 1.8;
   outBox(frontSide, fixed, am - pw, am + pw, 0.15, 0.6, pd, 0xb8a890);
@@ -1513,7 +1527,7 @@ function house(x0, x1, z0, z1, frontSide) {
   }
   if (srand() < 0.55) { propBuf.box(x0 + 0.8, x0 + 1.5, h - 1, h + 2.8, z0 + 0.8, z0 + 1.5, 0x8a4a3a); propBuf.box(x0 + 0.7, x0 + 1.6, h + 2.8, h + 2.95, z0 + 0.7, z0 + 1.6, 0x5a3a2a); } // chimney
   if (srand() < 0.35) { const sx = srand() < 0.5 ? x0 + 1.5 : x1 - 1.5; propBuf.box(sx - 0.04, sx + 0.04, h + rh * 0.5, h + rh * 0.5 + 0.6, (z0 + z1) / 2 - 0.04, (z0 + z1) / 2 + 0.04, 0x8a8a8a); propBuf.cyl(sx, (z0 + z1) / 2, 0.08, 0.4, h + rh * 0.5 + 0.5, h + rh * 0.5 + 0.7, 0xdddddd, 8); } // dish
-  addRoof(x0, x1, z0, z1, h + rh * 0.55, { city: curCity, house: true });
+  addRoof(x0, x1, z0, z1, h + rh * 0.55, { city: curCity, house: true, y0: open ? 2.9 : 0 });
 }
 // back-garden things for the shared yard in the middle of a suburban block
 function gardenThing(x, z) {
@@ -1669,7 +1683,7 @@ function genIndustrial(city) {
     const st = (x0, x1, z0, z1) => streetFaces(x0, x1, z0, z1, ix0, ix1, iz0, iz1);
     const kind = j === city.n - 1 ? 'yard' : spick(['warehouse', 'warehouse', 'yard', 'tanks', 'factory', 'row', 'row']);
     if (kind === 'row') { // old harbour terrace: pubs, chippies and flats around a yard
-      perimeterBlock({ ix0, ix1, iz0, iz1 }, { h: [6, 13], key: () => (srand() < 0.85 ? spick(BRICK_KEYS) : spick(OFFICE_KEYS)), walkIn: 0.35, signs: 0.15, turret: 0.1, shops: 0.6 });
+      perimeterBlock({ ix0, ix1, iz0, iz1 }, { h: [6, 13], key: () => (srand() < 0.85 ? spick(BRICK_KEYS) : spick(OFFICE_KEYS)), walkIn: 0.8, signs: 0.15, turret: 0.1, shops: 0.6 });
       if ((i + j) % 2 === 0) addStreetLight(r.x0 + 0.7, r.z0 + 0.7, -1, 0, C.sodium, 8); else addStreetLight(r.x1 - 0.7, r.z1 - 0.7, 1, 0, C.sodium, 8);
       continue;
     }
@@ -1817,6 +1831,7 @@ function scarecrow(x, z) {
 }
 function farmstead(x, z, front) {
   // farmhouse, red barn, silo, sheds, a tractor and a muddy yard; lots of corners to break line of sight
+  for (const [cx, cz] of [[x - 34, z - 26], [x + 54, z - 26], [x - 34, z + 30], [x + 54, z + 30], [x + 10, z]]) if (cityAt(cx, cz, 12)) return; // never on top of a town
   groundBuf.flat(x - 30, x + 50, z - 22, z + 26, 0.009, 0x7a6a50);
   fieldRects.push({ x0: x - 34, x1: x + 54, z0: z - 26, z1: z + 30 });
   house(x, x + 10, z, z + 8, front);
@@ -2342,7 +2357,7 @@ function randomOpenPoint(cx, cz, rMin, rMax, tries = 20) {
   for (let t = 0; t < tries; t++) {
     const a = Math.random() * Math.PI * 2, r = rMin + Math.random() * (rMax - rMin);
     const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
-    if (!blockedAt(x, z)) return { x, z };
+    if (!blockedAt(x, z) && !pointBlocked(x, z, 0.4)) return { x, z };
   }
   return null;
 }
@@ -2372,6 +2387,44 @@ function los3D(ax, ay, az, bx, by, bz) {
   _o.set(ax, ay, az); _d.set(bx - ax, by - ay, bz - az);
   const dist = _d.length(); _d.divideScalar(dist || 1);
   return raycastWorld(_o, _d, dist).t >= dist - 0.6;
+}
+// debugging/tests: the collider a body standing at (x, y, z) is stuck inside, if any (deeper than `inset`)
+function solidAt(x, y, z, inset = 0.15, minSize = 0, minTall = 0) {
+  for (const c of bucketAt(x, z)) {
+    if (c.water || !blocksBody(c, y, 1.7) || Math.min(c.x1 - c.x0, c.z1 - c.z0) < minSize || c.h - y < minTall) continue;
+    if (x > c.x0 + inset && x < c.x1 - inset && z > c.z0 + inset && z < c.z1 - inset) return c;
+  }
+  return null;
+}
+function unbucketedColliders() { const out = []; for (const c of colliders) { const cx = (c.x0 + c.x1) / 2, cz = (c.z0 + c.z1) / 2; if (!bucketAt(cx, cz).includes(c)) out.push(c); } return out; }
+// move a body from (ox, oz) to where it is now in small steps, so nothing fast (a sprint at a low
+// frame rate, a shove, a crowd pushing, flying) can tunnel through a thin wall
+function moveBody(p, ox, oz, r, feetY, tall = 1.8) {
+  const dx = p.x - ox, dz = p.z - oz, d = Math.hypot(dx, dz), n = Math.min(40, Math.ceil(d / Math.min(0.15, r * 0.5)));
+  if (n <= 1) return resolveBody(p, r, feetY, tall);
+  p.x = ox; p.z = oz;
+  let hit = false;
+  for (let i = 0; i < n; i++) { p.x += dx / n; p.z += dz / n; if (resolveBody(p, r, feetY, tall)) hit = true; }
+  return hit;
+}
+// precise line of sight through solid geometry (glass counts as see-through), using the collision buckets
+const _seen = new Set();
+function losSolid(ax, ay, az, bx, by, bz) {
+  const dx = bx - ax, dy = by - ay, dz = bz - az, dist = Math.hypot(dx, dy, dz);
+  if (dist < 0.5) return true;
+  _seen.clear();
+  const steps = Math.ceil(dist / (BUCKET * 0.5)) + 1;
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    for (const c of bucketAt(ax + dx * t, az + dz * t)) {
+      if (_seen.has(c)) continue; _seen.add(c);
+      if (c.water || c.glass || c.pole || c.h - c.y0 < 0.3) continue;
+      let t0 = 0.02, t1 = 0.98;
+      const sl = (o, d, mn, mx) => { if (Math.abs(d) < 1e-9) return o > mn && o < mx; let a = (mn - o) / d, b = (mx - o) / d; if (a > b) { const q = a; a = b; b = q; } t0 = Math.max(t0, a); t1 = Math.min(t1, b); return t0 < t1; };
+      if (sl(ax, dx, c.x0, c.x1) && sl(az, dz, c.z0, c.z1) && sl(ay, dy, c.y0, c.h)) return false;
+    }
+  }
+  return true;
 }
 
 // News: Channel 9 runs on the billboards and on TVs around town. When nobody knows who you are it's
@@ -2970,11 +3023,12 @@ function frameOf(L, side) {
   return {
     I, D, A0: I.a0, A1: I.a1, side, toXZ, rect,
     box(buf, a0, a1, b0, b1, y0, y1, col, collide, extra) {
+      this.n = (this.n || 0) + 1;
       const [x0, x1, z0, z1] = rect(a0, a1, b0, b1);
       if (collide) return solid(buf, x0, x1, y0, y1, z0, z1, col, extra);
       buf.box(x0, x1, y0, y1, z0, z1, col, { bottom: true });
     },
-    cyl(buf, a, b, r, rt, y0, y1, col, segs = 10, cap = true) { const [x, z] = toXZ(a, b); buf.cyl(x, z, r, rt, y0, y1, col, segs, cap); },
+    cyl(buf, a, b, r, rt, y0, y1, col, segs = 10, cap = true) { this.n = (this.n || 0) + 1; const [x, z] = toXZ(a, b); buf.cyl(x, z, r, rt, y0, y1, col, segs, cap); },
     lamp(a0, a1, b0, b1, y, col) { const [x0, x1, z0, z1] = rect(a0, a1, b0, b1); lamp(x0, x1, y, z0, z1, col); },
     glow(a0, a1, b0, b1, y0, y1, col) { const [x0, x1, z0, z1] = rect(a0, a1, b0, b1); lightB.box(x0, x1, y0, y1, z0, z1, col, { bottom: true }); },
   };
@@ -3102,13 +3156,21 @@ const KIND_POOL = {
 
 // a walk-in ground floor for lot L with its shopfront on `side`. The building above starts at H_IN.
 function walkIn(L, side, city, kindArg) {
-  const F = frameOf(L, side), { A0, A1, D } = F, T = 0.25;
+  const F = frameOf(L, side), fullD = F.D;
+  F.D = Math.min(F.D, 16); // deep lots get a shop at the front and solid storage behind
+  const { A0, A1, D } = F, T = 0.25;
   if (D < 6.5 || A1 - A0 < 6.4) return false;
+  if (A1 - A0 > 26) return false;
   { // don't open a door onto a stairwell or manhole
     const [hx0, hx1, hz0, hz1] = F.rect(A0 - 1, A1 + 1, -SW - 0.5, 0);
     if (groundHoles.some((h) => h.x1 > hx0 && h.x0 < hx1 && h.z1 > hz0 && h.z0 < hz1)) return false;
   }
+  { // never build a shop into a room something solid already stands in
+    const [rx0, rx1, rz0, rz1] = F.rect(A0, A1, 0, D);
+    if (colliders.some((c) => c.h > 1 && (c.y0 || 0) < 1 && c.x1 > rx0 + 0.3 && c.x0 < rx1 - 0.3 && c.z1 > rz0 + 0.3 && c.z0 < rz1 - 0.3)) return false;
+  }
   const kind = kindArg || spick(KIND_POOL[city.style] || KIND_POOL.metro), K = KINDS[kind], nameIdx = spick(K.names), name = SHOP_NAMES[nameIdx][0];
+  if (fullD > D + 0.1) { const [fx0, fx1, fz0, fz1] = F.rect(A0, A1, D, fullD); addCollider(fx0, fx1, fz0, fz1, H_IN, { filler: true }); propBuf.box(fx0, fx1, 0.15, H_IN, fz0, fz1, 0x6e6660); }
   F.box(floorB, A0, A1, 0, D, 0.15, 0.21, 0xffffff);
   F.box(ib, A0, A1, D - T, D, 0, H_IN, K.wall, true);
   F.box(ib, A0, A0 + T, 0, D, 0, H_IN, K.wall, true); F.box(ib, A1 - T, A1, 0, D, 0, H_IN, K.wall, true);
@@ -3131,7 +3193,9 @@ function walkIn(L, side, city, kindArg) {
   const [ox, oz] = F.toXZ(dm, -0.6);
   glowBuf.box(ox - 0.15, ox + 0.15, 3.1, 3.3, oz - 0.15, oz + 0.15, 0xfff0c8); // light over the door
   F.dm = dm;
+  const nBefore = F.n || 0;
   K.fill(F);
+  const items = (F.n || 0) - nBefore;
   for (let b = 1.5; b < D - 1; b += 3) F.lamp(A0 + 1, A1 - 1, b, b + 0.4, H_IN - 0.32, kind === 'arcade' || kind === 'bar' ? 0xffb070 : 0xfff4dc);
   const [rx0, rx1, rz0, rz1] = F.rect(A0, A1, 0, D);
   interiorZones.push({ x0: rx0, x1: rx1, z0: rz0, z1: rz1, y0: -0.5, y1: H_IN - 0.25, name });
@@ -3140,7 +3204,7 @@ function walkIn(L, side, city, kindArg) {
   { const [nx0, nx1, nz0, nz1] = F.rect(dm - 1.15, dm + 1.15, -2.2, 2.2); navOpen.push({ x0: nx0, x1: nx1, z0: nz0, z1: nz1 }); }
   const [dx, dz] = F.toXZ(dm, 0.5), [kx, kz] = F.toXZ((A0 + A1) / 2, D - 1.2);
   const path = [-1.5, -0.5, 0.5, 1.4].map((b) => F.toXZ(dm, b));
-  walkIns.push({ path, x: dx, z: dz, name, kind, city: city.name, keeper: { x: kx, z: kz }, rect: { x0: rx0, x1: rx1, z0: rz0, z1: rz1 }, side });
+  walkIns.push({ path, x: dx, z: dz, name, kind, city: city.name, keeper: { x: kx, z: kz }, rect: { x0: rx0, x1: rx1, z0: rz0, z1: rz1 }, side, items });
   return true;
 }
 lotHooks.walkIn = walkIn;
@@ -3433,6 +3497,60 @@ function dressStreets() {
 }
 worldHooks.afterGen.push(dressStreets);
 void CITIES;
+
+// ---------------------------------------------------------------------
+// homes: the suburban houses you can walk into (living room, kitchen, and a bed if there's room)
+// ---------------------------------------------------------------------
+const HOME_WALLS = [0xf0e8d8, 0xe8f0e8, 0xf4e4e0, 0xe0e8f4, 0xf8f4e8, 0xe8dcc8];
+const HOME_NAMES = ['A FAMILY HOME', 'SOMEONE\'S HOUSE', 'A SEMI', 'A BUNGALOW', 'A TERRACED HOUSE', 'A COSY HOUSE'];
+function houseInside(L, side, am, h, col) {
+  const F = frameOf(L, side), { A0, A1, D } = F, T = 0.2, CEIL = 2.9;
+  if (D < 5 || A1 - A0 < 6) return false;
+  if (colliders.some((c) => c.h > 1 && (c.y0 || 0) < 1 && c.x1 > Math.min(L.x0, L.x1) + 0.3 && c.x0 < L.x1 - 0.3 && c.z1 > L.z0 + 0.3 && c.z0 < L.z1 - 0.3)) return false;
+  { const [qx0, qx1, qz0, qz1] = F.rect(am - 1, am + 1, -2.6, 0); if (colliders.some((c) => c.h > 0.4 && (c.y0 || 0) < 1 && c.x1 > qx0 && c.x0 < qx1 && c.z1 > qz0 && c.z0 < qz1)) return false; }
+  const wall = spick(HOME_WALLS), wood = spick([0x8a5a32, 0x6a4a2a, 0xa07a4a]), sofaC = spick([0x5a6a8a, 0x8a3a3a, 0x4a6a4a, 0x6a5a7a, 0xb08a5a]);
+  // walls: collisions on the shell, a doorway in the front
+  // (the outer 0.2 m is the house's own textured shell; the painted inner face sits just inside it)
+  const W2 = T + 0.06;
+  const wallAt = (a0, a1, b0, b1, y0, y1, va0, va1, vb0, vb1) => { F.box(ib, va0, va1, vb0, vb1, y0, y1, wall); const [x0, x1, z0, z1] = F.rect(a0, a1, b0, b1); if (y0 < 1) addCollider(x0, x1, z0, z1, y1, { y0: 0 }); };
+  wallAt(A0, A1, D - W2, D, 0.15, CEIL, A0 + T, A1 - T, D - W2, D - T); // back
+  wallAt(A0, A0 + W2, 0, D, 0.15, CEIL, A0 + T, A0 + W2, T, D - T); wallAt(A1 - W2, A1, 0, D, 0.15, CEIL, A1 - W2, A1 - T, T, D - T); // sides
+  wallAt(A0, am - 0.65, 0, W2, 0.15, CEIL, A0 + T, am - 0.65, T, W2); wallAt(am + 0.65, A1, 0, W2, 0.15, CEIL, am + 0.65, A1 - T, T, W2); // front, either side of the door
+  F.box(ib, am - 0.65, am + 0.65, T, W2, 2.45, CEIL, wall);
+  F.box(ib, am - 0.75, am - 0.65, -0.02, T + 0.02, 0.15, 2.45, 0xf0f0f0); F.box(ib, am + 0.65, am + 0.75, -0.02, T + 0.02, 0.15, 2.45, 0xf0f0f0);
+  F.box(floorB, A0, A1, 0, D, 0.15, 0.2, spick([0xb08a5a, 0x9a7a5a, 0xc8b8a0, 0x8a6a4a]));
+  F.box(ib, A0, A1, 0, D, CEIL - 0.02, CEIL, 0xf4f4f0);
+  // living room on one side of the door, kitchen at the back, a bed if it's deep enough
+  const nBefore = F.n || 0;
+  const left = am > (A0 + A1) / 2 ? A0 + T : am + 1, right = am > (A0 + A1) / 2 ? am - 1 : A1 - T;
+  const lw = right - left;
+  if (lw > 2.4) {
+    const sa = (left + right) / 2;
+    F.box(ib, sa - Math.min(1.1, lw / 2 - 0.2), sa + Math.min(1.1, lw / 2 - 0.2), 1.0, 1.85, 0.2, 0.62, sofaC, true); // sofa
+    F.box(ib, sa - Math.min(1.1, lw / 2 - 0.2), sa + Math.min(1.1, lw / 2 - 0.2), 1.6, 1.85, 0.62, 1.05, sofaC);
+    F.box(ib, sa - 0.5, sa + 0.5, 2.4, 2.9, 0.2, 0.48, wood, true); // coffee table
+    F.box(ib, sa - 1.2, sa + 1.2, 2.0, 3.4, 0.2, 0.22, spick([0xa83a3a, 0x3a5a8a, 0xc8a050, 0x5a8a6a])); // rug
+    if (D > 5.2) { F.box(ib, sa - 0.8, sa + 0.8, 3.55, 3.95, 0.2, 0.6, 0x2a2a2a, true); F.box(ib, sa - 0.65, sa + 0.65, 3.7, 3.78, 0.6, 1.4, 0x111111); F.glow(sa - 0.6, sa + 0.6, 3.68, 3.7, 0.65, 1.35, spick([0x3a6ac8, 0x5ac88a, 0xc8a03a])); } // TV
+  }
+  // kitchen counter and fridge along the back wall
+  F.box(ib, A0 + T, Math.min(A1 - T, A0 + T + 3.2), D - T - 0.65, D - T, 0.2, 0.95, spick([0xe8e8e8, 0x8a9aa8, 0x6a4a3a]), true);
+  F.box(ib, A0 + T, Math.min(A1 - T, A0 + T + 3.2), D - T - 0.67, D - T, 0.95, 1.0, 0x3a3a3a);
+  F.box(ib, A1 - T - 0.8, A1 - T - 0.05, D - T - 0.75, D - T, 0.2, 1.9, 0xf0f0f0, true);
+  // dining table
+  if (D > 6.5) { const ta = (A0 + A1) / 2 + (am > (A0 + A1) / 2 ? -1.5 : 1.5), tb = D * 0.62; F.box(ib, ta - 0.6, ta + 0.6, tb - 0.45, tb + 0.45, 0.85, 0.9, wood, true); for (const [da, db] of [[-0.8, 0], [0.8, 0]]) chair(F, ta + da, tb + db, wood); }
+  if (D > 7.5 && lw > 2.4) { const ba = right - 1.1; F.box(ib, ba - 0.9, ba + 0.9, D - T - 2.9, D - T - 0.9, 0.2, 0.6, 0xf0f0f0, true); F.box(ib, ba - 0.9, ba + 0.9, D - T - 2.9, D - T - 2.2, 0.6, 0.7, spick([0x8a3a5a, 0x3a5a8a, 0x5a8a5a])); } // bed
+  F.lamp(A0 + 1, A1 - 1, D / 2 - 0.2, D / 2 + 0.2, CEIL - 0.02, 0xfff0d0);
+  const [rx0, rx1, rz0, rz1] = F.rect(A0, A1, 0, D);
+  const name = spick(HOME_NAMES), items = (F.n || 0) - nBefore;
+  interiorZones.push({ x0: rx0, x1: rx1, z0: rz0, z1: rz1, y0: -0.5, y1: CEIL - 0.1, name, home: true });
+  const [kx0, kx1, kz0, kz1] = F.rect(am - 1.6, am + 1.6, -4.5, 1.2); keepClear.push({ x0: kx0, x1: kx1, z0: kz0, z1: kz1 });
+  { const [nx0, nx1, nz0, nz1] = F.rect(am - 1.1, am + 1.1, -2.2, 2.2); navOpen.push({ x0: nx0, x1: nx1, z0: nz0, z1: nz1 }); }
+  const [dx, dz] = F.toXZ(am, 0.5), [kx, kz] = F.toXZ(am, D * 0.5);
+  const path = [-1.5, -0.5, 0.5, 1.4].map((b) => F.toXZ(am, b));
+  walkIns.push({ path, x: dx, z: dz, name, kind: 'home', city: 'ASHFORD', keeper: { x: kx, z: kz }, rect: { x0: rx0, x1: rx1, z0: rz0, z1: rz1 }, side, home: true, items });
+  return true;
+}
+lotHooks.house = houseInside;
 
 // Audio: a tiny synth, no sound files.
 
@@ -3895,7 +4013,7 @@ function tryLedge(P, fx, fz, inp, sprint, cb) {
   const top = stackTop(px, pz, P.y);
   if (top < 0) return false;
   const rel = top - P.y;
-  if (!headroom(px, pz, top, 1.7)) return false;
+  if (!headroom(px, pz, top, 1.7) || !headroom(P.x, P.z, P.y + 0.1, top - P.y + 1.7)) return false; // no pulling yourself up through a ceiling
   // reach depends on what you're doing: a running jump grabs higher, a sprint into a wall lets you scramble up it
   let reach = P.grounded ? 1.3 : 2.45 + (P.vy > 0 ? 0.35 : 0);
   if (P.grounded && inp.jump) reach = 2.45;
@@ -3993,7 +4111,8 @@ function parkourMove(dt, P, inp, sprint, speed, cb) {
   const ox = P.x, oz = P.z;
   P.x += (P.vx + P.kx) * dt; P.z += (P.vz + P.kz) * dt;
   const tall = P.crouch > 0.5 ? 1.1 : 1.8;
-  const hit = resolveBody(P, 0.4, P.y, tall);
+  const hit = moveBody(P, ox, oz, 0.4, P.y, tall);
+  if (solidAt(P.x, P.y, P.z, 0.02)) { if (P.goodX !== undefined) { P.x = P.goodX; P.z = P.goodZ; } } else { P.goodX = P.x; P.goodZ = P.z; }
   if (hit && inp.fwd > 0) {
     const moved = Math.hypot(P.x - ox, P.z - oz) / Math.max(dt, 1e-4);
     if (moved < Math.hypot(P.vx, P.vz) * 0.85 && tryLedge(P, fx, fz, inp, sprint, cb)) return;
@@ -4072,7 +4191,7 @@ function climbStep(dt, P, inp, cb, fx, fz) {
   // reached the top: pull yourself over
   if (top < 0 || top - P.y < 1.6) {
     const t = top < 0 ? P.y : top, tx = P.x - N.x * 1.0, tz = P.z - N.z * 1.0;
-    if (headroom(tx, tz, t, 1.7)) { P.mode = 'mantle'; P.anim = { t: 0, dur: 0.38, fx: P.x, fy: P.y, fz: P.z, tx, ty: t, tz, peak: t }; P.vy = 0; sfx.climb(); return; }
+    if (headroom(tx, tz, t, 1.7) && headroom(P.x, P.z, P.y + 0.1, t - P.y + 1.7)) { P.mode = 'mantle'; P.anim = { t: 0, dur: 0.38, fx: P.x, fy: P.y, fz: P.z, tx, ty: t, tz, peak: t }; P.vy = 0; sfx.climb(); return; }
   }
   // something overhead (a balcony or landing sticking out): grab it and climb onto it
   if (!headroom(P.x, P.z, P.y, 2.0)) {
@@ -4365,6 +4484,109 @@ function lifePose(h, dt, C) {
 }
 function updateCityLife(dt, C) { updateLifeDogs(dt, C); }
 const cityLifeDebug = { dogs: lifeDogs, vendorCarts: lifeVendorCarts };
+
+// Cartoon knockdowns: every weapon floors people in its own silly, bloodless way. Laser eyes turn
+// the bit they hit into black cartoon ash that crumbles away as they go flying, the crowbar sends
+// them spinning with stars, the shotgun blows them backwards in a puff of soot, the pistol makes
+// them spin round and flop over seeing stars, and so on. Comic words pop up over the action.
+
+
+
+
+const ashMat = new THREE.MeshLambertMaterial({ color: 0x16130f });
+const sootMat = new THREE.MeshLambertMaterial({ color: 0x3a3632 });
+const crumbles = [], words = [], dizzies = [];
+const wordTex = new Map();
+const WORD_COLORS = { 'ZAP!': '#ff5a3a', 'BONK!': '#ffd23a', 'POW!': '#ff8a2a', 'BLAM!': '#ffe04a', 'RAT-A-TAT!': '#ffd23a', 'WHAM!': '#5ab4ff', 'WHOOSH!': '#9ad8ff', 'OOF!': '#ffffff', 'FWOOSH!': '#ff6a2a', 'KA-BOOM!': '#ff5a3a', 'THWACK!': '#ffd23a' };
+function wordMat(text) {
+  if (!wordTex.has(text)) wordTex.set(text, new THREE.SpriteMaterial({ map: canvasTex(512, 160, (ctx, W, H) => {
+    ctx.font = 'italic 900 92px Arial Black, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round'; ctx.lineWidth = 18; ctx.strokeStyle = '#1a1010'; ctx.strokeText(text, W / 2, H / 2 + 4, W - 20);
+    ctx.fillStyle = WORD_COLORS[text] || '#ffd23a'; ctx.fillText(text, W / 2, H / 2, W - 20);
+  }), depthTest: false, transparent: true }));
+  return wordTex.get(text);
+}
+function comicWord(text, x, y, z) {
+  const s = new THREE.Sprite(wordMat(text)); s.renderOrder = 7; s.position.set(x, y, z); scene.add(s);
+  words.push({ s, t: 0, life: 0.9, vy: 1.6, rot: mr(-0.25, 0.25) });
+  while (words.length > 8) { const w = words.shift(); scene.remove(w.s); }
+}
+const starMat = new THREE.SpriteMaterial({ map: canvasTex(64, 64, (ctx, W, H) => {
+  ctx.fillStyle = '#ffe23a'; ctx.strokeStyle = '#8a5a00'; ctx.lineWidth = 3; ctx.beginPath();
+  for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + (i * Math.PI) / 5, r = i % 2 ? 12 : 28; ctx.lineTo(W / 2 + Math.cos(a) * r, H / 2 + Math.sin(a) * r); }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+}), depthTest: true, transparent: true });
+function dizzy(rag, dur = 3) {
+  const stars = [0, 1, 2].map(() => { const s = new THREE.Sprite(starMat); s.scale.setScalar(0.28); scene.add(s); return s; });
+  dizzies.push({ rag, stars, t: 0, dur });
+  while (dizzies.length > 6) { const d = dizzies.shift(); for (const s of d.stars) scene.remove(s); }
+}
+function partFor(rag, hitY) { // which body part a hit at height hitY lands on
+  const footY = Math.min(rag.p[7].y, rag.p[8].y), rel = (hitY - footY) / (rag.scale || 1);
+  return rel > 1.5 ? 'head' : rel > 1.05 ? mpick(['torso', 'torso', 'armL', 'armR']) : rel > 0.6 ? 'torso' : mpick(['legL', 'legR']);
+}
+function setMat(mesh, mat) { mesh.traverse((m) => { if (m.isMesh) m.material = mat; }); }
+function kick(rag, x, y, z, idx = null) { // extra velocity on the ragdoll (all points, or one)
+  const dt = 1 / 60;
+  rag.prev.forEach((q, i) => { if (idx === null || i === idx) { q.x -= x * dt; q.y -= y * dt; q.z -= z * dt; } });
+}
+// someone just got knocked down: kind is the weapon, hitY where they were hit, (dx, dz) the direction
+function knockFX(rag, kind, hitY, dx = 0, dz = 0) {
+  if (!rag) return;
+  const P = rag.parts, head = rag.p[0], mid = rag.p[1];
+  const at = (txt, up = 0.6) => comicWord(txt, head.x, head.y + up, head.z);
+  if (kind === 'laser') { // the bit that got zapped turns to cartoon ash and crumbles away
+    const part = partFor(rag, hitY), mesh = P[part];
+    setMat(mesh, ashMat);
+    crumbles.push({ mesh, t: 0, dur: 1.4, base: mesh.scale.x });
+    // everything else gets a scorched look on the side facing the beam, and a big spin
+    if (part !== 'torso') setMat(P.torso, sootMat);
+    kick(rag, -dz * 4, 3, dx * 4, 0);
+    at(mpick(['ZAP!', 'FWOOSH!']));
+    for (let i = 0; i < 6; i++) emitPuff(mid.x, mid.y, mid.z, { life: 0.5, vx: mr(-2, 2), vy: mr(0, 2), vz: mr(-2, 2), size0: 0.2, size1: 0.6, alpha: 0.8, color: mpick([0xff4020, 0xffc040]) });
+  } else if (kind === 'crowbar') { // home run: spinning end over end, seeing stars
+    kick(rag, -dz * 6, 4, dx * 6, 0); kick(rag, dz * 6, -2, -dx * 6, 7); kick(rag, dz * 6, -2, -dx * 6, 8);
+    at(mpick(['BONK!', 'THWACK!'])); dizzy(rag, 4);
+  } else if (kind === 'shotgun') { // blown backwards in a puff of soot, face blackened like an old cartoon
+    setMat(P.head, sootMat); setMat(P.torso, sootMat);
+    kick(rag, dx * 6, 3, dz * 6);
+    for (let i = 0; i < 10; i++) emitPuff(mid.x, mid.y, mid.z, { life: 1.1, vx: mr(-2, 2) + dx * 2, vy: mr(0, 2), vz: mr(-2, 2) + dz * 2, size0: 0.5, size1: 1.8, alpha: 0.6, color: 0x5a5550 });
+    at('KA-BOOM!'); dizzy(rag, 3);
+  } else if (kind === 'pistol') { // a twirl, then a flop, seeing stars
+    kick(rag, -dz * 3, 1.5, dx * 3, 1); kick(rag, dz * 3, 1.5, -dx * 3, 2);
+    at(mpick(['BLAM!', 'POW!'])); dizzy(rag, 3.5);
+  } else if (kind === 'smg') { // a little jitterbug dance on the way down
+    for (let i = 0; i < 9; i++) kick(rag, mr(-3, 3), mr(0, 2), mr(-3, 3), i);
+    at('RAT-A-TAT!'); dizzy(rag, 3);
+  } else if (kind === 'car') { at('WHAM!'); dizzy(rag, 4); }
+  else if (kind === 'super') { at(mpick(['WHOOSH!', 'POW!', 'WHAM!'])); dizzy(rag, 3); }
+  else { at('OOF!', 0.5); dizzy(rag, 2.5); }
+}
+// a hit that doesn't floor them: a little comic word and a wobble
+function hitFX(x, y, z, kind) {
+  if (Math.random() < 0.45) comicWord(kind === 'crowbar' ? 'THWACK!' : kind === 'shotgun' ? 'POW!' : kind === 'laser' ? 'ZAP!' : 'OOF!', x, y + 0.6, z);
+}
+function updateKnockFX(dt) {
+  for (let i = crumbles.length - 1; i >= 0; i--) {
+    const C = crumbles[i]; C.t += dt;
+    const k = Math.max(0.02, 1 - C.t / C.dur), m = C.mesh;
+    m.scale.setScalar(C.base * k);
+    if (Math.random() < dt * 30) { const p = m.getWorldPosition(new THREE.Vector3()); emitPuff(p.x + mr(-0.15, 0.15), p.y, p.z + mr(-0.15, 0.15), { life: 1.2, vy: -mr(0.5, 2), vx: mr(-0.4, 0.4), vz: mr(-0.4, 0.4), size0: 0.12, size1: 0.05, alpha: 0.95, color: 0x1a1612 }); }
+    if (C.t >= C.dur) { m.visible = false; crumbles.splice(i, 1); }
+  }
+  for (let i = words.length - 1; i >= 0; i--) {
+    const W = words[i]; W.t += dt;
+    const pop = W.t < 0.12 ? W.t / 0.12 * 1.3 : 1.3 - Math.min(0.3, (W.t - 0.12) * 2);
+    W.s.scale.set(2.4 * pop, 0.75 * pop, 1); W.s.material.rotation = W.rot; W.s.position.y += W.vy * dt;
+    if (W.t > W.life) { scene.remove(W.s); words.splice(i, 1); }
+  }
+  for (let i = dizzies.length - 1; i >= 0; i--) {
+    const D = dizzies[i]; D.t += dt; const h = D.rag.p[0];
+    D.stars.forEach((s, k) => { const a = D.t * 5 + (k * Math.PI * 2) / 3; s.position.set(h.x + Math.cos(a) * 0.35, h.y + 0.35 + Math.sin(D.t * 7 + k) * 0.05, h.z + Math.sin(a) * 0.35); });
+    if (D.t > D.dur) { for (const s of D.stars) scene.remove(s); dizzies.splice(i, 1); }
+  }
+}
+const knockDebug = { crumbles, words, dizzies };
 
 // Superpower mode's personality: THE PARAGON is all-powerful, adored (officially), and bored out of
 // his mind. He drifts over the city, people freeze when his shadow passes, a long look makes anyone
@@ -4722,8 +4944,8 @@ function updateVillains(dt, C) {
       V.tauntT -= dt; if (V.tauntT <= 0) { V.tauntT = mr(7, 12); C.sayAt(V, mpick(V.def.taunts)); }
     }
     V.vx = lerp(V.vx, tvx, Math.min(1, dt * 3)); V.vz = lerp(V.vz, tvz, Math.min(1, dt * 3));
-    V.x += V.vx * dt; V.z += V.vz * dt;
-    resolveBody(V, 0.5 * V.def.scale, V.y, 2 * V.def.scale);
+    const vox = V.x, voz = V.z; V.x += V.vx * dt; V.z += V.vz * dt;
+    moveBody(V, vox, voz, 0.5 * V.def.scale, V.y, 2 * V.def.scale);
     V.y = lerp(V.y, floorAt(V.x, V.z, V.y + 1), Math.min(1, dt * 8));
     const sp = Math.hypot(V.vx, V.vz), sw = Math.sin(V.phase * 6) * Math.min(1, sp / 3) * 0.7, p = V.p;
     p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
@@ -5215,8 +5437,8 @@ class Ally {
     const el = Math.hypot(ex, ez) || 1;
     const k = want * spd * (pd > 12 && !h ? 1.15 : pd < 5 && !h ? 0.55 : 1);
     this.vx = lerp(this.vx, (ex / el) * k, Math.min(1, dt * 8)); this.vz = lerp(this.vz, (ez / el) * k, Math.min(1, dt * 8));
-    this.x += this.vx * dt; this.z += this.vz * dt;
-    resolveBody(this, 0.35, this.y, 1.8);
+    const aox = this.x, aoz = this.z; this.x += this.vx * dt; this.z += this.vz * dt;
+    moveBody(this, aox, aoz, 0.35, this.y, 1.8);
     const prevY = this.y; this.vy -= 22 * dt; this.y += this.vy * dt;
     const floor = floorAt(this.x, this.z, Math.max(prevY, this.y));
     if (this.y <= floor || (prevY - floor < 0.45 && this.vy <= 0 && this.y - floor < 0.45)) { this.y = floor; this.vy = 0; }
@@ -6014,6 +6236,7 @@ function mhRivalCaughtByYou(r, ctx) {
 
 
 
+
 const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
 
 generateWorld();
@@ -6172,6 +6395,7 @@ class Hunter {
     this.dead = true; this.marker.visible = false;
     this.g.position.set(this.x, this.y, this.z);
     addRagdoll(this.p, this.T.scale, { x: this.vx + this.kx, y: 0, z: this.vz + this.kz }, impulse, hitY);
+    { const il = Math.hypot(impulse.x, impulse.z) || 1; knockFX(ragdolls[ragdolls.length - 1], hitKindNow(), hitY, impulse.x / il, impulse.z / il); }
     if (byPlayer) { G.kills++; addHeat(this.type === 'cop' ? 22 : 14); }
     if (loot) maybeDropCash(this);
     if (this.contract) contractTargetDown(this);
@@ -6179,6 +6403,7 @@ class Hunter {
   }
   damage(n, dirX, dirZ, hitY, byPlayer = true) {
     this.hp -= n; this.alert();
+    if (this.hp > 0) hitFX(this.x, this.y + 1.8 * this.T.scale, this.z, hitKindNow());
     if (this.hp <= 0) this.die({ x: dirX * 7, y: 2.5, z: dirZ * 7 }, hitY, byPlayer, true);
     else { this.stun = Math.max(this.stun, 0.25); this.kx += dirX * 2.5 * this.T.knock; this.kz += dirZ * 2.5 * this.T.knock; }
   }
@@ -6205,7 +6430,7 @@ class Hunter {
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
-      const see = !this.inside && d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 || this.y < -1 || player.y < -1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
+      const see = !this.inside && d < 90 && (d > 50 ? los(this.x, this.z, tp.x, tp.z) : true) && losSolid(this.x, this.y + 1.6, this.z, tp.x, player.car ? 1.2 : playerEyeY(), tp.z);
       this.hasLOS = see;
       const tdt = Math.min(0.5, G.elapsed - this.thinkAt); this.thinkAt = G.elapsed;
       if (this.state !== 'chase' && !G.super) {
@@ -6334,13 +6559,14 @@ class Hunter {
     this.kx *= Math.max(0, 1 - dt * 5); this.kz *= Math.max(0, 1 - dt * 5);
     const ox = this.x, oz = this.z;
     this.x += (this.vx + this.kx) * dt; this.z += (this.vz + this.kz) * dt;
-    const wall = resolveBody(this, 0.35 * T.scale, this.y, 1.8);
-    if (this.y < 0.5) for (const c of G.cars) if (Math.abs(c.x - this.x) < 4 && Math.abs(c.z - this.z) < 4) resolveCircleCar(this, 0.35, c);
+    const wall = moveBody(this, ox, oz, 0.35 * T.scale, this.y, 1.8);
+    if (this.y < 0.5) { const cx0 = this.x, cz0 = this.z; for (const c of G.cars) if (Math.abs(c.x - this.x) < c.hl + 2 && Math.abs(c.z - this.z) < c.hl + 2) resolveCircleCar(this, 0.35, c); if (this.x !== cx0 || this.z !== cz0) moveBody(this, cx0, cz0, 0.35 * T.scale, this.y, 1.8); }
+    keepOutOfSolids(this);
     // scramble up walls to get at you (runners are good at it, brutes hopeless)
     if (wall && this.state === 'chase' && dy > 0.8 && d < 9 && this.stun <= 0 && this.noticeT <= 0 && Math.hypot(this.x - ox, this.z - oz) < dt * 1.5) {
       const ux = dx / (d || 1), uz = dz / (d || 1), top = stackTop(this.x + ux * 0.7, this.z + uz * 0.7, this.y);
       const maxUp = { runner: 4.3, cop: 3.1, civ: 2.5, brute: 1.4 }[this.type];
-      if (top > 0 && top - this.y <= maxUp && floorAt(this.x + ux * 1.2, this.z + uz * 1.2, top + 0.02) >= top - 0.05) {
+      if (top > 0 && top - this.y <= maxUp && floorAt(this.x + ux * 1.2, this.z + uz * 1.2, top + 0.02) >= top - 0.05 && headroom(this.x, this.z, this.y + 0.1, top - this.y + 1.7)) {
         this.climb = { t: 0, dur: 0.5 + (top - this.y) * 0.3, fx: this.x, fy: this.y, fz: this.z, tx: this.x + ux * 1.2, ty: top, tz: this.z + uz * 1.2 };
       }
     }
@@ -6633,11 +6859,14 @@ class Car {
     if (!throttle && !brake) this.speed -= Math.sign(this.speed) * Math.min(Math.abs(this.speed), 2 * dt);
     this.speed = clamp(this.speed, -8, maxF);
     this.heading += steer * 1.9 * clamp(this.speed / 6, -1, 1) * dt;
-    this.x += this.fx * this.speed * dt; this.z += this.fz * this.speed * dt;
     let hitWall = false;
-    for (const off of this.offs) {
-      const c = { x: this.x + this.fx * off, z: this.z + this.fz * off }, ox = c.x, oz = c.z;
-      if (resolveCircle(c, 1.05)) { this.x += c.x - ox; this.z += c.z - oz; hitWall = true; }
+    const nsub = Math.max(1, Math.ceil(Math.abs(this.speed * dt) / 0.35));
+    for (let sub = 0; sub < nsub; sub++) {
+      this.x += this.fx * this.speed * dt / nsub; this.z += this.fz * this.speed * dt / nsub;
+      for (const off of this.offs) {
+        const c = { x: this.x + this.fx * off, z: this.z + this.fz * off }, ox = c.x, oz = c.z;
+        if (resolveCircle(c, 1.05)) { this.x += c.x - ox; this.z += c.z - oz; hitWall = true; }
+      }
     }
     if (hitWall && Math.abs(this.speed) > 2) {
       const impact = Math.abs(this.speed);
@@ -6707,8 +6936,8 @@ function carInteractions() {
       if (h.dead || Math.abs(h.x - c.x) > c.hl + 1.3 || Math.abs(h.z - c.z) > c.hl + 1.3) continue;
       const before = { x: h.x, z: h.z };
       if (resolveCircleCar(before, 0.4, c)) {
-        if (sp > 5) { h.die({ x: c.fx * c.speed * 0.9 + mr(-1, 1), y: 3 + sp * 0.3, z: c.fz * c.speed * 0.9 + mr(-1, 1) }, 0.8, c.driver === 'player'); sfx.thud(); if (c.driver === 'player') c.damage(2); }
-        else { h.x = before.x; h.z = before.z; }
+        if (sp > 5) { setHitKind('car'); h.die({ x: c.fx * c.speed * 0.9 + mr(-1, 1), y: 3 + sp * 0.3, z: c.fz * c.speed * 0.9 + mr(-1, 1) }, 0.8, c.driver === 'player'); sfx.thud(); if (c.driver === 'player') c.damage(2); }
+        else { const hx0 = h.x, hz0 = h.z; h.x = before.x; h.z = before.z; moveBody(h, hx0, hz0, 0.35 * h.T.scale, h.y, 1.8); }
       }
     }
     if (!player.car && player.alive && c.driver !== 'player') {
@@ -6718,7 +6947,7 @@ function carInteractions() {
           player.carHitCd = 1.2;
           hurtPlayer(Math.min(55, sp * 2.4), c.x - c.fx * 3, c.z - c.fz * 3, 6 + sp * 0.5);
           sfx.thud(); c.speed *= 0.5;
-        } else { player.x = p.x; player.z = p.z; }
+        } else { const px0 = player.x, pz0 = player.z; player.x = p.x; player.z = p.z; moveBody(player, px0, pz0, 0.4, player.y, 1.8); }
       }
     }
   }
@@ -7110,6 +7339,7 @@ function playerShoot() {
     const r = fireRay(_camDir, W.range || 160, k < 4);
     if (r) { hits.set(r.h, (hits.get(r.h) || 0) + r.dmg); if (r.head) headHit = true; }
   }
+  setHitKind(player.weapon);
   for (const [h, dmg] of hits) {
     const dx = h.x - player.x, dz = h.z - player.z, dl = Math.hypot(dx, dz) || 1;
     h.damage(dmg, dx / dl, dz / dl, h.y + 1.2);
@@ -7177,6 +7407,7 @@ function heroGrab() {
   return true;
 }
 function heroThrow() {
+  setHitKind('super');
   const h = G.held; if (!h) return;
   camera.getWorldDirection(_hd);
   launchHunter(h, 0, 0, true, { x: _hd.x * 34, y: _hd.y * 34 + 7, z: _hd.z * 34 });
@@ -7185,6 +7416,7 @@ function heroThrow() {
 }
 // a backhand that sends people and parked cars flying
 function heroSwat() {
+  setHitKind('super');
   if (player.shoveCd > 0) return; player.shoveCd = 0.45; player.shoveAnim = 1; sfx.shove();
   camera.getWorldDirection(_hd); const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
   let any = false;
@@ -7203,6 +7435,7 @@ function heroSwat() {
   if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); heroFun(0.06, HC); heroMenace(0.5); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
 }
 function heroSlam() {
+  setHitKind('super');
   sfx.explode(); G.shake = 0.6; G.hitstopT = 0.12; G.fovKick = 14;
   for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; emitPuff(player.x + Math.cos(a) * 1.5, player.y + 0.3, player.z + Math.sin(a) * 1.5, { life: 1, vx: Math.cos(a) * 9, vz: Math.sin(a) * 9, vy: 0.6, size0: 0.8, size1: 3, alpha: 0.6, color: 0x9a9080 }); }
   for (const h of G.hunters) {
@@ -7224,6 +7457,7 @@ const laserMeshes = [0, 1].map(() => { const g = new THREE.Group();
 function laserBeam(i, from, to) { const g = laserMeshes[i]; g.visible = true; g.position.copy(from); g.lookAt(to); g.scale.set(1, 1, from.distanceTo(to)); }
 function updateLaser(dt) { G.laserT = Math.max(0, (G.laserT || 0) - dt); if (G.laserT <= 0) for (const g of laserMeshes) g.visible = false; }
 function fireLaser() {
+  setHitKind('laser');
   player.fireCd = WEAPONS.laser.cd; player.drawnT = 0; G.laserT = 0.12;
   camera.getWorldDirection(_aim);
   let r = fireRay(_aim, 220, false), t = r ? Math.hypot(r.h.x - camera.position.x, r.h.z - camera.position.z) : raycastWorld(camera.position, _aim, 220).t;
@@ -7290,6 +7524,7 @@ function meleeTargets(range, cone) {
   return out.sort((a, b) => a.d - b.d);
 }
 function crowbarImpact(heavy) {
+  setHitKind('crowbar');
   if (!heavy) {
     const t = meleeTargets(2.5, 0.45)[0];
     if (!t) return;
@@ -7313,6 +7548,9 @@ function crowbarImpact(heavy) {
   addHeat(4); alertAround(player.x, player.z, 20, 1);
 }
 // sends someone flying 5 to 10 m; unless that finished them off, they get back up a few seconds later
+// what just hit someone (so the knockdown can be drawn in that weapon's style)
+function setHitKind(k) { G.hitKind = k; G.hitKindAt = G.elapsed; }
+function hitKindNow() { return G.elapsed - (G.hitKindAt ?? -9) < 0.2 ? G.hitKind : 'oof'; }
 function launchHunter(h, ux, uz, getsUp, imp) {
   if (h.dead) return;
   const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
@@ -7321,6 +7559,7 @@ function launchHunter(h, ux, uz, getsUp, imp) {
   h.dead = true; h.marker.visible = false; h.g.position.set(h.x, h.y, h.z);
   addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, imp || { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
   const rag = ragdolls[ragdolls.length - 1];
+  { const kx = imp ? imp.x : ux, kz = imp ? imp.z : uz, kl = Math.hypot(kx, kz) || 1; knockFX(rag, hitKindNow(), h.y + 1.2 * h.T.scale, kx / kl, kz / kl); }
   rag.launchFrom = { x: h.x, z: h.z };
   if (h.rival) rivalDown(h);
   else if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
@@ -7343,6 +7582,7 @@ function updateGetUps(dt) {
     const hx = (U.rag.p[3].x + U.rag.p[4].x) / 2, hz = (U.rag.p[3].z + U.rag.p[4].z) / 2, hy = Math.min(U.rag.p[3].y, U.rag.p[4].y);
     U.rag.dispose(); ragdolls.splice(idx, 1); G.getUps.splice(i, 1);
     const p = { x: hx, z: hz }; resolveCircle(p, 0.4);
+    if (solidAt(p.x, Math.max(0, hy), p.z, 0) || pointBlocked(p.x, p.z, 0.1)) { const q = randomOpenPoint(p.x, p.z, 0, 10, 20); if (q) { p.x = q.x; p.z = q.z; } }
     const nh = new Hunter(p.x, p.z, U.type, U.gunner, 'chase');
     nh.y = floorAt(p.x, p.z, hy + 0.6); nh.hp = U.hp; nh.stun = 1.4; nh.noticeT = 0;
     if (U.contract) dressTarget(nh, U.contract); nh.guard = U.guard; nh.fleer = U.fleer;
@@ -7622,6 +7862,7 @@ function startReload() {
   player.reloadT = W.reload; sfx.reload();
 }
 function playerShove() {
+  setHitKind('shove');
   if (G.super && !player.car && player.alive) { heroSwat(); return; }
   if (player.car || player.shoveCd > 0 || !player.alive) return;
   player.shoveCd = 0.55; player.shoveAnim = 1; sfx.shove();
@@ -8201,8 +8442,9 @@ function flyMove(dt) {
   const k = Math.min(1, dt * (player.slamming ? 12 : 4));
   player.vx = lerp(player.vx, wx, k); player.vz = lerp(player.vz, wz, k); player.vy = lerp(player.vy, wy, k);
   const prevY = player.y;
+  const fox = player.x, foz = player.z;
   player.x += player.vx * dt; player.z += player.vz * dt; player.y = Math.min(260, player.y + player.vy * dt);
-  resolveBody(player, 0.4, player.y, 1.8);
+  moveBody(player, fox, foz, 0.4, player.y, 1.8);
   const fl = floorAt(player.x, player.z, Math.max(prevY, player.y) + 0.3);
   if (player.y <= fl) { player.y = fl; if (player.vy < 0.5) { if (player.slamming) heroSlam(); else for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - player.x, h.z - player.z) < 25) h.panicT = mr(3, 6); player.flying = false; player.slamming = false; player.grounded = true; player.vy = 0; } }
   player.sprinting = false; player.bob += dt * 2;
@@ -8226,14 +8468,22 @@ const parkourCb = {
   stepSound: (k) => { stepAcc += k; if (stepAcc > 1) { stepAcc = 0; sfx.climb(); } },
   zipSound: (v) => setZipSound(v),
 };
+// the safety net: if anyone ever ends up inside a solid wall, put them back where they last stood
+function keepOutOfSolids(b, r = 0.35) {
+  if (solidAt(b.x, b.y, b.z, 0.02)) { if (b.goodX !== undefined) { b.x = b.goodX; b.z = b.goodZ; } else { const p = randomOpenPoint(b.x, b.z, 0, 8, 12); if (p) { b.x = p.x; b.z = p.z; } } }
+  else { b.goodX = b.x; b.goodZ = b.z; }
+}
 function separateHunters() {
   const hs = G.hunters;
+  for (const h of hs) { h.sx = h.x; h.sz = h.z; }
   for (let i = 0; i < hs.length; i++) for (let j = i + 1; j < hs.length; j++) {
     const a = hs[i], b = hs[j], dx = b.x - a.x, dz = b.z - a.z;
     if (dx > 0.9 || dx < -0.9 || dz > 0.9 || dz < -0.9) continue;
     const d = Math.hypot(dx, dz);
     if (d < 0.8 && d > 1e-4) { const k = ((0.8 - d) / d) * 0.5; a.x -= dx * k; a.z -= dz * k; b.x += dx * k; b.z += dz * k; }
   }
+  // a crowd pushing never shoves anyone into or through a wall
+  for (const h of hs) if (!h.dead && !h.held && !h.climb && !h.ladder && (h.x !== h.sx || h.z !== h.sz)) moveBody(h, h.sx, h.sz, 0.35 * h.T.scale, h.y, 1.8);
 }
 function updateCamera(dt, t) {
   G.shake = Math.max(0, G.shake - dt * 1.5);
@@ -8559,7 +8809,7 @@ function simulate(dt, t) {
     updatePlayer(dt);
     for (const h of G.hunters) if (!h.dead) h.update(dt);
     separateHunters();
-    updateCityLife(dt, LIFE);
+    updateCityLife(dt, LIFE); updateKnockFX(dt);
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
@@ -8596,7 +8846,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>
