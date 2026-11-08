@@ -2,7 +2,7 @@
 // shop), each with a shopkeeper behind the counter, plus the shop menu you get at the counter.
 import * as THREE from '../vendor/three.module.min.js';
 import { $, scene } from './core.js';
-import { CITIES, siteOverrides, blockKey, addRoof, roofBuf, propBuf, glowBuf, parapet, parkedSpots, addTree, worldHooks, blockRects, pointBlocked, addCollider, SW } from './world.js';
+import { CITIES, siteOverrides, blockKey, addRoof, roofBuf, propBuf, glowBuf, parapet, parkedSpots, addTree, worldHooks, blockRects, pointBlocked, addCollider, SW, navOpen } from './world.js';
 import { srand } from './core.js';
 import { solid, sign, lamp, ib, floorB } from './interiors.js';
 import { buildPerson, SKINS, HAIRS } from './people.js';
@@ -74,6 +74,7 @@ for (const S of STRIPS) {
       }
       lamp(um - 3, um + 3, H - 0.3, Math.min(zF, zB) + 2, Math.max(zF, zB) - 2, 0xfff4dc);
       keepers.push({ x: um, z: zB + front * 1.0, y: 0.2, face: S.face, kind });
+      navOpen.push({ x0: um - 1.15, x1: um + 1.15, z0: zF - 2.2, z1: zF + 2.2 });
       shopSpots.push({ x: um, z: cz + front * 1.1, y: 0.2, r: 2.4, kind, name, city: S.city.name, face: S.face });
       // decor on the back wall
       const wz = S.face === 'pz' ? back[1] + 0.03 : back[0] - 0.03, wz2 = wz + front * 0.12;

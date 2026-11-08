@@ -178,4 +178,36 @@ export class GeoBuf {
   }
 }
 
-
+// GeoBuf split into square chunks by position, so each chunk is its own mesh and the renderer can skip
+// whatever is off screen (or, with farCull, too far away to matter)
+export const chunkMeshes = []; // {mesh, cx, cz, far}
+export class ChunkBuf {
+  constructor(size = 128, far = 0) { this.size = size; this.far = far; this.map = new Map(); }
+  at(x, z) {
+    const k = Math.floor(x / this.size) + ',' + Math.floor(z / this.size);
+    let b = this.map.get(k); if (!b) { b = new GeoBuf(); this.map.set(k, b); }
+    return b;
+  }
+  get n() { let n = 0; for (const b of this.map.values()) n += b.n; return n; }
+  quad(a, b, c, d, nrm, uv, color) { this.at(a[0], a[2]).quad(a, b, c, d, nrm, uv, color); }
+  box(x0, x1, y0, y1, z0, z1, color, opt) { this.at((x0 + x1) / 2, (z0 + z1) / 2).box(x0, x1, y0, y1, z0, z1, color, opt); }
+  face(side, fixed, a0, a1, y0, y1, color, uRep) { const ax = side[1] === 'x'; this.at(ax ? fixed : (a0 + a1) / 2, ax ? (a0 + a1) / 2 : fixed).face(side, fixed, a0, a1, y0, y1, color, uRep); }
+  flat(x0, x1, z0, z1, y, color) { this.at((x0 + x1) / 2, (z0 + z1) / 2).flat(x0, x1, z0, z1, y, color); }
+  prism(x0, x1, z0, z1, y0, rh, color, alongX) { this.at((x0 + x1) / 2, (z0 + z1) / 2).prism(x0, x1, z0, z1, y0, rh, color, alongX); }
+  cyl(cx, cz, r, rTop, y0, y1, color, segs, cap) { this.at(cx, cz).cyl(cx, cz, r, rTop, y0, y1, color, segs, cap); }
+  beam(a, b, t, color) { this.at(a[0], a[2]).beam(a, b, t, color); }
+  build(material) {
+    let first = null;
+    for (const [k, b] of this.map) {
+      const m = b.build(material); if (!m) continue;
+      const [i, j] = k.split(',').map(Number);
+      chunkMeshes.push({ mesh: m, cx: (i + 0.5) * this.size, cz: (j + 0.5) * this.size, far: this.far });
+      first = first || m;
+    }
+    return first;
+  }
+}
+// hide far-culled chunks beyond their distance from the camera
+export function cullChunks(x, z) {
+  for (const c of chunkMeshes) if (c.far) c.mesh.visible = Math.hypot(c.cx - x, c.cz - z) < c.far;
+}

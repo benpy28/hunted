@@ -2,20 +2,21 @@
 import * as THREE from '../vendor/three.module.min.js';
 import {
   clamp, lerp, smoothstep, angDiff, mr, mpick, fmtTime, $, canvas, renderer, scene, camera, hemi, sun,
-  vmScene, vmCamera, puffTex, GeoBuf, canvasTex,
+  vmScene, vmCamera, puffTex, GeoBuf, canvasTex, cullChunks,
 } from './core.js';
 import {
   CITIES, HIGHWAYS, WORLD, RIVER, colliders, blockRects, parkedSpots, beacons, animated, waterRects, lanes, emissiveFacades,
   generateWorld, cityAt, localeName, resolveCircle, pointBlocked, maxHeightNear, groundY,
   navRecenter, computeFlow, navTarget, los, los3D, blockedAt, randomOpenPoint, raycastWorld,
-  floorAt, resolveBody, stackTop, ladders, ziplines, zipNear, ladderNear,
+  floorAt, resolveBody, stackTop, ladders, ziplines, zipNear, ladderNear, roofs,
 } from './world.js';
 import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
 import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
+import { walkIns } from './streets.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
-import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
+import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
 import { shopRooms, atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
@@ -195,6 +196,8 @@ class Hunter {
     const T = this.T, tp = targetPos();
     const dx = tp.x - this.x, dz = tp.z - this.z, d = Math.hypot(dx, dz);
     const dy = player.car ? 0 : player.y - this.y;
+    // their face shows how they feel about you
+    setMood(this.p, this.held || this.cowerT > 0 || this.panicT > 0 || this.stun > 0 ? 'scared' : this.state === 'chase' ? 'angry' : this.sus > 0.5 || this.alertT >= 0 ? 'smug' : G.super && d < 20 ? 'happy' : 'neutral');
     if (this.climb || this.ladder) { this.updateClimb(dt); return; }
     if (this.held) { // dangling in front of you, legs going
       camera.getWorldDirection(_hd);
@@ -1826,6 +1829,7 @@ function updateHUD(dt) {
   let prompt = '';
   if (player.car) prompt = Math.abs(player.car.speed) > 6 ? '' : (isTouch ? 'Tap CAR to get out' : 'Press E to get out');
   else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
+  else if (player.mode === 'climb') prompt = isTouch ? 'Push forward to climb, JUMP to kick off' : 'W to climb, Space to kick off the wall, C to drop';
   else if (player.mode === 'ladder') prompt = isTouch ? 'Push forward to climb, JUMP to let go' : 'W / S to climb, Space to let go';
   else if (safeDoorNear(player.x, player.y, player.z) && !safeDoorNear(player.x, player.y, player.z).owned) { const S = safeDoorNear(player.x, player.y, player.z); prompt = `${isTouch ? 'Tap USE' : 'Press E'} to rent ${S.name} for $${S.price}`; }
   else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'bed') prompt = G.napDay === G.day ? 'You already napped today' : `${isTouch ? 'Tap USE' : 'Press E'} to nap (skips 5 hours)`;
@@ -2143,10 +2147,10 @@ function updateCamera(dt, t) {
   const sh = Math.sin(player.shoveAnim * Math.PI);
   armL.position.z = -0.42 - sh * 0.25; armR.position.z = -0.42 - sh * 0.2;
   // hands reach up for ladders, ledges and the zipline handle
-  const reach = player.mode === 'zip' || player.mode === 'ladder' ? 1 : player.mode === 'mantle' ? 0.7 : 0;
+  const reach = player.mode === 'zip' || player.mode === 'ladder' || player.mode === 'climb' ? 1 : player.mode === 'mantle' ? 0.7 : 0;
   G.vmReach = lerp(G.vmReach || 0, reach, Math.min(1, dt * 10));
   armL.rotation.x = 0.1 + G.vmReach * 0.7; armL.position.y = -0.27 + G.vmReach * 0.6; armL.position.x = -0.08 - G.vmReach * 0.12;
-  if (player.mode === 'ladder') armL.position.y += Math.sin(player.y * 3) * 0.06;
+  if (player.mode === 'ladder' || player.mode === 'climb') armL.position.y += Math.sin(player.y * 3) * 0.06;
   G.holster = lerp(G.holster || 0, player.weapon === 'hands' ? 1.6 : player.drawnT > 4 && !player.reloadT ? 1 : 0, Math.min(1, dt * 5));
   vm.position.y -= G.vmReach * 0.12 + player.switchT * 1.1 + G.holster * 0.3;
   vm.rotation.x = G.holster * 0.9;
@@ -2400,6 +2404,7 @@ function frame() {
   const zn = player.car ? null : zoneAt(player.x, player.y, player.z);
   const indoor = playing && !player.car && (!!zn || !!G.inSafe || camera.position.y < -1);
   if (player.grounded) G.floorY = player.y;
+  cullChunks(camera.position.x, camera.position.z);
   renderFrame({ drawVM: vm.visible && G.mode !== 'menu', indoor, floorY: G.floorY ?? 0, speed: G.pfxSpeed, danger: G.pfxDanger, kick: clamp(G.fovKick / 8, 0, 1) });
 }
 // Channel 9: what the billboards and TVs are saying about you
@@ -2462,4 +2467,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
