@@ -73,7 +73,8 @@ const mhCityHere = (x, z) => cityAt(x, z, 20);
 export function resetManhunt(days) {
   // when each other runner gets caught: spread across the month, and the last rival lasts until the final day
   const n = MH_RUNNER_NAMES.length;
-  const times = Array.from({ length: n - 1 }, () => mr(0.6, days - 2.2)).sort((a, b) => a - b);
+  const span = (days - 2.8) / (n - 1); // one catch per slot so they really are spread across the month
+  const times = Array.from({ length: n - 1 }, (_, i) => 0.6 + span * (i + mr(0.1, 0.9)));
   times.push(days - 1 + mr(0.3, 0.75));
   MH.runners = MH_RUNNER_NAMES.map((name, i) => ({ name, num: i + 2, at: times[i], caught: false }));
   Object.assign(MH, { lifelines: 1, usedLifelines: 0, objective: null, done: 0, streak: 0, closeCalls: 0, spotted: 0, sweeps: [], recapT: 0, closeArm: 0, closeT: 0, wasSeen: false, newsBits: [], invulnT: 0, bountyMul: 1, extract: null, escaped: false, lastCaught: null, rival: null, rivalT: mr(50, 90), yourCatches: 0 });
