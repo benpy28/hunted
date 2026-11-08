@@ -59,6 +59,10 @@ sfx.bin = () => { noise(0.3, 0.45, 2200, 1.6); tone(330, 0.25, 'triangle', 0.1, 
 sfx.thunk = () => { tone(180, 0.1, 'triangle', 0.08, 0.7); noise(0.06, 0.15, 1500, 1.2); };
 sfx.clank = () => { tone(1250, 0.18, 'square', 0.05, 0.9); tone(1880, 0.12, 'sine', 0.05); };
 sfx.gush = () => { noise(1.4, 0.35, 1800, 0.4); noise(0.9, 0.25, 600, 0.6, 0.1); };
+sfx.lid = () => { tone(150, 0.22, 'sawtooth', 0.05, 0.8); noise(0.12, 0.3, 700, 0.9, 0.18); tone(95, 0.12, 'square', 0.08, 0.6, 0.2); };
+sfx.smash = () => { noise(0.35, 0.45, 4200, 2.2); tone(2600, 0.08, 'sine', 0.05, 1.3); tone(3300, 0.12, 'sine', 0.04, 1.2, 0.05); noise(0.2, 0.2, 2600, 1.4, 0.08); };
+sfx.flap = () => { for (let i = 0; i < 7; i++) noise(0.05, 0.16, 900 + Math.random() * 500, 0.8, i * 0.06 + Math.random() * 0.03); };
+sfx.camBeep = () => { tone(1760, 0.08, 'square', 0.05); tone(1760, 0.08, 'square', 0.05, 1, 0.14); tone(2200, 0.12, 'square', 0.05, 1, 0.28); };
 sfx.explode = () => { noise(0.9, 0.6, 180, 0.4); tone(60, 0.7, 'sawtooth', 0.2, 0.4); };
 
 // continuous rotor / propeller hum, volume driven by distance to the nearest aircraft

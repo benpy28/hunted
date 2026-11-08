@@ -6,7 +6,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { clamp, lerp, srand, sr, spick } from './core.js';
 import {
   CITIES, SW, colliders, blockRects, siteOverrides, blockKey, worldHooks, lotHooks, keepClear, navOpen, groundHoles, pointBlocked, inHole, addCollider,
-  propBuf, glowBuf, markBuf, SIDES, sideInfo, shopSign, outBox, slope, blob, addTree, AWNINGS, GREENS, SHOP_NAMES, staticMesh, adMats, edgeMat,
+  courtyards, propBuf, glowBuf, markBuf, SIDES, sideInfo, shopSign, outBox, slope, blob, addTree, AWNINGS, GREENS, SHOP_NAMES, staticMesh, adMats, edgeMat,
 } from './world.js';
 import { solid, ib, floorB, lightB, glassB, lamp, interiorZones } from './interiors.js';
 
@@ -14,6 +14,7 @@ export const walkIns = []; // {x, z, name, kind, city, keeper:{x,z,face}, rect}
 // places townsfolk go to do things: sit on a bench, wait for the bus, queue at a food cart
 export const streetProps = []; // kickable bins, wheelie bins and hydrants {kind, x, z, col, color}
 export const lifeSpots = []; // {kind: 'bench'|'bus'|'cart', x, z, face, sx, sz} (sx,sz: where you sit or stand)
+export const hideSpots = []; // dumpsters you can climb into {x, z, lx, lz, kind}
 
 // ---------------------------------------------------------------------
 // local frame for a lot: a runs along the street front, b goes in from the front (0) to the back (D)
@@ -334,10 +335,13 @@ function crates(x, z) { const s = sr(0.4, 0.6); propBuf.box(x - s, x + s, 0.15, 
 function cone(x, z) { propBuf.box(x - 0.2, x + 0.2, 0.15, 0.2, z - 0.2, z + 0.2, 0xe05a1a); propBuf.cyl(x, z, 0.16, 0.03, 0.2, 0.85, 0xe05a1a, 8, false); propBuf.cyl(x, z, 0.11, 0.08, 0.45, 0.58, 0xf0f0f0, 8, false); }
 function spool(x, z) { propBuf.cyl(x, z, 0.7, 0.7, 0.15, 0.3, 0x8a6a4a, 12); propBuf.cyl(x, z, 0.3, 0.3, 0.3, 1.1, 0x3a3a3a, 10, false); propBuf.cyl(x, z, 0.7, 0.7, 1.1, 1.25, 0x8a6a4a, 12); col(x, z, 0.7, 0.7, 1.25); }
 function dumpster(x, z, alongX) {
-  const lx = alongX ? 1.0 : 0.7, lz = alongX ? 0.7 : 1.0, c = spick([0x2a5a3a, 0x2a4a7a, 0x6a6a6e, 0x8a3a2a]);
+  // colours from a hash of the spot, not the world's random stream (so adding bins doesn't reshuffle the rest of the town)
+  const hsh = Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1;
+  const lx = alongX ? 1.0 : 0.7, lz = alongX ? 0.7 : 1.0, c = [0x2a5a3a, 0x2a4a7a, 0x6a6a6e, 0x8a3a2a][Math.floor(hsh * 4)];
   propBuf.box(x - lx, x + lx, 0.15, 1.35, z - lz, z + lz, c); propBuf.box(x - lx - 0.05, x + lx + 0.05, 1.35, 1.45, z - lz - 0.05, z + lz + 0.05, 0x1a1a1a);
-  if (srand() < 0.5) propBuf.box(x - lx * 0.6, x + lx * 0.4, 1.4, 1.75, z - lz * 0.5, z + lz * 0.6, 0x1a1a1a); // overflowing bin bags
+  if ((hsh * 7) % 1 < 0.5) propBuf.box(x - lx * 0.6, x + lx * 0.4, 1.4, 1.75, z - lz * 0.5, z + lz * 0.6, 0x1a1a1a); // overflowing bin bags
   col(x, z, lx, lz, 1.45);
+  hideSpots.push({ kind: 'dumpster', x, z, lx, lz, top: 1.45 });
 }
 function wheelie(x, z) { const c = spick([0x2a6a3a, 0x2a4a8a, 0x5a5a60, 0x7a5a2a]); streetProps.push({ kind: 'wheelie', x, z, color: c, col: col(x, z, 0.3, 0.35, 1.2) }); }
 const shadeC = (c) => new THREE.Color(c).multiplyScalar(0.75).getHex();
@@ -366,7 +370,7 @@ lotHooks.courtyard = (Y) => {
   const yardItems = [];
   const put = (x, z, r) => { if (x < Y.x0 + r || x > Y.x1 - r || z < Y.z0 + r || z > Y.z1 - r || inAlley(x, z, 2)) return false; if (yardItems.some(([px, pz, pr]) => Math.hypot(px - x, pz - z) < pr + r + 0.6)) return false; yardItems.push([x, z, r]); return true; };
   const edge = () => { const s = Math.floor(srand() * 4); return s === 0 ? [sr(Y.x0 + 1.5, Y.x1 - 1.5), Y.z0 + 1.1, true] : s === 1 ? [sr(Y.x0 + 1.5, Y.x1 - 1.5), Y.z1 - 1.1, true] : s === 2 ? [Y.x0 + 1.1, sr(Y.z0 + 1.5, Y.z1 - 1.5), false] : [Y.x1 - 1.1, sr(Y.z0 + 1.5, Y.z1 - 1.5), false]; };
-  for (let k = 0; k < 2; k++) { const [x, z, ax] = edge(); if (put(x, z, 1.2)) dumpster(x, z, ax); }
+  const binsAt = []; for (let k = 0; k < 2; k++) binsAt.push(edge()); // dumpsters go in last, wherever there's still room, so the rest of the yard (and the town's random stream) stays as it was
   for (let k = 0; k < 4; k++) { const [x, z] = edge(); if (put(x, z, 0.5)) wheelie(x, z); }
   for (let k = 0; k < 3; k++) { const [x, z] = edge(); if (put(x, z, 0.6)) acUnit(x, z); }
   const cx = (Y.x0 + Y.x1) / 2, cz = (Y.z0 + Y.z1) / 2;
@@ -391,6 +395,7 @@ lotHooks.courtyard = (Y) => {
     if (srand() < 0.6) { if (xs) wheelie(A.x0 + 0.45, lerp(A.z0, A.z1, 0.5)); else wheelie(lerp(A.x0, A.x1, 0.5), A.z0 + 0.45); }
     void alongX;
   }
+  for (const [x, z, ax] of binsAt) if (put(x, z, 1.05)) dumpster(x, z, ax);
 };
 
 // ---------------------------------------------------------------------
@@ -495,6 +500,23 @@ function dressStreets() {
   }
 }
 worldHooks.afterGen.push(dressStreets);
+// a second dumpster pass once everything else is down: yards still without one get a bin wherever there's room
+// (positions come from a hash, not the world's random stream, so nothing else in town moves)
+worldHooks.beforeBake.push(() => {
+  const hit = (x0, x1, z0, z1) => colliders.some((c) => c.x1 > x0 && c.x0 < x1 && c.z1 > z0 && c.z0 < z1 && (c.y0 || 0) < 1.5) || keepClear.some((c) => c.x1 > x0 && c.x0 < x1 && c.z1 > z0 && c.z0 < z1) || groundHoles.some((c) => c.x1 > x0 && c.x0 < x1 && c.z1 > z0 && c.z0 < z1);
+  for (const Y of courtyards) {
+    let have = hideSpots.filter((S) => S.x > Y.x0 && S.x < Y.x1 && S.z > Y.z0 && S.z < Y.z1).length;
+    for (let t = 0; t < 10 && have < 2; t++) {
+      const hsh = Math.abs(Math.sin((Y.x0 + t * 7.13) * 12.9898 + (Y.z0 - t * 3.7) * 78.233) * 43758.5453) % 1, side = Math.floor(hsh * 4), u = (hsh * 13) % 1;
+      const alongX = side < 2, x = side === 2 ? Y.x0 + 0.85 : side === 3 ? Y.x1 - 0.85 : lerp(Y.x0 + 1.5, Y.x1 - 1.5, u), z = side === 0 ? Y.z0 + 0.85 : side === 1 ? Y.z1 - 0.85 : lerp(Y.z0 + 1.5, Y.z1 - 1.5, u);
+      const lx = alongX ? 1.0 : 0.7, lz = alongX ? 0.7 : 1.0;
+      if (x - lx < Y.x0 + 0.05 || x + lx > Y.x1 - 0.05 || z - lz < Y.z0 + 0.05 || z + lz > Y.z1 - 0.05) continue;
+      if (Y.alleys.some((A) => x > A.x0 - 2.5 && x < A.x1 + 2.5 && z > A.z0 - 2.5 && z < A.z1 + 2.5)) continue;
+      if (hit(x - lx - 0.3, x + lx + 0.3, z - lz - 0.3, z + lz + 0.3)) continue;
+      dumpster(x, z, alongX); have++;
+    }
+  }
+});
 void CITIES;
 
 // ---------------------------------------------------------------------
