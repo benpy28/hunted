@@ -5,6 +5,8 @@
 //    see you at all, for as long as your breath lasts. Get out by the steps in the corners, or jump at the side.
 //  - The lifeguard sits up on the high chair with a whistle. No running on the side. No swimming without a
 //    ticket. Twice and she gets on the phone.
+//  - THE TWISTER: a yellow tube slide from a tower in the corner, round twice and out into the deep end.
+//    Up the stairs, E at the top. Inside the tube nobody can see you, and it's the quickest way down.
 //  - On the hour, the wave machine. A swim washes the bin smell off, but you come out dripping, and a wet
 //    person in the street gets noticed. Towels at reception.
 import * as THREE from '../vendor/three.module.min.js';
@@ -30,7 +32,7 @@ export const bathsB = {
   cubicles: [], lockers: [], built: false,
 };
 export const btRoofs = [];
-export const BT_STATE = { paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 9 };
+export const BT_STATE = { slide: null, slides: 0, kidSlides: 0, paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 9 };
 export const inBaths = (x, z) => x > bathsB.x0 && x < bathsB.x1 && z > bathsB.z0 && z < bathsB.z1;
 export const inHall = (x, z) => x > bathsB.x0 && x < bathsB.hallX && z > bathsB.z0 && z < bathsB.z1;
 const btIn = (R, x, z, pad = 0) => x > R.x0 + pad && x < R.x1 - pad && z > R.z0 + pad && z < R.z1 - pad;
@@ -132,7 +134,31 @@ function btBuildFoyer() {
   for (const [x, z] of [[-52, 367], [-48.5, 367], [-52, 370.5]]) { propBuf.cyl(x, z, 0.05, 0.05, 0, 0.75, 0x2a2a2e, 6); propBuf.cyl(x, z, 0.5, 0.5, 0.75, 0.8, 0xf0f0f0, 10); addCollider(x - 0.3, x + 0.3, z - 0.3, z + 0.3, 0.8); }
   propBuf.box(B.hallX - 0.2, B.hallX - 0.1, 1.0, 3.0, 364.5, 379, 0x9ac8e0, { glass: true });
 }
-worldHooks.beforeBake.push(() => { buildBathsShell(); buildPoolHall(); btBuildFoyer(); bathsB.built = true; });
+// THE TWISTER: stairs up the west wall to a platform, a tube that loops round and drops into the deep end
+export const btSlide = { top: { x: -95.2, y: 6.0, z: 371.3 }, curve: null, len: 0, built: false };
+const BT_SLIDE_PTS = [[-94.4, 6.2, 371.3], [-91, 5.6, 371.0], [-87.6, 5.0, 373.4], [-87.6, 4.4, 377.4], [-91, 3.8, 379], [-93.2, 3.3, 376.6], [-92.8, 2.9, 372.6], [-91, 2.5, 368.4], [-90, 2.0, 364], [-89.6, 1.3, 360.4]];
+function btBuildSlide() {
+  const B = bathsB;
+  // the stairs, rising north along the west wall, and the platform at the top
+  for (let k = 1; k <= 16; k++) btDeck(-99.8, -98, 359 + (k - 1) * 0.6, 359 + k * 0.6, BT_DECK + k * 0.3, k % 2 ? 0xe0c020 : 0xd8b018);
+  btDeck(-100, -94, 368.6, 374, 6.0, 0x2a7ab0);
+  for (const [x0, x1, z0, z1] of [[-100, -94, 373.9, 374], [-98, -94, 368.6, 368.7]]) { propBuf.box(x0, x1, 6.0, 7.0, z0, z1, 0xd02a2a); addCollider(x0, x1, z0, z1, 7.0, { y0: 6.0 }); }
+  propBuf.box(-94.1, -94, 6.0, 7.0, 368.6, 370.4, 0xd02a2a); addCollider(-94.1, -94, 368.6, 370.4, 7.0, { y0: 6.0 }); propBuf.box(-94.1, -94, 6.0, 7.0, 372.2, 374, 0xd02a2a); addCollider(-94.1, -94, 372.2, 374, 7.0, { y0: 6.0 });
+  btPlane(3, 0.7, textTex(320, 70, '#e0c020', '#1a4a8a', ['THE TWISTER'], 'bold 44px Arial Black, Arial'), -97, 7.4, 368.5, Math.PI);
+  // the tube
+  const curve = new THREE.CatmullRomCurve3(BT_SLIDE_PTS.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+  btSlide.curve = curve; btSlide.len = curve.getLength();
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 140, 0.62, 12, false), new THREE.MeshLambertMaterial({ color: 0xf0c020, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false }));
+  scene.add(tube); btSlide.tube = tube;
+  // posts holding it up, and where it's low enough to walk into, it's solid
+  for (let k = 1; k < 30; k++) {
+    const p = curve.getPointAt(k / 30);
+    if (k % 4 === 0) propBuf.box(p.x - 0.08, p.x + 0.08, BT_DECK, p.y - 0.6, p.z - 0.08, p.z + 0.08, 0xc0c0c8);
+    if (p.y < 3.4 && !poolAt(p.x, p.z)) addCollider(p.x - 0.55, p.x + 0.55, p.z - 0.55, p.z + 0.55, p.y + 0.5, { y0: BT_DECK });
+  }
+  btSlide.built = true;
+}
+worldHooks.beforeBake.push(() => { buildBathsShell(); buildPoolHall(); btBuildFoyer(); btBuildSlide(); bathsB.built = true; });
 
 // =====================================================================
 // Swimmers doing lengths, the lifeguard, the reception and cafe staff
@@ -170,6 +196,19 @@ function btAnimSwimmers(dt, K, show) {
   }
 }
 
+let btSlider = null;
+function btKidSlide(dt, K, on) {
+  if (!btSlide.built) return;
+  if (!btSlider) { const p = buildPerson({ skin: mpick(SKINS), hair: mpick(BT_CAPS), shirt: 0x2a8a6a, pants: 0x1a1a2a }); p.group.scale.setScalar(0.75); p.group.visible = false; scene.add(p.group); btSlider = { p, s: -1, waitT: mr(4, 10) }; }
+  const S = btSlider;
+  if (!on) { S.p.group.visible = false; S.s = -1; return; }
+  if (S.s < 0) { S.waitT -= dt; if (S.waitT <= 0) { S.s = 0; S.v = 2.5; if (K.near(-90, 372, 30)) K.say({ g: S.p.group }, mpick(['WHEEEE!', 'WATCH ME!', 'MUM! MUM! LOOK!'])); } return; }
+  const C = btSlide.curve, a = C.getTangentAt(Math.min(0.999, S.s / btSlide.len));
+  S.v = clamp(S.v + (-a.y * 9.8 - 0.1 * S.v) * dt, 3, 11); S.s += S.v * dt;
+  if (S.s >= btSlide.len) { S.s = -1; S.waitT = mr(12, 30); S.p.group.visible = false; BT_STATE.kidSlides++; if (K.near(-90, 360, 30) && K.sfx.splash) K.sfx.splash(true); return; }
+  const p = C.getPointAt(S.s / btSlide.len); S.p.group.visible = true; S.p.group.position.set(p.x, p.y - 0.55, p.z); S.p.group.rotation.y = Math.atan2(a.x, a.z); S.p.legL.rotation.x = S.p.legR.rotation.x = -1.4; S.p.armL.rotation.x = S.p.armR.rotation.x = -2.8;
+}
+
 // =====================================================================
 // You, in the water
 // =====================================================================
@@ -179,7 +218,25 @@ function btOverlay(on, deep) {
   btTint.style.display = on ? 'block' : 'none'; if (on) btTint.style.opacity = String(0.7 + 0.3 * deep);
 }
 const btBall = { x: 0, z: 0 };
+// going down the slide: speed builds with the drop, then SPLASH into the deep end
+function btSlideRide(dt, K) {
+  const S = BT_STATE.slide, P = K.player, C = btSlide.curve;
+  const a = C.getTangentAt(Math.min(0.999, S.s / btSlide.len));
+  S.v = clamp(S.v + (-a.y * 9.8 - 0.1 * S.v) * dt, 3, 11);
+  S.s += S.v * dt;
+  if (S.s >= btSlide.len) {
+    BT_STATE.slide = null; BT_STATE.slides++;
+    const e = C.getPointAt(1); P.x = e.x - 0.2; P.z = e.z - 1.2; P.y = 0.4; P.vx = P.vz = 0; P.vy = -2; P.crouch = 0;
+    BT_STATE.splashY = 3.2; K.sfx.splash && K.sfx.splash(true); K.showMsg(mpick(['SPLASH!', 'WHOOSH... SPLASH!', 'AGAIN! AGAIN!']), 1.2);
+    return false;
+  }
+  const p = C.getPointAt(S.s / btSlide.len);
+  P.x = p.x; P.z = p.z; P.y = p.y - 0.55; P.vx = P.vz = P.vy = 0; P.crouch = 0.65; P.sprinting = false;
+  P.yaw = Math.atan2(-a.x, -a.z); P.pitch = clamp(Math.asin(clamp(a.y, -1, 1)) * 0.8, -0.6, 0.2);
+  return true;
+}
 function btRide(dt, K) {
+  if (BT_STATE.slide) return btSlideRide(dt, K);
   const P = K.player, I = K.input, B = bathsB;
   const R = !P.car && !P.hide && P.alive ? poolAt(P.x, P.z) : null;
   if (!R || P.y > R.floor + 0.88 || P.vy > 0.5) { if (BT_STATE.swim) btLeaveWater(K); return false; }
@@ -273,6 +330,8 @@ function btCafeMenu(K) {
 }
 function btUseTarget(K) {
   const P = K.player, B = bathsB;
+  if (BT_STATE.slide) return { kind: 'sliding', first: true };
+  if (btSlide.built && !P.car && !P.hide && P.y > 5.5 && Math.hypot(P.x - btSlide.top.x, P.z - btSlide.top.z) < 1.6) return { kind: 'slide' };
   if (!B.built || P.car || P.mode !== 'move' || P.hide || !inBaths(P.x, P.z) || P.y > 0.8) return null;
   if (Math.hypot(P.x - B.desk.x, P.z - B.desk.z) < 1.8) return { kind: 'desk' };
   if (Math.hypot(P.x - B.cafe.x, P.z - B.cafe.z) < 2.4 && P.z < 374) return { kind: 'cafe' };
@@ -280,11 +339,15 @@ function btUseTarget(K) {
 }
 function btUsePrompt(T, K, useK) {
   const open = btOpen(K.G.day, K.hour);
+  if (T.kind === 'slide') return open ? `${useK} to go down THE TWISTER` : 'The slide is shut';
+  if (T.kind === 'sliding') return 'WHEEEEE';
   if (T.kind === 'desk') return open ? `${useK} for reception (swim, cap, goggles, towels)` : 'HALDEN BATHS is shut';
   if (T.kind === 'cafe') return open ? `${useK} for the poolside cafe` : 'The cafe is shut';
   return '';
 }
 function btUse(T, K) {
+  if (T.kind === 'sliding') return;
+  if (T.kind === 'slide') { if (!btOpen(K.G.day, K.hour)) { K.showMsg('THE SLIDE\'S SHUT. THERE\'S A CHAIN ACROSS IT', 1.6); return; } BT_STATE.slide = { s: 0, v: 2.5 }; K.sfx.whoosh && K.sfx.whoosh(); return; }
   if (!btOpen(K.G.day, K.hour)) { K.showMsg('SHUT. OPEN 7 TILL 9 (SUNDAYS 8 TILL 6)', 1.8); return; }
   if (T.kind === 'desk') { K.openMenu({ name: 'HALDEN BATHS RECEPTION', kind: 'baths', blurbs: ['"JUST THE ONE, IS IT?"', '"LOCKERS TAKE A COIN, YOU GET IT BACK."', '"NO BOMBING. I MEAN IT."'] }, btDeskMenu(K)); return; }
   if (T.kind === 'cafe') K.openMenu({ name: 'THE POOLSIDE CAFE', kind: 'baths', blurbs: ['"CHIPS?"', '"THE HOT CHOCOLATE MACHINE IS WORKING TODAY. FOR ONCE."'] }, btCafeMenu(K));
@@ -316,6 +379,7 @@ function btUpdate(dt, K) {
     a.needsUpdate = true;
   }
   btAnimSwimmers(dt, K, open && K.near(-77, 352, 70));
+  btKidSlide(dt, K, open && K.near(-77, 352, 60));
   if (!B.welcomed || B.welcomed !== day) { if (open && K.near(-44, 352, 26)) { B.welcomed = day; K.banner('HALDEN BATHS<small>SWIM $3 · WAVES ON THE HOUR · NO RUNNING</small>', 4); } }
   // the lifeguard, up on the chair, watching the water and the side
   const G = B.guard; if (!G || !open) return;
@@ -352,9 +416,9 @@ function btConspic(K) {
 export const baths = {
   name: 'baths', roofs: btRoofs,
   useTarget: btUseTarget, usePrompt: btUsePrompt, use: btUse, conspic: btConspic, update: btUpdate, ride: btRide, plan: () => false,
-  unseen: () => BT_STATE.under,
-  reset() { Object.assign(BT_STATE, { paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 0 }); btOverlay(false); bathsB.welcomed = 0; if (bathsB.guard) bathsB.guard.warnT = 0; },
+  unseen: () => BT_STATE.under || !!BT_STATE.slide,
+  reset() { Object.assign(BT_STATE, { slide: null, slides: 0, kidSlides: 0, paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 0 }); btOverlay(false); bathsB.welcomed = 0; if (bathsB.guard) bathsB.guard.warnT = 0; },
   diary(K) { const b = []; if (BT_STATE.paidDay === K.G.day) b.push('A SWIM AT HALDEN BATHS (PAID FOR THE DAY)'); if (BT_STATE.wetT > 0) b.push('STILL DRIPPING'); return b; },
   debug: () => ({ built: bathsB.built, swimmers: btSwimmers.length, staff: btStaff.length, cubicles: bathsB.cubicles.length, lockers: bathsB.lockers.length, ...BT_STATE }),
-  bathsB, BT_STATE, BT_CLEAR, poolAt, inBaths, inHall, btOpen, waveNow, btDeskMenu, btCafeMenu, BT_WATER, BT_DECK,
+  bathsB, btSlide, BT_STATE, BT_CLEAR, poolAt, inBaths, inHall, btOpen, waveNow, btDeskMenu, btCafeMenu, BT_WATER, BT_DECK,
 };

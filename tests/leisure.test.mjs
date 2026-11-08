@@ -187,3 +187,22 @@ test('the baths: the lifeguard blows her whistle at you for running on the side'
   });
   assert.equal(s.warned, 1, 'NO RUNNING!');
 });
+
+test('THE TWISTER: up the stairs to the top, E, round the tube unseen, and out into the deep end swimming', async () => {
+  const s = await g.run((H) => {
+    H.fresh(H); const B = H.baths, K = H.TDK, T = B.btSlide;
+    // walk up the stairs from the bottom
+    H.goTo(H, -98.9, 358.5, 1.2); H.player.yaw = Math.PI; H.input.fwd = 1;
+    H.stepAt(H, 6, 12, () => H.player.y > 5.8); H.input.fwd = 0;
+    const climbed = H.player.y;
+    H.goTo(H, T.top.x, T.top.z, 6.0); H.stepAt(H, 0.2, 12);
+    const tgt = B.useTarget(K); H.useAction();
+    const sliding = !!B.BT_STATE.slide; let hidden = false, maxV = 0;
+    H.stepAt(H, 12, 12, () => { if (B.BT_STATE.slide) { maxV = Math.max(maxV, B.BT_STATE.slide.v); hidden = hidden || B.unseen(); } return !B.BT_STATE.slide && B.BT_STATE.swim; });
+    return { built: T.built, len: T.len, climbed, tgt: tgt && tgt.kind, sliding, hidden, maxV, slides: B.BT_STATE.slides, swim: B.BT_STATE.swim, inPool: !!B.poolAt(H.player.x, H.player.z) };
+  });
+  assert.ok(s.built); assert.ok(s.len > 30, `a long tube (${s.len.toFixed(0)} m)`);
+  assert.ok(s.climbed > 5.8, `the stairs go up to the top (${s.climbed.toFixed(2)})`);
+  assert.equal(s.tgt, 'slide'); assert.ok(s.sliding); assert.ok(s.hidden, 'nobody can see you in the tube'); assert.ok(s.maxV > 5, `picks up speed (${s.maxV.toFixed(1)})`);
+  assert.equal(s.slides, 1); assert.ok(s.swim && s.inPool, 'out into the pool, swimming');
+});
