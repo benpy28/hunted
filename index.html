@@ -11,28 +11,27 @@
 
 <!-- In-game HUD -->
 <div id="hud" class="hidden">
-  <div id="hud-left">
+  <div id="hud-card">
     <div id="hud-city">PORT HALDEN</div>
-    <div class="hud-label">DAY</div>
-    <div id="hud-day"><span id="hud-day-num">1</span><span id="hud-day-total"> / 30</span></div>
-    <div class="hud-label">REWARD</div>
-    <div id="hud-reward">$1,000,000,000</div>
-    <div id="hud-time">00:00 survived</div>
-    <div id="hud-kills"></div>
+    <div id="hud-dayrow"><span id="hud-day">DAY 1 / 30</span><span id="hud-clock">16:30</span></div>
+    <div id="hud-profile">
+      <div id="hud-stars"></div>
+      <div id="hud-pname">LOW PROFILE</div>
+      <div id="hud-heat"><div id="hud-heatfill"></div></div>
+    </div>
+    <div id="hud-air"></div>
+    <div id="hud-foot"><span id="hud-time">00:00 survived</span> <span id="hud-kills"></span></div>
   </div>
 
-  <div id="hud-alert" class="calm">NOBODY SEES YOU</div>
+  <div id="hud-alert" class="calm">HIDDEN</div>
   <div id="hud-msg"></div>
   <div id="hud-banner"></div>
-
   <canvas id="minimap" width="170" height="170"></canvas>
-  <div id="hud-clock">16:00</div>
 
   <div id="hud-bars">
     <div class="bar"><div class="bar-label">HEALTH</div><div class="bar-track"><div id="bar-health" class="bar-fill"></div></div></div>
     <div class="bar"><div class="bar-label">STAMINA</div><div class="bar-track"><div id="bar-stamina" class="bar-fill"></div></div></div>
   </div>
-
   <div id="hud-ammo"></div>
   <div id="hud-prompt"></div>
   <div id="carbar" class="hidden"><div class="bar-label">CAR</div><div class="bar-track"><div id="bar-car" class="bar-fill"></div></div></div>
@@ -50,21 +49,22 @@
   <button id="btn-jump" class="tbtn">JUMP</button>
   <button id="btn-shove" class="tbtn">SHOVE</button>
   <button id="btn-pause" class="tbtn small">II</button>
+  <button id="btn-map" class="tbtn small">MAP</button>
 </div>
 
 <!-- Menus -->
 <div id="menu" class="overlay">
   <div class="panel">
     <h1>HUNTED</h1>
-    <p class="tag">Someone put a bounty on your head. Now every single person in Port Halden wants it.</p>
-    <p class="tag">Survive <b>30 days</b>. Nobody is on your side.</p>
+    <p class="tag">Someone put a bounty on your head. Now everyone in Port Halden, Ashford and Saltmarsh Docks wants it.</p>
+    <p class="tag">Survive <b>30 days</b>. The louder you are, the more police helicopters and drones come looking.</p>
     <button id="btn-play" class="big">PLAY</button>
     <div id="controls-desktop" class="controls">
       <div><b>WASD</b> move</div><div><b>Mouse</b> look</div>
       <div><b>Shift</b> sprint</div><div><b>Space</b> jump</div>
       <div><b>Click</b> shoot</div><div><b>R</b> reload</div>
       <div><b>F / Right click</b> shove</div><div><b>E</b> steal / leave car</div>
-      <div><b>Esc</b> pause</div>
+      <div><b>M</b> big map</div><div><b>Esc</b> pause</div>
     </div>
     <div id="controls-touch" class="controls hidden">
       <div>Left thumb: move</div><div>Right thumb: look</div>

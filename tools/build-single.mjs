@@ -17,7 +17,12 @@ const entries = list.split(',').map((s) => {
   return m.length === 2 ? `${m[1]}:${m[0]}` : `${m[0]}:${m[0]}`;
 });
 
-const game = read('src/game.js').replace(/^import \* as THREE from .*$/m, '');
+// modules in dependency order; strip imports/exports so they share one scope
+const MODULES = ['core', 'world', 'audio', 'fx', 'people', 'game'];
+const game = MODULES.map((m) => read(`src/${m}.js`)
+  .replace(/^import [\s\S]*? from '[^']+';$/gm, '')
+  .replace(/^export (const|let|function|class) /gm, '$1 ')
+  .replace(/^export \{[^}]*\};?$/gm, '')).join('\n');
 const css = read('src/style.css');
 let html = read('index.html');
 html = html.replace(/<link rel="stylesheet"[^>]*>/, () => `<style>\n${css}\n</style>`);
