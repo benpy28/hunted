@@ -1,11 +1,12 @@
 // Shops: a little strip of walk-in shops in every town (a gun shop, a place to hire help, and a costume
 // shop), each with a shopkeeper behind the counter, plus the shop menu you get at the counter.
 import * as THREE from '../vendor/three.module.min.js';
-import { $ } from './core.js';
+import { $, scene } from './core.js';
 import { CITIES, siteOverrides, blockKey, addRoof, roofBuf, propBuf, glowBuf, parapet, parkedSpots, addTree, worldHooks, blockRects, pointBlocked, addCollider, SW } from './world.js';
 import { srand } from './core.js';
 import { solid, sign, lamp, ib, floorB } from './interiors.js';
 import { buildPerson, SKINS, HAIRS } from './people.js';
+import { newsMat } from './news.js';
 
 export const shopSpots = []; // {x, z, y, r, kind, name, city, face}
 export const atmSpots = [];  // {x, z, nx, nz} cash machines on the pavement (contracts)
@@ -62,6 +63,13 @@ for (const S of STRIPS) {
       const cz = zB + front * 2.4;
       solid(ib, um - 2.6, um + 2.6, 0.2, 1.15, Math.min(cz, cz - front * 0.8), Math.max(cz, cz - front * 0.8), st.counter);
       ib.box(um - 2.7, um + 2.7, 1.15, 1.22, Math.min(cz, cz - front * 0.9), Math.max(cz, cz - front * 0.9) , 0xd8d0c0);
+      { // a telly on a bracket over the counter, tuned to Channel 9
+        const tvz = cz + front * 0.6, tvx = um + 2.0;
+        ib.box(tvx - 0.78, tvx + 0.78, 2.95, 3.85, Math.min(tvz, tvz - front * 0.12), Math.max(tvz, tvz - front * 0.12), 0x1a1a1e);
+        ib.box(tvx - 0.04, tvx + 0.04, 3.85, H - 0.3, tvz - front * 0.1 - 0.04, tvz - front * 0.1 + 0.04, 0x2a2a2e);
+        const tv = new THREE.Mesh(new THREE.PlaneGeometry(1.44, 0.78), newsMat);
+        tv.position.set(tvx, 3.4, tvz + front * 0.01); tv.rotation.y = front > 0 ? 0 : Math.PI; tv.matrixAutoUpdate = false; tv.updateMatrix(); scene.add(tv);
+      }
       lamp(um - 3, um + 3, H - 0.3, Math.min(zF, zB) + 2, Math.max(zF, zB) - 2, 0xfff4dc);
       keepers.push({ x: um, z: zB + front * 1.0, y: 0.2, face: S.face, kind });
       shopSpots.push({ x: um, z: cz + front * 1.1, y: 0.2, r: 2.4, kind, name, city: S.city.name, face: S.face });

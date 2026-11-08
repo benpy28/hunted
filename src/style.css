@@ -167,3 +167,14 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 #outfit.o-tache .tache { display: block; left: 50%; bottom: -4vh; width: 36vw; height: 10vh; transform: translateX(-50%); border-radius: 50% 50% 40% 40%; background: #3a2412; filter: blur(7px); }
 #outfit.o-beard .beard { display: block; left: 50%; bottom: -10vh; width: 60vw; height: 22vh; transform: translateX(-50%); border-radius: 50%; background: #d8d8d8; filter: blur(8px); }
 .is-touch #outfit .tache, .is-touch #outfit .beard, .is-touch #outfit .nose { opacity: .7; }
+#sleep { position: absolute; inset: 0; background: #05060a; opacity: 0; pointer-events: none; transition: opacity .5s; display: flex; align-items: center; justify-content: center; z-index: 5; }
+#sleep.show { opacity: 1; transition: opacity .25s; }
+#sleep span { color: #c8d0ff; font: bold 64px Arial, sans-serif; letter-spacing: 12px; animation: zzz 1.2s ease-in-out infinite alternate; }
+@keyframes zzz { from { transform: translateY(6px); opacity: .5; } to { transform: translateY(-6px); opacity: 1; } }
+#hud-sus { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #ffcf7a; margin-top: 6px; display: flex; align-items: center; gap: 8px; }
+#hud-sus:empty { display: none; }
+#hud-wx { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #9ad0ff; margin-top: 6px; }
+#hud-wx:empty { display: none; }
+#hud-sus span { flex: 1; height: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+#hud-sus i { display: block; height: 100%; background: linear-gradient(90deg, #ffcf7a, #ff7a4a); }
+#btn-super { margin-top: 10px; background: linear-gradient(90deg, #d0202a, #ff6a3a); color: #fff; }

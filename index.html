@@ -11,6 +11,7 @@
 
 <!-- In-game HUD -->
 <div id="hud" class="hidden">
+  <div id="sleep"><span>Zzz</span></div>
   <div id="outfit"><div class="hat"></div><div class="wig"></div><div class="glasses"></div><div class="nose"></div><div class="tache"></div><div class="beard"></div></div>
   <div id="hud-card">
     <div id="hud-city">PORT HALDEN</div>
@@ -21,6 +22,8 @@
       <div id="hud-heat"><div id="hud-heatfill"></div></div>
     </div>
     <div id="hud-air"></div>
+    <div id="hud-wx"></div>
+    <div id="hud-sus"></div>
     <div id="hud-disg"></div>
     <div id="hud-foot"><span id="hud-time">00:00 survived</span> <span id="hud-kills"></span></div>
   </div>
@@ -64,8 +67,11 @@
   <div class="panel">
     <h1>HUNTED</h1>
     <p class="tag">Someone put a bounty on your head. Now everyone in Port Halden, Ashford and Saltmarsh Docks wants it.</p>
-    <p class="tag">Survive <b>30 days</b>. The louder you are, the more police helicopters and drones come looking.</p>
+    <p class="tag">Survive <b>30 days</b>. Keep your head down and you can blend into the crowd: walk, keep your weapon away and don't hang about. Running, waving guns and spending cash make people wonder. Police helicopters and drones only watch, and they lose you between buildings.</p>
+    <p class="tag small">Hide out in your nan's old flat (the white house on the map). Get in unseen and you can lie low, raid the stash and nap.</p>
     <button id="btn-play" class="big">PLAY</button>
+    <button id="btn-super" class="big super">SUPERPOWER MODE</button>
+    <p class="tag small">Superpower mode: you are the city's greatest hero, and everyone is terrified of you. Click for laser eyes, Space twice to fly, C in the air to slam down, E to grab someone (click to throw), F to swat people and cars. More or less unkillable.</p>
     <div id="controls-desktop" class="controls">
       <div><b>WASD</b> move</div><div><b>Mouse</b> look</div>
       <div><b>Shift</b> sprint</div><div><b>Space</b> jump, climb, vault</div>
@@ -90,6 +96,7 @@
     <h2>PAUSED</h2>
     <p class="tag">They're still out there.</p>
     <button id="btn-resume" class="big">RESUME</button>
+    <button id="btn-gfx" class="ghost">GRAPHICS: HIGH</button>
     <button id="btn-quit" class="ghost">QUIT TO MENU</button>
   </div>
 </div>

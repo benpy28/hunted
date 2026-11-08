@@ -174,6 +174,17 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 #outfit.o-tache .tache { display: block; left: 50%; bottom: -4vh; width: 36vw; height: 10vh; transform: translateX(-50%); border-radius: 50% 50% 40% 40%; background: #3a2412; filter: blur(7px); }
 #outfit.o-beard .beard { display: block; left: 50%; bottom: -10vh; width: 60vw; height: 22vh; transform: translateX(-50%); border-radius: 50%; background: #d8d8d8; filter: blur(8px); }
 .is-touch #outfit .tache, .is-touch #outfit .beard, .is-touch #outfit .nose { opacity: .7; }
+#sleep { position: absolute; inset: 0; background: #05060a; opacity: 0; pointer-events: none; transition: opacity .5s; display: flex; align-items: center; justify-content: center; z-index: 5; }
+#sleep.show { opacity: 1; transition: opacity .25s; }
+#sleep span { color: #c8d0ff; font: bold 64px Arial, sans-serif; letter-spacing: 12px; animation: zzz 1.2s ease-in-out infinite alternate; }
+@keyframes zzz { from { transform: translateY(6px); opacity: .5; } to { transform: translateY(-6px); opacity: 1; } }
+#hud-sus { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #ffcf7a; margin-top: 6px; display: flex; align-items: center; gap: 8px; }
+#hud-sus:empty { display: none; }
+#hud-wx { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #9ad0ff; margin-top: 6px; }
+#hud-wx:empty { display: none; }
+#hud-sus span { flex: 1; height: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+#hud-sus i { display: block; height: 100%; background: linear-gradient(90deg, #ffcf7a, #ff7a4a); }
+#btn-super { margin-top: 10px; background: linear-gradient(90deg, #d0202a, #ff6a3a); color: #fff; }
 
 </style>
 </head>
@@ -182,6 +193,7 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 
 <!-- In-game HUD -->
 <div id="hud" class="hidden">
+  <div id="sleep"><span>Zzz</span></div>
   <div id="outfit"><div class="hat"></div><div class="wig"></div><div class="glasses"></div><div class="nose"></div><div class="tache"></div><div class="beard"></div></div>
   <div id="hud-card">
     <div id="hud-city">PORT HALDEN</div>
@@ -192,6 +204,8 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
       <div id="hud-heat"><div id="hud-heatfill"></div></div>
     </div>
     <div id="hud-air"></div>
+    <div id="hud-wx"></div>
+    <div id="hud-sus"></div>
     <div id="hud-disg"></div>
     <div id="hud-foot"><span id="hud-time">00:00 survived</span> <span id="hud-kills"></span></div>
   </div>
@@ -235,8 +249,11 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
   <div class="panel">
     <h1>HUNTED</h1>
     <p class="tag">Someone put a bounty on your head. Now everyone in Port Halden, Ashford and Saltmarsh Docks wants it.</p>
-    <p class="tag">Survive <b>30 days</b>. The louder you are, the more police helicopters and drones come looking.</p>
+    <p class="tag">Survive <b>30 days</b>. Keep your head down and you can blend into the crowd: walk, keep your weapon away and don't hang about. Running, waving guns and spending cash make people wonder. Police helicopters and drones only watch, and they lose you between buildings.</p>
+    <p class="tag small">Hide out in your nan's old flat (the white house on the map). Get in unseen and you can lie low, raid the stash and nap.</p>
     <button id="btn-play" class="big">PLAY</button>
+    <button id="btn-super" class="big super">SUPERPOWER MODE</button>
+    <p class="tag small">Superpower mode: you are the city's greatest hero, and everyone is terrified of you. Click for laser eyes, Space twice to fly, C in the air to slam down, E to grab someone (click to throw), F to swat people and cars. More or less unkillable.</p>
     <div id="controls-desktop" class="controls">
       <div><b>WASD</b> move</div><div><b>Mouse</b> look</div>
       <div><b>Shift</b> sprint</div><div><b>Space</b> jump, climb, vault</div>
@@ -261,6 +278,7 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
     <h2>PAUSED</h2>
     <p class="tag">They're still out there.</p>
     <button id="btn-resume" class="big">RESUME</button>
+    <button id="btn-gfx" class="ghost">GRAPHICS: HIGH</button>
     <button id="btn-quit" class="ghost">QUIT TO MENU</button>
   </div>
 </div>
@@ -1429,10 +1447,11 @@ function genCountryside() {
 
 // ---------------------------------------------------------------------
 const lanes = [];
+const baked = {}; // the big merged meshes, for weather and power cuts to tweak
 function generateWorld() {
   const gb = new GeoBuf();
   for (const q of rectMinus({ x0: -2650, x1: 3350, z0: -2670, z1: 3330 }, groundHoles)) gb.flat(q.x0, q.x1, q.z0, q.z1, 0, 0x5a7d45);
-  gb.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  baked.grass = gb.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   genMetro(PH); genSuburb(ASH); genIndustrial(DOCKS);
   for (const h of HIGHWAYS) genHighway(h);
   genCountryside();
@@ -1440,10 +1459,10 @@ function generateWorld() {
   for (const f of Object.values(FAC)) f.buf.build(f.mat);
   roofBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   propBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
-  glowBuf.build(new THREE.MeshBasicMaterial({ vertexColors: true }));
-  shopBuf.build(new THREE.MeshBasicMaterial({ map: shopTex, vertexColors: true }));
-  markBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
-  groundBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  baked.glow = glowBuf.build(new THREE.MeshBasicMaterial({ vertexColors: true }));
+  baked.shop = shopBuf.build(new THREE.MeshBasicMaterial({ map: shopTex, vertexColors: true }));
+  baked.mark = markBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  baked.ground = groundBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true }));
   waterBuf.build(new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x0a1a2a }));
   lanes.push(...laneMap.values());
   buildBuckets();
@@ -1789,6 +1808,137 @@ function los3D(ax, ay, az, bx, by, bz) {
   _o.set(ax, ay, az); _d.set(bx - ax, by - ay, bz - az);
   const dist = _d.length(); _d.divideScalar(dist || 1);
   return raycastWorld(_o, _d, dist).t >= dist - 0.6;
+}
+
+// News: Channel 9 runs on the billboards and on TVs around town. When nobody knows who you are it's
+// pie contests and the weather; as your profile climbs, more screens switch over to you, with a police
+// sketch of the look people last clocked you in, where you were last seen and a crawl along the bottom.
+
+
+
+const NW = 512, NH = 256;
+const newsCanvas = document.createElement('canvas'); newsCanvas.width = NW; newsCanvas.height = NH;
+const nctx = newsCanvas.getContext('2d');
+const newsTex = new THREE.CanvasTexture(newsCanvas);
+newsTex.colorSpace = THREE.SRGBColorSpace;
+const newsMat = new THREE.MeshBasicMaterial({ map: newsTex });
+const adMaps = adMats.map((m) => m.map);
+// screens switch to the news in this order as you get more wanted
+const NEWS_ORDER = [3, 6, 0, 5, 1, 7, 2, 4];
+const NEWS_SCREENS = [1, 2, 4, 5, 7, 8];
+
+const FILLER = [
+  ['LOCAL NEWS', 'PENSIONER WINS PIE CONTEST', 'JUDGES "STILL FULL"'],
+  ['LOCAL NEWS', 'PIGEON ELECTED TO COUNCIL', 'PROMISES "MORE CRUMBS"'],
+  ['TRAFFIC', 'ROUTE 9 "FINE, MOSTLY"', 'SAYS MAN IN HELICOPTER'],
+  ['SPORT', 'HALDEN HARRIERS LOSE AGAIN', 'FANS "USED TO IT"'],
+  ['LOCAL NEWS', 'GIANT MARROW SETS RECORD', 'GROWER WEEPS WITH JOY'],
+  ['CONSUMER', 'FIZZO RECALLS "TOO FIZZY" CANS', 'NOBODY HURT, SOME BURPING'],
+];
+const HEADLINES = [
+  null,
+  ['DEVELOPING', 'SUSPICIOUS PERSON REPORTED', 'POLICE SAY "PROBABLY NOTHING"'],
+  ['BREAKING', 'BOUNTY TARGET SPOTTED', 'PUBLIC URGED TO KEEP EYES PEELED'],
+  ['BREAKING', 'WANTED: THIS FACE', 'BOUNTY RAISED AGAIN'],
+  ['BREAKING', 'MOST WANTED ON THE LOOSE', 'POLICE AIR UNITS UP'],
+  ['EMERGENCY', 'PUBLIC ENEMY NUMBER ONE', 'STAY INDOORS. OR DON\'T. WE\'RE NOT YOUR MUM.'],
+];
+const CRAWL_BITS = [
+  'DR. MOLAR REMINDS YOU TO FLOSS', 'BURGER BARN NOW OPEN TILL 5AM', 'SUNNY FM 98.4: ALL HITS, ALL DAY',
+  'SCIENTISTS CONFIRM WATER STILL WET', 'NEXA ONE PHONE "PROBABLY NOT LISTENING"', 'LOST CAT FOUND, WAS ON ROOF',
+];
+
+let crawlX = NW, flashT = 0, lastLevel = 0, fillerI = 0, fillerT = 0, newsAcc = 0;
+// draws a pencil sketch of a face wearing whatever disguise bits people last clocked you in
+function drawSketch(ctx, x, y, look) {
+  ctx.fillStyle = '#efe8d6'; ctx.fillRect(x, y, 128, 150);
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 3; ctx.fillStyle = '#d9cfba';
+  const cx = x + 64, cy = y + 82;
+  if (look.body === 'hivis') { ctx.fillStyle = '#e8e030'; ctx.fillRect(x + 20, y + 128, 88, 22); ctx.fillStyle = '#d9cfba'; }
+  else { ctx.beginPath(); ctx.moveTo(x + 18, y + 150); ctx.quadraticCurveTo(cx, y + 116, x + 110, y + 150); ctx.stroke(); }
+  ctx.beginPath(); ctx.ellipse(cx, cy, 32, 40, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // hair / hats
+  const hd = look.head;
+  if (hd === 'clownwig') { for (const [c, o] of [['#e23', -34], ['#fb2', -18], ['#2c4', 18], ['#36e', 34]]) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(cx + o, cy - 30, 16, 0, Math.PI * 2); ctx.fill(); } }
+  else if (hd === 'mullet') { ctx.fillStyle = '#5a3a1a'; ctx.fillRect(cx - 30, cy - 44, 60, 14); ctx.fillRect(cx + 22, cy - 34, 14, 48); ctx.fillRect(cx - 36, cy - 34, 14, 48); }
+  else if (hd === 'tophat') { ctx.fillStyle = '#222'; ctx.fillRect(cx - 40, cy - 44, 80, 8); ctx.fillRect(cx - 24, cy - 92, 48, 50); }
+  else if (hd === 'cowboy') { ctx.fillStyle = '#c87a2a'; ctx.beginPath(); ctx.ellipse(cx, cy - 38, 62, 12, 0, 0, Math.PI * 2); ctx.fill(); ctx.fillRect(cx - 28, cy - 76, 56, 38); }
+  else { ctx.beginPath(); ctx.moveTo(cx - 32, cy - 14); ctx.quadraticCurveTo(cx - 30, cy - 50, cx, cy - 44); ctx.quadraticCurveTo(cx + 34, cy - 50, cx + 32, cy - 14); ctx.stroke(); }
+  // eyes / glasses
+  const ey = look.eyes;
+  if (ey === 'specs') { ctx.lineWidth = 4; for (const o of [-15, 15]) { ctx.beginPath(); ctx.arc(cx + o, cy - 6, 14, 0, Math.PI * 2); ctx.stroke(); } ctx.lineWidth = 3; }
+  else if (ey === 'aviators') { ctx.fillStyle = '#7a6a2a'; for (const o of [-15, 15]) { ctx.beginPath(); ctx.ellipse(cx + o, cy - 4, 12, 9, 0, 0, Math.PI * 2); ctx.fill(); } }
+  else { ctx.fillStyle = '#333'; for (const o of [-12, 12]) { ctx.beginPath(); ctx.arc(cx + o, cy - 6, 3, 0, Math.PI * 2); ctx.fill(); } }
+  // face furniture
+  const fc = look.face;
+  if (fc === 'nose') { ctx.fillStyle = '#e88a9a'; ctx.beginPath(); ctx.arc(cx, cy + 8, 10, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#222'; ctx.fillRect(cx - 26, cy - 22, 20, 5); ctx.fillRect(cx + 6, cy - 22, 20, 5); }
+  else { ctx.beginPath(); ctx.moveTo(cx, cy - 2); ctx.lineTo(cx - 4, cy + 12); ctx.lineTo(cx + 3, cy + 12); ctx.stroke(); }
+  if (fc === 'tache') { ctx.fillStyle = '#3a2a1a'; ctx.beginPath(); ctx.ellipse(cx - 9, cy + 19, 11, 5, 0.3, 0, Math.PI * 2); ctx.ellipse(cx + 9, cy + 19, 11, 5, -0.3, 0, Math.PI * 2); ctx.fill(); }
+  if (fc === 'beard') { ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(cx - 30, cy + 10); ctx.lineTo(cx, cy + 68); ctx.lineTo(cx + 30, cy + 10); ctx.fill(); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.moveTo(cx - 10, cy + 25); ctx.lineTo(cx + 10, cy + 25); ctx.stroke(); }
+  ctx.fillStyle = '#c8202a'; ctx.fillRect(x, y + 132, 128, 18);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center'; ctx.fillText('POLICE SKETCH', cx, y + 142);
+}
+
+function drawNews(s, t) {
+  const ctx = nctx;
+  const lvl = s.super ? -1 : s.level;
+  ctx.fillStyle = lvl >= 3 ? '#2a0a0e' : '#0a1830'; ctx.fillRect(0, 0, NW, NH);
+  // header
+  const breaking = flashT > 0 && Math.sin(t * 10) > 0;
+  ctx.fillStyle = breaking ? '#fff' : '#c8202a'; ctx.fillRect(0, 0, NW, 40);
+  ctx.fillStyle = breaking ? '#c8202a' : '#fff'; ctx.font = 'bold 26px Arial'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  let head, title, sub;
+  if (lvl < 0) { head = 'LIVE'; title = 'THE PARAGON SAVES CITY'; sub = 'AGAIN. PROBABLY. NOBODY DARES SAY NO.'; }
+  else if (lvl === 0) [head, title, sub] = s.festival ? ['WHAT\'S ON', s.festival, 'IN ' + s.festivalCity + ' TODAY'] : FILLER[fillerI];
+  else [head, title, sub] = HEADLINES[lvl];
+  ctx.fillText('CHANNEL 9 · ' + head, 14, 21);
+  if (Math.sin(t * 4) > 0) { ctx.fillStyle = breaking ? '#c8202a' : '#fff'; ctx.beginPath(); ctx.arc(NW - 70, 20, 7, 0, Math.PI * 2); ctx.fill(); }
+  ctx.font = 'bold 20px Arial'; ctx.textAlign = 'right'; ctx.fillText(s.clock, NW - 10, 21);
+  // body
+  const showFace = lvl >= 1;
+  const tx = showFace ? 158 : 20;
+  if (showFace) drawSketch(ctx, 16, 52, s.look);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = 'bold 30px Arial Black, Arial';
+  ctx.fillText(title, tx, 76, NW - tx - 12);
+  ctx.fillStyle = '#9ad0ff'; ctx.font = 'italic 20px Georgia, serif';
+  ctx.fillText(sub, tx, 108, NW - tx - 12);
+  if (showFace) {
+    ctx.fillStyle = '#ffcf7a'; ctx.font = 'bold 22px Arial';
+    ctx.fillText('★'.repeat(lvl) + '☆'.repeat(5 - lvl), tx, 142);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 18px Arial';
+    ctx.fillText('LAST SEEN: ' + s.lastSeen, tx, 172, NW - tx - 12);
+    ctx.fillText(s.kills ? `${s.kills} PEOPLE "DEALT WITH" SO FAR` : 'DAY ' + s.day + ' OF THE MANHUNT', tx, 198, NW - tx - 12);
+  } else {
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Arial';
+    ctx.fillText('WEATHER: ' + s.weather, tx, 160);
+    ctx.fillText('DAY ' + s.day + '  ·  ' + s.city, tx, 190);
+  }
+  // crawl
+  ctx.fillStyle = '#f5c518'; ctx.fillRect(0, NH - 34, NW, 34);
+  ctx.fillStyle = '#111'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'left';
+  ctx.fillText(s.crawl, crawlX, NH - 16);
+  const w = ctx.measureText(s.crawl).width;
+  return w;
+}
+
+// s: { level, super, look, lastSeen, kills, day, clock, weather, city, festival, festivalCity, dark, crawl }
+function updateNews(dt, s) {
+  const t = performance.now() / 1000;
+  if (s.level > lastLevel) flashT = 4;
+  lastLevel = s.level; flashT = Math.max(0, flashT - dt);
+  fillerT -= dt; if (fillerT <= 0) { fillerT = 14; fillerI = (fillerI + 1) % FILLER.length; }
+  // more screens carry the story the more wanted you are; a power cut takes the boards out
+  const n = s.super ? 8 : NEWS_SCREENS[Math.min(s.level, 5)];
+  NEWS_ORDER.forEach((ai, k) => { const want = k < n ? newsTex : adMaps[ai]; if (adMats[ai].map !== want) { adMats[ai].map = want; adMats[ai].needsUpdate = true; } });
+  for (const m of adMats) m.color.setScalar(s.dark ? 0.08 : 1);
+  newsMat.color.setScalar(s.dark ? 0.05 : 1);
+  newsAcc += dt; if (newsAcc < 1 / 15) return; // 15 fps is plenty for a crawl
+  crawlX -= newsAcc * 70; newsAcc = 0;
+  s.crawl = s.crawl + '   ·   ' + CRAWL_BITS[Math.floor(t / 20) % CRAWL_BITS.length] + '   ·   ';
+  const w = drawNews(s, t);
+  if (crawlX < -w) crawlX = NW;
+  newsTex.needsUpdate = true;
 }
 
 // Explorable interiors: the Halden Metro subway, sewers under Ashford and the docks, the Halden Galleria
@@ -2329,6 +2479,26 @@ function setZipSound(v) {
   zipOsc.frequency.setTargetAtTime(400 + v * 90, actx.currentTime, 0.05);
   zipGain.gain.setTargetAtTime(v > 0 ? clamp(0.1 + v / 60, 0, 0.5) : 0, actx.currentTime, 0.08);
 }
+// superpower mode: screaming bystanders and eye lasers
+sfx.scream = () => { const f = 520 + Math.random() * 420; tone(f, 0.55, 'triangle', 0.06, 1.45); tone(f * 1.02, 0.55, 'sawtooth', 0.02, 1.45); };
+sfx.zap = () => { tone(1500 + Math.random() * 300, 0.07, 'sawtooth', 0.035, 0.5); };
+// weather: a rain hiss that follows the downpour, rolling thunder and festival fireworks
+let rainGain = null;
+function setRain(v) {
+  if (!actx) return;
+  if (!rainGain) {
+    if (!noiseBuf) noise(0.01, 0.0001);
+    const src = actx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200;
+    rainGain = actx.createGain(); rainGain.gain.value = 0;
+    src.connect(hp); hp.connect(lp); lp.connect(rainGain); rainGain.connect(master); src.start();
+  }
+  rainGain.gain.setTargetAtTime(clamp(v, 0, 0.4), actx.currentTime, 0.4);
+}
+sfx.thunder = (near) => { const d = near ? 0 : 0.6 + Math.random() * 1.2; if (near) noise(0.25, 0.6, 1800, 0.4); noise(2.6, near ? 0.75 : 0.45, 90, 0.5, d); tone(42, 2.2, 'sine', near ? 0.25 : 0.14, 0.7, d); };
+sfx.firework = () => { const d = 0.5 + Math.random() * 0.4; tone(900, 0.5, 'sine', 0.03, 2.5); noise(0.5, 0.45, 260, 0.5, d); noise(0.9, 0.12, 3200, 1, d + 0.05); };
+sfx.powerDown = () => { tone(220, 1.2, 'sawtooth', 0.08, 0.2); noise(0.3, 0.2, 400, 0.6); };
 
 // Effects: particles (steam, smoke, impact puffs) and bullet trails. No blood anywhere.
 
@@ -2702,6 +2872,7 @@ function parkourMove(dt, P, inp, sprint, speed, cb) {
 
 
 
+
 const shopSpots = []; // {x, z, y, r, kind, name, city, face}
 const atmSpots = [];  // {x, z, nx, nz} cash machines on the pavement (contracts)
 
@@ -2757,6 +2928,13 @@ for (const S of STRIPS) {
       const cz = zB + front * 2.4;
       solid(ib, um - 2.6, um + 2.6, 0.2, 1.15, Math.min(cz, cz - front * 0.8), Math.max(cz, cz - front * 0.8), st.counter);
       ib.box(um - 2.7, um + 2.7, 1.15, 1.22, Math.min(cz, cz - front * 0.9), Math.max(cz, cz - front * 0.9) , 0xd8d0c0);
+      { // a telly on a bracket over the counter, tuned to Channel 9
+        const tvz = cz + front * 0.6, tvx = um + 2.0;
+        ib.box(tvx - 0.78, tvx + 0.78, 2.95, 3.85, Math.min(tvz, tvz - front * 0.12), Math.max(tvz, tvz - front * 0.12), 0x1a1a1e);
+        ib.box(tvx - 0.04, tvx + 0.04, 3.85, H - 0.3, tvz - front * 0.1 - 0.04, tvz - front * 0.1 + 0.04, 0x2a2a2e);
+        const tv = new THREE.Mesh(new THREE.PlaneGeometry(1.44, 0.78), newsMat);
+        tv.position.set(tvx, 3.4, tvz + front * 0.01); tv.rotation.y = front > 0 ? 0 : Math.PI; tv.matrixAutoUpdate = false; tv.updateMatrix(); scene.add(tv);
+      }
       lamp(um - 3, um + 3, H - 0.3, Math.min(zF, zB) + 2, Math.max(zF, zB) - 2, 0xfff4dc);
       keepers.push({ x: um, z: zB + front * 1.0, y: 0.2, face: S.face, kind });
       shopSpots.push({ x: um, z: cz + front * 1.1, y: 0.2, r: 2.4, kind, name, city: S.city.name, face: S.face });
@@ -2924,6 +3102,107 @@ function shopBuy(i) {
   renderShop(err || `BOUGHT: ${it.name}`);
 }
 
+// Safehouses: one hideout per town. Get inside without being seen and you can lie low: your profile
+// cools off fast, you heal, there's a stash to raid once a day and a bed to nap in. Get seen going in
+// and the place is burned until tomorrow.
+
+
+
+
+
+
+const safehouses = []; // {name, city, price, x0,x1,z0,z1 (inside), door, bed, stash, tv, owned, burnedDay, stashDay}
+const safeTVs = [];    // screen meshes, so the news can play on them
+
+const HIDEOUTS = [
+  { city: CITIES[0], i: 5, j: 5, name: "NAN'S OLD FLAT", price: 0, wall: 0x7a4a3a, blanket: 0xe07ab0, blurb: 'Smells of lavender and suspicion.' },
+  { city: CITIES[1], i: 4, j: 4, name: 'THE SHED', price: 60, wall: 0x6a7a4a, blanket: 0x3a8ae0, blurb: "It's a shed. It has a bed in it. Don't ask." },
+  { city: CITIES[2], i: 3, j: 3, name: 'THE BOAT SHED', price: 90, wall: 0x3a5a7a, blanket: 0xe0b030, blurb: 'No boat. Plenty of shed.' },
+];
+const tvMat = newsMat; // Channel 9, always on
+const safeTvMat = tvMat;
+
+for (const S of HIDEOUTS) {
+  siteOverrides.set(blockKey(S.city, S.i, S.j), (r, I) => {
+    const cx = (I.ix0 + I.ix1) / 2, T = 0.3, H = 3.4;
+    const x0 = cx - 7, x1 = cx + 7, z1 = I.iz1 - 3, z0 = z1 - 10;
+    const dx0 = cx - 4.4, dx1 = cx - 2.8; // the front door
+    // yard: lawn round the house, a path to the door, a low wall with a gap
+    propBuf.box(I.ix0, I.ix1, 0.15, 0.2, I.iz0, I.iz1, 0x4f7d3e);
+    propBuf.box(dx0, dx1, 0.15, 0.22, z1, I.iz1, 0xb8b0a0);
+    const wz = I.iz1 - 0.4;
+    for (const [a, b] of [[I.ix0 + 0.5, dx0 - 0.4], [dx1 + 0.4, I.ix1 - 0.5]]) { propBuf.box(a, b, 0, 0.8, wz - 0.15, wz + 0.15, 0x9a8a7a); addCollider(a, b, wz - 0.15, wz + 0.15, 0.8); }
+    // the house: brick walls, a doorway, a grubby front window, flat roof you can stand on
+    floorB.box(x0, x1, 0.2, 0.24, z0, z1, 0xffffff);
+    solid(ib, x0, x1, 0, H, z0, z0 + T, S.wall);
+    solid(ib, x0, x0 + T, 0, H, z0, z1, S.wall); solid(ib, x1 - T, x1, 0, H, z0, z1, S.wall);
+    solid(ib, x0, dx0, 0, H, z1 - T, z1, S.wall);
+    solid(ib, dx0, dx1, 2.4, H, z1 - T, z1, S.wall);
+    solid(ib, dx1, cx + 1, 0, H, z1 - T, z1, S.wall);
+    solid(ib, cx + 1, cx + 5, 0, 1.0, z1 - T, z1, S.wall);
+    solid(ib, cx + 1, cx + 5, 1.0, 2.4, z1 - T, z1, 0x8aa0a8, { glass: true });
+    solid(ib, cx + 1, cx + 5, 2.4, H, z1 - T, z1, S.wall);
+    solid(ib, cx + 5, x1, 0, H, z1 - T, z1, S.wall);
+    propBuf.box(dx0 - 0.1, dx1 + 0.1, 2.4, 2.5, z1, z1 + 0.06, 0x3a2a1a); // door frame
+    ib.box(dx0, dx0 + 0.06, 0.2, 2.4, z1 - T - 1.5, z1 - T, 0x5a3a24); // the door, swung open
+    propBuf.box(dx0 - 0.3, dx1 + 0.3, 0.2, 0.23, z1 + 0.2, z1 + 1.2, 0x8a5a3a); // doormat
+    sign('GO AWAY', (dx0 + dx1) / 2, 2.85, z1 + 0.06, 0, 1.4, 0.4, '#e8dcc0', '#5a2a1a');
+    roofBuf.flat(x0, x1, z0, z1, H, 0x3d3944);
+    ib.box(x0, x1, H - 0.02, H - 0.01, z0, z1, 0xe8e0d0, { bottom: true, top: false, sides: false });
+    addRoof(x0, x1, z0, z1, H, { y0: H - 0.3, city: S.city });
+    parapet(x0, x1, z0, z1, H);
+    lamp(cx - 1, cx + 1, H - 0.02, z0 + 4, z0 + 5.5, 0xffe2b0);
+    // furniture
+    const bed = { x: cx + 4.9, z: z0 + 1.6 };
+    solid(ib, cx + 3.2, cx + 6.6, 0, 0.5, z0 + T, z0 + 2.6, 0x5a3a2a);
+    ib.box(cx + 3.25, cx + 6.55, 0.5, 0.68, z0 + T + 0.05, z0 + 2.55, 0xf0e8d8);
+    ib.box(cx + 3.25, cx + 5.9, 0.68, 0.74, z0 + T + 0.05, z0 + 2.55, S.blanket);
+    ib.box(cx + 5.95, cx + 6.5, 0.68, 0.82, z0 + 0.6, z0 + 2.2, 0xffffff); // pillow
+    // sofa facing the telly on the left wall
+    solid(ib, x0 + 4.2, x0 + 5.2, 0, 0.5, z0 + 3.2, z0 + 6.4, 0x8a3a3a);
+    ib.box(x0 + 5.0, x0 + 5.4, 0.5, 1.1, z0 + 3.2, z0 + 6.4, 0x7a2a2a);
+    solid(ib, x0 + T, x0 + 1.0, 0, 0.7, z0 + 3.6, z0 + 6.0, 0x2a2a30); // tv stand
+    ib.box(x0 + 0.4, x0 + 0.8, 0.7, 1.95, z0 + 3.7, z0 + 5.9, 0x111114);
+    const tv = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 1.1), tvMat);
+    tv.position.set(x0 + 0.82, 1.32, z0 + 4.8); tv.rotation.y = Math.PI / 2; tv.matrixAutoUpdate = false; tv.updateMatrix(); scene.add(tv);
+    safeTVs.push(tv);
+    // kitchen table, fridge, pizza boxes, a poster
+    solid(ib, cx - 1.0, cx + 1.2, 0, 0.78, z0 + 6.0, z0 + 7.2, 0x8a6a4a);
+    ib.box(cx - 0.6, cx + 0.2, 0.78, 0.86, z0 + 6.3, z0 + 7.0, 0xe0c080);
+    solid(ib, x1 - 1.1, x1 - T, 0, 1.9, z0 + 4.0, z0 + 4.9, 0xe8e8e8);
+    ib.box(x0 + 1.4, x0 + 2.8, 0.2, 0.42, z0 + 0.5, z0 + 1.4, 0xd0a060); ib.box(x0 + 1.5, x0 + 2.7, 0.42, 0.62, z0 + 0.6, z0 + 1.3, 0xc09050);
+    ib.box(cx - 2.5, cx + 0.5, 1.4, 2.6, z0 + T, z0 + T + 0.04, 0xf0d040); ib.box(cx - 1.6, cx - 0.4, 1.7, 2.3, z0 + T + 0.04, z0 + T + 0.06, 0xd08040);
+    // the stash: a beaten-up crate by the door
+    const stash = { x: x1 - 1.6, z: z1 - 1.6 };
+    solid(ib, x1 - 1.3, x1 - T - 0.1, 0, 0.8, z1 - 2.6, z1 - 1.5, 0xc0702a);
+    ib.box(x1 - 1.35, x1 - T - 0.05, 0.8, 0.86, z1 - 2.65, z1 - 1.45, 0x8a4a1a);
+    glowBuf.box(x1 - 1.0, x1 - 0.6, 0.86, 0.88, z1 - 2.2, z1 - 1.9, 0xffe080);
+    // round the back: a garage block and some trees for cover
+    building('brick' + (S.i % 3), I.ix0 + 2, I.ix1 - 2, I.iz0 + 2, z0 - 6, 6.5, null, { parapet: true });
+    for (const tx of [I.ix0 + 2, I.ix1 - 2]) addTree(tx, z0 + 3, 1.3);
+    for (const tx of [I.ix0 + 4.5, I.ix1 - 4.5]) { propBuf.box(tx - 0.5, tx + 0.5, 0, 1.1, z0 - 3, z0 - 2, 0x2a5a3a); addCollider(tx - 0.5, tx + 0.5, z0 - 3, z0 - 2, 1.1); }
+    safehouses.push({ name: S.name, city: S.city.name, price: S.price, blurb: S.blurb, x0: x0 + T, x1: x1 - T, z0: z0 + T, z1: z1 - T,
+      door: { x: (dx0 + dx1) / 2, z: z1 + 1 }, bed, stash, owned: S.price === 0, burnedDay: 0, stashDay: 0 });
+  });
+}
+
+// the hideout you're standing inside, if any
+function safeAt(x, y, z) {
+  if (y > 2.5 || y < -0.6) return null;
+  for (const s of safehouses) if (x > s.x0 && x < s.x1 && z > s.z0 && z < s.z1) return s;
+  return null;
+}
+function safeDoorNear(x, y, z) {
+  if (y > 1.2 || y < -0.6) return null;
+  for (const s of safehouses) if (Math.abs(s.door.x - x) < 1.6 && Math.abs(s.door.z - z) < 1.6) return s;
+  return null;
+}
+function safeSpotNear(s, x, z) {
+  if (Math.hypot(s.bed.x - x, s.bed.z - z) < 2.2) return 'bed';
+  if (Math.hypot(s.stash.x - x, s.stash.z - z) < 1.6) return 'stash';
+  return null;
+}
+
 // Allies: people you've paid to be on your side for a few days. Pals throw hands, bodyguards shoot.
 
 
@@ -3048,7 +3327,468 @@ class Ally {
   }
 }
 
+// Weather and town events: rain, thunderstorms, fog, power cuts and festivals.
+// The sky changes every in-game day or so. Bad weather makes you harder to spot,
+// a blacked-out town is dark enough to slip through, and a festival packs the
+// streets with people you can disappear into.
+
+
+
+
+
+const WX = {
+  kind: 'clear', t: 75, // seconds until the sky changes
+  rain: 0, fog: 0, cloud: 0, wet: 0, flash: 0, boltT: 6,
+  sight: 1, crowd: 1, here: null, night: false,
+  blackout: null,  // { city, t }
+  festival: null,  // { city, day }
+  rolledNight: -1, rolledDay: 0,
+};
+const WX_KINDS = {
+  clear: { rain: 0, fog: 0, cloud: 0 },
+  overcast: { rain: 0, fog: 0.12, cloud: 0.7 },
+  rain: { rain: 0.65, fog: 0.25, cloud: 0.85 },
+  storm: { rain: 1, fog: 0.35, cloud: 1 },
+  fog: { rain: 0, fog: 1, cloud: 0.45 },
+};
+const WX_ODDS = ['clear', 'clear', 'clear', 'overcast', 'overcast', 'rain', 'rain', 'storm', 'fog', 'fog'];
+const WX_NAMES = { clear: 'CLEAR', overcast: 'OVERCAST', rain: 'RAIN', storm: 'THUNDERSTORM', fog: 'FOG' };
+const WX_LINES = {
+  clear: 'THE SKY CLEARS. EVERYONE CAN SEE YOU AGAIN.',
+  overcast: 'CLOUDING OVER.',
+  rain: 'RAIN ROLLING IN. HEADS DOWN, HOODS UP: HARDER TO SPOT YOU.',
+  storm: 'THUNDERSTORM. NOBODY IS LOOKING AT ANYTHING BUT THE SKY.',
+  fog: 'THICK FOG. YOU COULD BE ANYONE OUT THERE.',
+};
+const FESTIVALS = { 'PORT HALDEN': 'HARBOUR LIGHTS FESTIVAL', ASHFORD: 'GIANT VEGETABLE FAIR', 'SALTMARSH DOCKS': 'SALTMARSH FISH FRY' };
+
+// ---------------------------------------------------------------------
+// rain: streaks drawn on the GPU in a box that follows the camera
+// ---------------------------------------------------------------------
+const RAIN_N = 5000;
+const rainGeo = new THREE.BufferGeometry();
+{
+  const pos = new Float32Array(RAIN_N * 6), end = new Float32Array(RAIN_N * 2), rnd = new Float32Array(RAIN_N * 2);
+  for (let i = 0; i < RAIN_N; i++) {
+    const x = Math.random() * 50, y = Math.random() * 26, z = Math.random() * 50, r = Math.random();
+    for (let k = 0; k < 2; k++) { pos.set([x, y, z], (i * 2 + k) * 3); end[i * 2 + k] = k; rnd[i * 2 + k] = r; }
+  }
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  rainGeo.setAttribute('aEnd', new THREE.BufferAttribute(end, 1));
+  rainGeo.setAttribute('aRnd', new THREE.BufferAttribute(rnd, 1));
+}
+const rainMat = new THREE.ShaderMaterial({
+  uniforms: { uT: { value: 0 }, uCam: { value: new THREE.Vector3() }, uAmt: { value: 0 }, uCol: { value: new THREE.Color(0xb8c4d8) } },
+  vertexShader: `
+    attribute float aEnd; attribute float aRnd;
+    uniform float uT; uniform vec3 uCam; uniform float uAmt; varying float vA;
+    void main() {
+      vec3 p = position;
+      float spd = 20.0 + aRnd * 8.0;
+      p.y = mod(p.y - uT * spd, 26.0) + uCam.y - 11.0;
+      p.x = mod(p.x - uCam.x + uT * 1.8, 50.0) - 25.0 + uCam.x;
+      p.z = mod(p.z - uCam.z, 50.0) - 25.0 + uCam.z;
+      p.y += aEnd * 0.7; p.x -= aEnd * 0.06;
+      float d = length(p.xz - uCam.xz);
+      vA = (1.0 - smoothstep(9.0, 25.0, d)) * step(aRnd, uAmt) * (0.25 + 0.75 * aEnd);
+      gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+    }`,
+  fragmentShader: `uniform vec3 uCol; varying float vA; void main() { if (vA < 0.01) discard; gl_FragColor = vec4(uCol, vA * 0.5); }`,
+  transparent: true, depthWrite: false,
+});
+const rainLines = new THREE.LineSegments(rainGeo, rainMat);
+rainLines.frustumCulled = false; rainLines.renderOrder = 5; rainLines.visible = false;
+scene.add(rainLines);
+
+// lightning bolt: a jagged line far off in the sky
+const boltMat = new THREE.LineBasicMaterial({ color: 0xe8f0ff, transparent: true, fog: false });
+const boltGeo = new THREE.BufferGeometry(); boltGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(18 * 3), 3));
+const bolt = new THREE.Line(boltGeo, boltMat); bolt.frustumCulled = false; bolt.visible = false; scene.add(bolt);
+function strikeBolt() {
+  const a = mr(0, Math.PI * 2), r = mr(120, 260), p = boltGeo.attributes.position;
+  let x = camera.position.x + Math.cos(a) * r, z = camera.position.z + Math.sin(a) * r, y = 150;
+  for (let i = 0; i < 18; i++) { p.setXYZ(i, x, y, z); y -= 150 / 17; x += mr(-7, 7); z += mr(-7, 7); }
+  p.needsUpdate = true; bolt.visible = true;
+}
+
+// ---------------------------------------------------------------------
+// festival dressing: bunting and lanterns strung over the town's main streets
+// ---------------------------------------------------------------------
+const FLAG_COLS = [0xe8402a, 0xf5c518, 0x2a9d8f, 0x3a6ad8, 0xe86ab0, 0xffffff, 0x7ad04a];
+const festDecor = {};
+function buildFestival(city) {
+  const flags = new GeoBuf(), lights = new GeoBuf();
+  const string = (ax, az, bx, bz) => { // a drooping line from a to b with pennants and bulbs
+    const N = 10, pts = [];
+    for (let k = 0; k <= N; k++) { const u = k / N; pts.push([lerp(ax, bx, u), 7.4 - Math.sin(u * Math.PI) * 1.1, lerp(az, bz, u)]); }
+    for (let k = 0; k < N; k++) {
+      flags.beam(pts[k], pts[k + 1], 0.04, 0x333333);
+      const [x0, y0, z0] = pts[k], [x1, y1, z1] = pts[k + 1], mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, my = (y0 + y1) / 2;
+      const col = new THREE.Color(FLAG_COLS[(k + Math.round(ax + az)) % FLAG_COLS.length]);
+      flags.quad([x0, y0, z0], [x1, y1, z1], [mx, my - 0.75, mz], [mx, my - 0.75, mz], [0, 0, 1], [0, 0, 1, 0, 0.5, 1, 0.5, 1], col);
+      if (k % 2 === 0) lights.box(x0 - 0.1, x0 + 0.1, y0 - 0.25, y0 - 0.05, z0 - 0.1, z0 + 0.1, k % 4 ? 0xffd27a : 0xff7a5a);
+    }
+  };
+  const reach = 2 * PITCH;
+  for (let s = -reach; s <= reach; s += 7) {
+    if (Math.abs(s) < 11) continue;
+    string(city.cx + s, city.cz - 9.5, city.cx + s, city.cz + 9.5); // across the east-west street
+    string(city.cx - 9.5, city.cz + s, city.cx + 9.5, city.cz + s); // across the north-south street
+  }
+  // a big criss-cross over the main junction
+  string(city.cx - 10, city.cz - 10, city.cx + 10, city.cz + 10); string(city.cx - 10, city.cz + 10, city.cx + 10, city.cz - 10);
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(flags.geometry(), new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+  g.add(new THREE.Mesh(lights.geometry(), new THREE.MeshBasicMaterial({ vertexColors: true })));
+  g.visible = false; scene.add(g);
+  return g;
+}
+for (const c of CITIES) festDecor[c.name] = buildFestival(c);
+
+// fireworks: one shared pool of additive points
+const FW_N = 900;
+const fwGeo = new THREE.BufferGeometry();
+fwGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FW_N * 3), 3));
+fwGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(FW_N * 3), 3));
+const fwPts = new THREE.Points(fwGeo, new THREE.PointsMaterial({ size: 2.2, map: puffTex, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+fwPts.frustumCulled = false; scene.add(fwPts);
+const fwVel = new Float32Array(FW_N * 3), fwLife = new Float32Array(FW_N), fwCol = new Float32Array(FW_N * 3);
+let fwNext = 0, fwT = 2;
+const FW_COLS = [0xff4a3a, 0xffd23a, 0x5ad8ff, 0xb46aff, 0x6aff8a, 0xffffff];
+function burstFirework(x, y, z) {
+  const col = new THREE.Color(mpick(FW_COLS)), P = fwGeo.attributes.position;
+  for (let k = 0; k < 70; k++) {
+    const i = fwNext; fwNext = (fwNext + 1) % FW_N;
+    const th = Math.random() * Math.PI * 2, ph = Math.acos(mr(-1, 1)), sp = mr(9, 13);
+    P.setXYZ(i, x, y, z);
+    fwVel[i * 3] = Math.sin(ph) * Math.cos(th) * sp; fwVel[i * 3 + 1] = Math.cos(ph) * sp; fwVel[i * 3 + 2] = Math.sin(ph) * Math.sin(th) * sp;
+    fwLife[i] = mr(1.4, 2.2); fwCol[i * 3] = col.r; fwCol[i * 3 + 1] = col.g; fwCol[i * 3 + 2] = col.b;
+  }
+  sfx.firework();
+}
+function updateFireworks(dt) {
+  const P = fwGeo.attributes.position, Cc = fwGeo.attributes.color;
+  for (let i = 0; i < FW_N; i++) {
+    if (fwLife[i] <= 0) { Cc.setXYZ(i, 0, 0, 0); continue; }
+    fwLife[i] -= dt;
+    fwVel[i * 3 + 1] -= 6 * dt; for (let a = 0; a < 3; a++) fwVel[i * 3 + a] *= 1 - dt * 1.2;
+    P.setXYZ(i, P.getX(i) + fwVel[i * 3] * dt, P.getY(i) + fwVel[i * 3 + 1] * dt, P.getZ(i) + fwVel[i * 3 + 2] * dt);
+    const k = clamp(fwLife[i] / 1.2, 0, 1);
+    Cc.setXYZ(i, fwCol[i * 3] * k, fwCol[i * 3 + 1] * k, fwCol[i * 3 + 2] * k);
+  }
+  P.needsUpdate = true; Cc.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------------
+// simulation. ctx: { day, hour, city (name or null), covered, say(msg), banner(html) }
+// ---------------------------------------------------------------------
+function setWeather(kind, ctx, quiet) {
+  if (kind === WX.kind) return;
+  WX.kind = kind;
+  if (!quiet && ctx && !ctx.covered) ctx.say(WX_LINES[kind]);
+}
+function resetWeather() {
+  WX.kind = 'clear'; WX.t = 75; WX.rain = WX.fog = WX.cloud = WX.wet = WX.flash = 0;
+  WX.blackout = null; WX.festival = null; WX.rolledNight = -1; WX.rolledDay = 0;
+  for (const k in festDecor) festDecor[k].visible = false;
+}
+function forceWeather(kind) { WX.kind = kind; WX.t = 120; } // debug + tests
+function updateWeather(dt, ctx) {
+  const t = performance.now() / 1000;
+  WX.here = ctx.city;
+  WX.night = ctx.hour >= 19.5 || ctx.hour < 5.5;
+  // the sky
+  WX.t -= dt;
+  if (WX.t <= 0) {
+    WX.t = mr(55, 130);
+    let next = mpick(WX_ODDS);
+    if (WX.kind === 'storm' && next === 'clear') next = 'rain'; // storms ease off rather than vanish
+    setWeather(next, ctx);
+  }
+  const K = WX_KINDS[WX.kind], ease = Math.min(1, dt * 0.12);
+  WX.rain = lerp(WX.rain, K.rain, ease); WX.fog = lerp(WX.fog, K.fog, ease); WX.cloud = lerp(WX.cloud, K.cloud, ease);
+  WX.wet = clamp(WX.wet + (WX.rain > 0.2 ? dt * 0.05 : -dt * 0.008), 0, 1);
+  // thunder and lightning
+  WX.flash = Math.max(0, WX.flash - dt * 3.5);
+  if (WX.kind === 'storm' && WX.rain > 0.6) {
+    WX.boltT -= dt;
+    if (WX.boltT <= 0) { WX.boltT = mr(5, 14); WX.flash = 1; strikeBolt(); sfx.thunder(Math.random() < 0.3); }
+  }
+  if (WX.flash < 0.5) bolt.visible = false; else boltMat.opacity = WX.flash;
+  // power cuts: most nights there's a chance one town goes dark, storms make it likelier
+  const nightId = ctx.day; // the day counter ticks over at half four, so one night never spans two
+  if (WX.night && WX.rolledNight !== nightId) {
+    WX.rolledNight = nightId;
+    if (Math.random() < (WX.kind === 'storm' ? 0.75 : 0.35)) {
+      const city = ctx.city && Math.random() < 0.5 ? ctx.city : mpick(CITIES).name;
+      WX.blackout = { city, t: mr(35, 60) };
+      if (ctx.city === city) { ctx.say('POWER CUT! THE WHOLE TOWN JUST WENT DARK.'); sfx.powerDown(); }
+      else ctx.say(`POWER CUT REPORTED IN ${city}.`);
+    }
+  }
+  if (WX.blackout) {
+    WX.blackout.t -= dt;
+    if (WX.blackout.t <= 0 || !WX.night) { if (ctx.city === WX.blackout.city) ctx.say('THE LIGHTS FLICKER BACK ON.'); WX.blackout = null; }
+  }
+  // festivals: from day 2, some days one town throws a party
+  if (WX.rolledDay !== ctx.day) {
+    WX.rolledDay = ctx.day; WX.festival = null;
+    if (ctx.day >= 2 && Math.random() < 0.4) {
+      const city = mpick(CITIES).name;
+      WX.festival = { city, day: ctx.day };
+      ctx.banner(`${FESTIVALS[city]}<small>TODAY IN ${city}. BIG CROWDS, EASY TO BLEND IN.</small>`);
+    }
+  }
+  for (const k in festDecor) festDecor[k].visible = !!WX.festival && WX.festival.city === k;
+  const festHere = WX.festival && WX.festival.city === ctx.city;
+  const darkHere = WX.blackout && WX.blackout.city === ctx.city;
+  // fireworks over the party after dark
+  if (festHere && (WX.night || ctx.hour > 18.5) && !ctx.covered) {
+    fwT -= dt;
+    if (fwT <= 0) { fwT = mr(0.8, 2.4); const c = CITIES.find((q) => q.name === ctx.city); burstFirework(c.cx + mr(-40, 40), mr(45, 75), c.cz + mr(-40, 40)); }
+  }
+  updateFireworks(dt);
+  // how well people can see you
+  WX.sight = (1 - 0.28 * WX.rain) * (1 - 0.45 * WX.fog) * (darkHere ? 0.55 : 1) * (festHere ? 0.85 : 1);
+  if (WX.flash > 0.5) WX.sight = Math.max(WX.sight, 0.95); // lightning lights you right up
+  WX.crowd = festHere ? 1.5 : 1 - 0.3 * WX.rain; // more people out for a party, fewer in the rain
+  // sound + rain visuals
+  rainLines.visible = WX.rain > 0.02 && !ctx.covered;
+  rainMat.uniforms.uT.value = t; rainMat.uniforms.uAmt.value = WX.rain; rainMat.uniforms.uCam.value.copy(camera.position);
+  setRain(ctx.covered ? WX.rain * 0.06 : WX.rain * 0.32);
+}
+
+// ---------------------------------------------------------------------
+// look: runs after the day/night lighting each frame and bends it to the weather
+// ---------------------------------------------------------------------
+const C_OVERCAST = new THREE.Color(0x737b84), C_FOGGY = new THREE.Color(0x9aa2a8), C_FLASH = new THREE.Color(0xd8e4ff);
+const _wc = new THREE.Color();
+const groundBase = new THREE.Color(1, 1, 1);
+function applyWeatherLook(hemi, sun, dayAmt, under) {
+  const out = 1 - under;
+  const lvl = 0.12 + 0.88 * dayAmt;
+  _wc.copy(C_OVERCAST).multiplyScalar(lvl);
+  scene.background.lerp(_wc, WX.cloud * 0.7 * out);
+  _wc.copy(C_FOGGY).multiplyScalar(lvl);
+  scene.background.lerp(_wc, WX.fog * 0.8 * out);
+  scene.fog.color.copy(scene.background);
+  scene.fog.near = lerp(scene.fog.near, 3, WX.fog * 0.9 * out);
+  scene.fog.far = lerp(scene.fog.far, 150, WX.rain * 0.6 * out);
+  scene.fog.far = lerp(scene.fog.far, 60, WX.fog * out);
+  sun.intensity *= 1 - WX.cloud * 0.75;
+  hemi.intensity *= 1 - WX.cloud * 0.18;
+  if (WX.flash > 0) { hemi.intensity += WX.flash * 2.2 * out; scene.background.lerp(C_FLASH, WX.flash * 0.6 * out); }
+  // power cut: windows, street lamps and shop fronts go dark
+  const dark = WX.blackout && WX.blackout.city === WX.here;
+  if (dark) { for (const m of emissiveFacades) m.emissiveIntensity *= 0.04; hemi.intensity *= 0.8; }
+  if (baked.glow) baked.glow.visible = !dark;
+  if (baked.shop) baked.shop.material.color.setScalar(dark ? 0.12 : 1);
+  // wet streets go dark and glossy
+  if (baked.ground) baked.ground.material.color.copy(groundBase).multiplyScalar(1 - WX.wet * 0.35);
+  if (baked.grass) baked.grass.material.color.copy(groundBase).multiplyScalar(1 - WX.wet * 0.2);
+}
+
+// Post-processing and reflections. The world is drawn into an off-screen buffer, then glow (bloom),
+// a warm grade, film grain, a vignette that tightens when they're close, chromatic fringing and
+// edge streaks when you're moving fast are layered on top. Roads (and floors indoors) get a planar
+// reflection: a second, half-size render from a mirrored camera, rippled and smeared when it's wet.
+
+
+
+
+
+
+const PFX = { on: true, refl: true, speed: 0, danger: 0, kick: 0, bloom: 0.75, frameMs: 16, reflSkip: 0, reflScale: 0.5 };
+
+// ---------------------------------------------------------------------
+// planar reflections
+// ---------------------------------------------------------------------
+const reflRT = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType });
+const reflCam = new THREE.PerspectiveCamera();
+const reflShared = { uRefl: { value: reflRT.texture }, uReflMat: { value: new THREE.Matrix4() }, uWet: { value: 0 }, uTime: { value: 0 } };
+const roadAmt = { value: 0 }, floorAmt = { value: 0 };
+function makeReflective(mat, amt) {
+  if (!mat || mat.userData.reflective) return;
+  mat.userData.reflective = true;
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, reflShared, { uReflAmt: amt });
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvRW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vRW; uniform sampler2D uRefl; uniform mat4 uReflMat; uniform float uReflAmt; uniform float uWet; uniform float uTime;')
+      .replace('#include <opaque_fragment>', `
+        if (uReflAmt > 0.001) {
+          vec2 rip = vec2(sin(vRW.x * 11.0 + vRW.z * 3.0 + uTime * 7.0) * sin(vRW.z * 9.0 - uTime * 5.0), sin(vRW.z * 13.0 + uTime * 6.0) * sin(vRW.x * 7.0 + vRW.z * 5.0)) * 0.0012 * uWet;
+          vec4 rc = uReflMat * vec4(vRW, 1.0);
+          vec2 ruv = rc.xy / rc.w + rip;
+          float smear = mix(0.03, 0.012, uWet);
+          vec3 refl = vec3(0.0);
+          for (int i = -3; i <= 3; i++) refl += texture2D(uRefl, ruv + vec2(0.0, float(i) * smear)).rgb;
+          refl /= 7.0;
+          vec3 V = normalize(cameraPosition - vRW);
+          float fr = pow(1.0 - clamp(V.y, 0.0, 1.0), 3.0);
+          float edge = smoothstep(0.0, 0.04, ruv.y) * smoothstep(1.0, 0.96, ruv.y) * smoothstep(0.0, 0.03, ruv.x) * smoothstep(1.0, 0.97, ruv.x);
+          outgoingLight = mix(outgoingLight, refl, uReflAmt * (0.1 + 0.9 * fr) * edge);
+        }
+        #include <opaque_fragment>`);
+  };
+  mat.needsUpdate = true;
+}
+const _plane = new THREE.Plane(), _clip = new THREE.Vector4(), _oq = new THREE.Vector4();
+const _cp = new THREE.Vector3(), _look = new THREE.Vector3(), _rot = new THREE.Matrix4(), _n = new THREE.Vector3(0, 1, 0);
+const _bias = new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+function renderReflection(planeY) {
+  camera.updateMatrixWorld();
+  _cp.setFromMatrixPosition(camera.matrixWorld);
+  if (_cp.y <= planeY + 0.05) return false;
+  _rot.extractRotation(camera.matrixWorld);
+  _look.set(0, 0, -1).applyMatrix4(_rot).add(_cp);
+  reflCam.position.set(_cp.x, 2 * planeY - _cp.y, _cp.z);
+  reflCam.up.set(0, 1, 0).applyMatrix4(_rot).reflect(_n);
+  reflCam.lookAt(_look.x, 2 * planeY - _look.y, _look.z);
+  reflCam.near = camera.near; reflCam.far = camera.far; reflCam.fov = camera.fov; reflCam.aspect = camera.aspect;
+  reflCam.updateProjectionMatrix(); reflCam.updateMatrixWorld();
+  reflShared.uReflMat.value.copy(_bias).multiply(reflCam.projectionMatrix).multiply(reflCam.matrixWorldInverse);
+  // oblique near plane: nothing below the mirror (the metro, the sewers) leaks into it
+  _plane.setFromNormalAndCoplanarPoint(_n, new THREE.Vector3(0, planeY, 0)).applyMatrix4(reflCam.matrixWorldInverse);
+  _clip.set(_plane.normal.x, _plane.normal.y, _plane.normal.z, _plane.constant);
+  const e = reflCam.projectionMatrix.elements;
+  _oq.x = (Math.sign(_clip.x) + e[8]) / e[0]; _oq.y = (Math.sign(_clip.y) + e[9]) / e[5]; _oq.z = -1; _oq.w = (1 + e[10]) / e[14];
+  _clip.multiplyScalar(2 / _clip.dot(_oq));
+  e[2] = _clip.x; e[6] = _clip.y; e[10] = _clip.z + 1 - 0.003; e[14] = _clip.w;
+  renderer.setRenderTarget(reflRT); renderer.clear(); renderer.render(scene, reflCam);
+  return true;
+}
+
+// ---------------------------------------------------------------------
+// screen passes
+// ---------------------------------------------------------------------
+const sceneRT = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType, samples: 4 });
+const bloomA = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType });
+const bloomB = new THREE.WebGLRenderTarget(16, 16, { type: THREE.HalfFloatType });
+const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const fsScene = new THREE.Scene();
+const fsGeo = new THREE.BufferGeometry();
+fsGeo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+fsGeo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 2, 0, 0, 2], 2));
+const fsQuad = new THREE.Mesh(fsGeo); fsQuad.frustumCulled = false; fsScene.add(fsQuad);
+const FS_VERT = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+const pass = (frag, uniforms) => new THREE.ShaderMaterial({ vertexShader: FS_VERT, fragmentShader: frag, uniforms, depthTest: false, depthWrite: false });
+const brightMat = pass(`
+  uniform sampler2D tIn; uniform vec2 uTexel; varying vec2 vUv;
+  void main() {
+    vec3 c = (texture2D(tIn, vUv + uTexel * vec2(-1.0, -1.0)).rgb + texture2D(tIn, vUv + uTexel * vec2(1.0, -1.0)).rgb
+            + texture2D(tIn, vUv + uTexel * vec2(-1.0, 1.0)).rgb + texture2D(tIn, vUv + uTexel * vec2(1.0, 1.0)).rgb) * 0.25;
+    float l = max(c.r, max(c.g, c.b));
+    gl_FragColor = vec4(c * smoothstep(0.62, 1.25, l), 1.0);
+  }`, { tIn: { value: null }, uTexel: { value: new THREE.Vector2() } });
+const blurMat = pass(`
+  uniform sampler2D tIn; uniform vec2 uDir; varying vec2 vUv;
+  void main() {
+    vec3 c = texture2D(tIn, vUv).rgb * 0.2270;
+    c += (texture2D(tIn, vUv + uDir * 1.3846).rgb + texture2D(tIn, vUv - uDir * 1.3846).rgb) * 0.3162;
+    c += (texture2D(tIn, vUv + uDir * 3.2308).rgb + texture2D(tIn, vUv - uDir * 3.2308).rgb) * 0.0703;
+    gl_FragColor = vec4(c, 1.0);
+  }`, { tIn: { value: null }, uDir: { value: new THREE.Vector2() } });
+const compMat = pass(`
+  uniform sampler2D tScene; uniform sampler2D tBloom; uniform vec2 uRes;
+  uniform float uTime; uniform float uSpeed; uniform float uDanger; uniform float uKick; uniform float uBloom;
+  varying vec2 vUv;
+  vec3 toSRGB(vec3 c) { return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+  void main() {
+    vec2 uv = vUv, d = uv - 0.5; float r = length(d);
+    // chromatic fringing: a touch always, more when you're flying along or something just hit
+    float ca = 0.0015 + 0.005 * uSpeed + 0.004 * uDanger + 0.012 * uKick;
+    vec3 col = vec3(texture2D(tScene, uv - d * ca).r, texture2D(tScene, uv).g, texture2D(tScene, uv + d * ca).b);
+    // speed streaks: the edges of the screen smear toward the middle
+    float sb = uSpeed * smoothstep(0.12, 0.6, r) * 0.07;
+    if (sb > 0.001) { vec3 acc = col; for (int i = 1; i <= 6; i++) acc += texture2D(tScene, uv - d * sb * float(i) / 6.0).rgb; col = acc / 7.0; }
+    col += texture2D(tBloom, uv).rgb * uBloom;
+    col = col * 1.08 / (1.0 + col * 0.12); // soft shoulder so bright lamps don't clip hard
+    vec3 s = toSRGB(clamp(col, 0.0, 1.0));
+    float l = dot(s, vec3(0.299, 0.587, 0.114));
+    s = mix(s, s * vec3(1.06, 1.0, 0.92), smoothstep(0.45, 1.0, l));      // warm highlights
+    s += vec3(0.018, 0.006, 0.03) * (1.0 - l);                              // purple-ish haze in the shadows
+    s = mix(vec3(l), s, 1.1);                                               // a little more colour
+    float vig = smoothstep(0.9 - 0.25 * uDanger, 0.2, r);
+    s *= mix(0.5 - 0.15 * uDanger, 1.0, vig);
+    s += (hash(uv * uRes + fract(uTime) * 91.0) - 0.5) * 0.04;             // grain
+    gl_FragColor = vec4(s, 1.0);
+  }`, {
+  tScene: { value: sceneRT.texture }, tBloom: { value: bloomA.texture }, uRes: { value: new THREE.Vector2() },
+  uTime: { value: 0 }, uSpeed: { value: 0 }, uDanger: { value: 0 }, uKick: { value: 0 }, uBloom: { value: 0.75 },
+});
+const _sz = new THREE.Vector2();
+let lastW = 0, lastH = 0;
+function sizeTargets() {
+  renderer.getDrawingBufferSize(_sz);
+  const w = _sz.x, h = _sz.y;
+  if (w === lastW && h === lastH) return;
+  lastW = w; lastH = h;
+  sceneRT.setSize(w, h);
+  bloomA.setSize(Math.max(1, w >> 2), Math.max(1, h >> 2)); bloomB.setSize(Math.max(1, w >> 2), Math.max(1, h >> 2));
+  reflRT.setSize(Math.max(1, Math.round(w * PFX.reflScale)), Math.max(1, Math.round(h * PFX.reflScale)));
+  compMat.uniforms.uRes.value.set(w, h);
+}
+function runPass(mat, target) { fsQuad.material = mat; renderer.setRenderTarget(target); renderer.render(fsScene, fsCam); }
+
+function initPostFX() { // after the world is built
+  for (const m of [baked.ground?.material, baked.mark?.material]) makeReflective(m, roadAmt);
+  for (const m of interiorFloorMats) makeReflective(m, floorAmt);
+}
+
+let failed = false, frameN = 0;
+// o: { drawVM, indoor, floorY, speed, danger, kick, menu }
+function renderFrame(o) {
+  const t = performance.now() / 1000;
+  if (!PFX.on || failed) {
+    renderer.setRenderTarget(null); renderer.clear(); renderer.render(scene, camera);
+    if (o.drawVM) { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
+    return;
+  }
+  try {
+    sizeTargets(); frameN++;
+    // reflections: roads outside, the floor you're standing on inside
+    reflShared.uWet.value = WX.wet; reflShared.uTime.value = t;
+    const wantRoad = 0.14 + 0.3 * WX.wet, wantFloor = 0.22;
+    const planeY = o.indoor ? o.floorY + 0.004 : 0.02;
+    // on a slow machine, refresh the reflection every other frame
+    const skip = PFX.frameMs > 30 ? 2 : 1;
+    let ok = true;
+    if (PFX.refl && frameN % skip === 0) {
+      const hideG = baked.ground && baked.ground.visible, hideM = baked.mark && baked.mark.visible;
+      if (baked.ground) baked.ground.visible = false; if (baked.mark) baked.mark.visible = false;
+      ok = renderReflection(planeY);
+      if (baked.ground) baked.ground.visible = hideG; if (baked.mark) baked.mark.visible = hideM;
+    }
+    roadAmt.value = PFX.refl && ok && !o.indoor ? wantRoad : 0;
+    floorAmt.value = PFX.refl && ok && o.indoor ? wantFloor : 0;
+    // the world, then the gun in your hands
+    renderer.setRenderTarget(sceneRT); renderer.clear(); renderer.render(scene, camera);
+    if (o.drawVM) { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
+    // glow
+    brightMat.uniforms.tIn.value = sceneRT.texture; brightMat.uniforms.uTexel.value.set(1 / lastW, 1 / lastH); runPass(brightMat, bloomA);
+    for (let i = 0; i < 2; i++) {
+      blurMat.uniforms.tIn.value = bloomA.texture; blurMat.uniforms.uDir.value.set((1 + i) / bloomA.width, 0); runPass(blurMat, bloomB);
+      blurMat.uniforms.tIn.value = bloomB.texture; blurMat.uniforms.uDir.value.set(0, (1 + i) / bloomA.height); runPass(blurMat, bloomA);
+    }
+    // grade it all onto the screen
+    const U = compMat.uniforms;
+    U.uTime.value = t; U.uSpeed.value = o.speed; U.uDanger.value = o.danger; U.uKick.value = o.kick; U.uBloom.value = PFX.bloom;
+    runPass(compMat, null);
+  } catch (err) {
+    console.warn('post-processing off:', err); failed = true;
+    renderer.setRenderTarget(null);
+  }
+}
+
 // HUNTED — survive 30 days while everyone in three towns hunts you.
+
+
+
+
 
 
 
@@ -3064,6 +3804,7 @@ class Ally {
 const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
 
 generateWorld();
+initPostFX();
 
 // =====================================================================
 // Game state
@@ -3074,13 +3815,14 @@ const G = {
   kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 25, heartT: 0, overT: 0, airT: 0,
   shake: 0, hurtFlash: 0, msgT: 0,
   heat: 0, level: 0, lkp: { x: 0, z: 0 }, lastSeenT: 99, airTracking: 0, airAlertT: 0, spottedMsgT: 0,
-  locale: '', localeT: 0, allies: [], drops: [], getUps: [], contract: null, offers: [], offersDay: 0, hitstopT: 0, fovKick: 0, fireHeld: false,
+  locale: '', localeT: 0, allies: [], drops: [], getUps: [], contract: null, offers: [], offersDay: 0, safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, conspic: 0, unseenT: 99, stareT: 0, hitstopT: 0, fovKick: 0, fireHeld: false,
 };
 // weapons: the pistol you start with, plus whatever the gun shops will sell you
 const WEAPONS = {
   pistol: { name: 'PISTOL', mag: 12, cd: 0.17, spread: 0.008, pellets: 1, reload: 1.3, maxRes: 180, heat: 2.5, alert: 45 },
   crowbar: { name: 'CROWBAR', melee: true },
   shotgun: { name: 'SHOTGUN', mag: 6, cd: 0.85, spread: 0.055, pellets: 8, reload: 2.1, maxRes: 60, heat: 3.5, alert: 55, range: 50 },
+  laser: { name: 'LASER EYES', laser: true, cd: 0.06, auto: true },
   smg: { name: 'SMG', mag: 30, cd: 0.075, spread: 0.02, pellets: 1, reload: 1.6, maxRes: 300, heat: 1.1, alert: 55, auto: true },
 };
 const SLOTS = ['pistol', 'crowbar', 'shotgun', 'smg'];
@@ -3090,7 +3832,7 @@ const player = {
   x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: 0, pitch: 0, hp: 100, stam: 100, exhausted: false,
   lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, ammo: freshAmmo(), reloadT: 0, fireCd: 0,
   cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0,
-  outfit: {}, disg: 0,
+  outfit: {}, disg: 0, drawnT: 99,
   bob: 0, dragT: 0, carHitCd: 0, recoil: 0, shoveAnim: 0, camOff: 0, sprinting: false,
 };
 resetParkour(player);
@@ -3105,8 +3847,26 @@ const LEVELS = [0, 20, 60, 120, 190, 270];
 const LEVEL_NAMES = ['LOW PROFILE', 'NOTICED', 'KNOWN FACE', 'WANTED', 'MOST WANTED', 'PUBLIC ENEMY'];
 const HELIS_AT = [0, 0, 1, 1, 2, 3];
 const DRONES_AT = [0, 1, 2, 3, 4, 6];
-function addHeat(n) { G.heat = clamp(G.heat + n, 0, 330); }
-function heatFloor() { return (G.day - 1) * 6.5; }
+function addHeat(n) { if (G.super) return; G.heat = clamp(G.heat + n, 0, 330); }
+function heatFloor() { return (G.day - 1) * 2; }
+// local suspicion: how much the people round here have started to wonder about you. Spending money,
+// hanging about and making a scene all add to it; it fades once you've moved on.
+const localKey = (x, z) => { const c = cityAt(x, z, 20); return c ? c.name : 'COUNTRY'; };
+function localSus() { const tp = targetPos(); return G.localSus[localKey(tp.x, tp.z)] || 0; }
+function bumpLocal(n) { const tp = targetPos(), k = localKey(tp.x, tp.z); G.localSus[k] = clamp((G.localSus[k] || 0) + n, 0, 1); }
+// how much you stand out right now (0 = just another face in the crowd)
+function conspicuous() {
+  if (player.car) return Math.abs(player.car.speed) > 22 ? 0.8 : 0.25;
+  let k = 0.1;
+  if (player.sprinting) k += 0.8;
+  else if (Math.hypot(player.vx, player.vz) < 0.5) k -= 0.04;
+  if (player.drawnT < 4) k += 0.7;
+  if (player.mode !== 'move' || player.y > 1.6) k += 0.6; // climbing about, up on the rooftops
+  if (player.crouch > 0.5) k += 0.15;
+  if (player.hp < 45) k += 0.15; // looking roughed up
+  return k;
+}
+const knownFace = () => (0.3 + G.level * 0.55) * (1 - 0.6 * player.disg) * (1 + 2.5 * localSus()) * (1 + (G.day - 1) * 0.015);
 function reportSighting(x, z) { G.lkp.x = x; G.lkp.z = z; G.lastSeenT = 0; }
 const searchRadius = () => clamp(12 + G.lastSeenT * 1.6, 12, 110);
 
@@ -3126,6 +3886,7 @@ function hourAt(elapsed) {
 
 function hurtPlayer(dmg, fromX, fromZ, knock = 0) {
   if (!player.alive || G.mode !== 'playing') return;
+  if (G.super) { player.hp = Math.max(1, player.hp - dmg * 0.05); G.shake = Math.min(0.3, G.shake + dmg / 120); return; } // more or less unkillable
   player.hp -= dmg; player.lastHurt = 0;
   G.hurtFlash = Math.min(1, G.hurtFlash + 0.35 + dmg / 40); G.shake = Math.min(0.5, G.shake + dmg / 60);
   if (knock && !player.car) { const dx = player.x - fromX, dz = player.z - fromZ, d = Math.hypot(dx, dz) || 1; player.kx += (dx / d) * knock; player.kz += (dz / d) * knock; }
@@ -3176,12 +3937,13 @@ class Hunter {
     this.dead = false;
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
     this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
+    this.sus = 0; this.huntT = 0; this.panicT = 0; this.thinkAt = G.elapsed; this.home = { x, z };
     this.spdMul = mr(0.82, 1.1); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
   }
   alert(delay = 0) {
     if (this.state === 'chase') return;
     if (delay > 0) { if (this.alertT < 0) this.alertT = delay; return; }
-    this.state = 'chase'; this.lastSeen = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
+    this.state = 'chase'; this.lastSeen = 0; this.sus = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
     if (player.disg > 0) wearDisguise(0.035);
   }
   remove() { scene.remove(this.g); this.dead = true; }
@@ -3204,6 +3966,16 @@ class Hunter {
     const dx = tp.x - this.x, dz = tp.z - this.z, d = Math.hypot(dx, dz);
     const dy = player.car ? 0 : player.y - this.y;
     if (this.climb || this.ladder) { this.updateClimb(dt); return; }
+    if (this.held) { // dangling in front of you, legs going
+      camera.getWorldDirection(_hd);
+      this.x = camera.position.x + _hd.x * 1.5; this.z = camera.position.z + _hd.z * 1.5; this.y = camera.position.y - 1.6 + _hd.y * 1.5;
+      this.face = player.yaw; const k = Math.sin(G.elapsed * 14);
+      this.p.legL.rotation.x = k * 0.9; this.p.legR.rotation.x = -k * 0.9; this.p.armL.rotation.x = -2.6 + k * 0.4; this.p.armR.rotation.x = -2.6 - k * 0.4;
+      this.g.position.set(this.x, this.y, this.z); this.g.rotation.y = this.face + Math.PI;
+      this.begT = (this.begT ?? 0) - dt; if (this.begT <= 0) { this.begT = mr(1.6, 2.6); say(this, mpick(HELD_LINES)); }
+      return;
+    }
+    if (G.super && (this.state === 'chase' || this.alertT >= 0)) { this.state = 'search'; this.alertT = -1; this.panicT = mr(4, 7); this.wt = null; this.sus = 0; }
     this.attackCd -= dt; this.fireCd -= dt;
     if (this.alertT >= 0) { this.alertT -= dt; if (this.alertT < 0) this.alert(); }
 
@@ -3212,10 +3984,21 @@ class Hunter {
       this.thinkT = 0.2 + Math.random() * 0.12;
       const see = d < 90 && (Math.abs(dy) > 1.5 || this.y > 1 || this.y < -1 || player.y < -1 ? los3D(this.x, this.y + 1.6, this.z, tp.x, playerEyeY(), tp.z) : los(this.x, this.z, tp.x, tp.z));
       this.hasLOS = see;
-      if (this.state !== 'chase') {
-        const noisy = Math.abs(dy) > 3 ? 0 : player.car ? 30 : (player.sprinting ? 16 : player.crouch > 0.5 ? 3 : 7);
-        const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.5 : 1) * (1 + G.level * 0.08) * (player.car ? 1 : 1 - 0.6 * player.disg);
-        if (d < noisy || (see && d < sight)) { this.alert(); shout(this); }
+      const tdt = Math.min(0.5, G.elapsed - this.thinkAt); this.thinkAt = G.elapsed;
+      if (this.state !== 'chase' && !G.super) {
+        // nobody clocks you instantly: they get suspicious first, faster the more you stand out
+        const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.4 : 1) * (G.weatherSight ?? 1);
+        const ahead = (Math.sin(this.face) * dx + Math.cos(this.face) * dz) / (d || 1);
+        const looking = d < 4 || ahead > 0.3 || this.huntT > 0 || this.sus > 0.4;
+        let gain = 0;
+        if (see && d < sight && looking) {
+          gain = G.conspic * knownFace() * lerp(1.8, 0.35, clamp(d / sight, 0, 1)) * 0.9 * (WX.crowd > 1 ? 0.65 : 1);
+          if (d < 14 && !player.car) bumpLocal(tdt * 0.0025 * (WX.crowd > 1 ? 0.5 : 1));
+        }
+        if (Math.abs(dy) < 3 && d < 14 && player.sprinting) gain += 0.5 * knownFace(); // pounding footsteps
+        if (gain > 0) this.sus += gain * tdt; else this.sus = Math.max(0, this.sus - tdt * 0.06);
+        if (this.sus > 0.45 && see) G.stareT = 0.4;
+        if (this.sus >= 1) { this.alert(); shout(this); }
       } else if (see) { this.lastSeen = 0; if (d < 60) reportSighting(tp.x, tp.z); }
     }
 
@@ -3224,7 +4007,7 @@ class Hunter {
       this.stun -= dt;
     } else if (this.state === 'chase') {
       this.lastSeen += dt;
-      if (this.lastSeen > (this.role === 'coward' ? 7 : 14) && d > 35) { this.state = 'search'; this.wt = null; }
+      if (this.lastSeen > (this.role === 'coward' ? 4 : 8) && d > 18) { this.state = 'search'; this.wt = null; this.huntT = 20; this.sus = 0.55; }
       let tx = tp.x, tz = tp.z, spdK = 1, hold = 0;
       const crowd = G.hunters.reduce((n, o) => n + (o !== this && !o.dead && o.state === 'chase' && Math.abs(o.x - tp.x) + Math.abs(o.z - tp.z) < 14 ? 1 : 0), 0);
       if (this.role === 'flanker' && d > 7 && d < 60) { // swing wide and come in from the side
@@ -3283,20 +4066,40 @@ class Hunter {
       }
       if (player.car && d < 3 && Math.abs(player.car.speed) < 4) player.dragT += dt;
     } else {
-      if (this.waitT > 0) { this.waitT -= dt; this.face += Math.sin(G.elapsed * 1.3 + this.phase) * dt * 1.2; }
+      this.huntT = Math.max(0, this.huntT - dt);
+      if (G.super) { // the hero's about: keep your head down and say nice things
+        const close = d < (player.flying ? 16 : 7) && Math.abs(dy) < 25;
+        if (close || (this.panicT > 0 && d < 5)) this.cowerT = 1.2;
+        this.cowerT = Math.max(0, (this.cowerT || 0) - dt);
+        if (this.cowerT > 0) {
+          this.begT = (this.begT ?? mr(0, 1.5)) - dt;
+          if (this.begT <= 0) { this.begT = mr(2.5, 5); const line = mpick(BEG_LINES); say(this, line); if (line === 'TAKE MY WALLET!') maybeDropCash(this); if (Math.random() < 0.4) sfx.scream(); }
+        }
+      }
+      if (this.cowerT > 0) { this.waitT = 0; this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 6); }
+      else if (this.panicT > 0) { // run for it, arms flailing
+        this.panicT -= dt;
+        const ax = -dx / (d || 1), az = -dz / (d || 1); let ox2 = ax, oz2 = az;
+        if (blockedAt(this.x + ax * 2.5, this.z + az * 2.5)) { const n = this.navTo({ x: this.x + ax * 10, z: this.z + az * 10 }); if (n) { ox2 = n.x; oz2 = n.z; } }
+        tvx = ox2 * T.speed * 0.9; tvz = oz2 * T.speed * 0.9; this.wt = null;
+      } else if (this.sus > 0.45 && this.hasLOS && d < 40) { this.waitT = Math.max(this.waitT, 0.3); this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 4); } // "hang on, is that...?"
+      else if (this.waitT > 0) { this.waitT -= dt; this.face += Math.sin(G.elapsed * 1.3 + this.phase) * dt * 1.2; }
       else if (!this.wt || Math.hypot(this.wt.x - this.x, this.wt.z - this.z) < 1.5) {
         if (this.wt && Math.random() < 0.6) this.waitT = mr(1, 3.5); // stop and look around
-        const guess = Math.random() < 0.6 ? G.lkp : { x: this.x, z: this.z };
-        this.wt = randomOpenPoint(guess.x, guess.z, 5, 45) || { x: this.x, z: this.z };
+        const hunting = this.huntT > 0 && Math.random() < 0.8;
+        const guess = hunting ? G.lkp : this.home;
+        this.wt = randomOpenPoint(guess.x, guess.z, hunting ? 2 : 5, hunting ? 25 : 40) || { x: this.x, z: this.z };
       }
       if (!this.wt) this.wt = { x: this.x, z: this.z };
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
       if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
-      const w = this.waitT > 0 ? 0 : T.walk * this.spdMul;
+      if (!(this.panicT > 0) && !(this.cowerT > 0)) {
+      const w = this.waitT > 0 ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1);
       tvx = ox * w; tvz = oz * w;
       this.progT += dt;
       if (this.progT > 2) { if (Math.hypot(this.x - this.lx, this.z - this.lz) < 0.6) this.wt = null; this.progT = 0; this.lx = this.x; this.lz = this.z; }
+      }
     }
 
     const acc = Math.min(1, dt * (this.stun > 0 ? 2 : 8));
@@ -3336,11 +4139,16 @@ class Hunter {
       else if (this.noticeT > 0) { p.armR.rotation.x = -1.4; p.armL.rotation.x = 0; } // pointing: "it's them!"
       else if (d < 2.6) { p.armL.rotation.x = -1.35 + sw * 0.25; p.armR.rotation.x = -1.35 - sw * 0.25; } // grabbing
       else { p.armL.rotation.x = -0.35 - sw * 1.1; p.armR.rotation.x = -0.35 + sw * 1.1; } // sprinting
-    } else { p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
-    this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08, this.z);
+    } else if (this.cowerT > 0) { p.armL.rotation.x = -2.9; p.armR.rotation.x = -2.9; p.armL.rotation.z = 0.3; p.armR.rotation.z = -0.3; p.legL.rotation.x = -1.2; p.legR.rotation.x = 0.4; }
+    else if (this.panicT > 0) { p.armL.rotation.x = -2.8 + Math.sin(this.phase * 2) * 0.5; p.armR.rotation.x = -2.8 - Math.sin(this.phase * 2) * 0.5; }
+    else { p.armL.rotation.x = -sw * 0.8; p.armR.rotation.x = sw * 0.8; }
+    if (!(this.cowerT > 0)) { p.armL.rotation.z = 0; p.armR.rotation.z = 0; }
+    this.g.position.set(this.x, this.y + Math.abs(Math.cos(this.phase)) * Math.min(1, sp / 4) * 0.08 - (this.cowerT > 0 ? 0.45 : 0), this.z);
     this.g.rotation.y = this.face;
-    this.marker.visible = this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12);
-    this.marker.material = this.noticeT > 0 ? qMarkerMat : markerMat;
+    const wary = this.state !== 'chase' && this.sus > 0.35 && d < 50;
+    this.marker.visible = wary || (this.state === 'chase' && d < 70 && !(this.role === 'stalker' && d > 12));
+    this.marker.material = wary || this.noticeT > 0 ? qMarkerMat : markerMat;
+    this.marker.scale.setScalar(wary ? 0.3 + this.sus * 0.3 : 0.55);
   }
   updateClimb(dt) {
     const p = this.p;
@@ -3372,7 +4180,15 @@ class Hunter {
   }
 }
 function shout(h) {
-  for (const o of G.hunters) if (o !== h && o.state !== 'chase' && Math.abs(o.x - h.x) < 24 && Math.abs(o.z - h.z) < 24 && Math.random() < 0.55) o.alert(mr(0.6, 2.2));
+  // people nearby turn to look; once you're properly famous they just join in
+  for (const o of G.hunters) {
+    if (o === h || o.state === 'chase' || Math.abs(o.x - h.x) > 20 || Math.abs(o.z - h.z) > 20 || Math.random() > 0.5) continue;
+    if (G.level >= 3) o.alert(mr(0.6, 2.2)); else { o.sus = Math.max(o.sus, 0.7); o.huntT = Math.max(o.huntT, 12); }
+  }
+}
+// tell people to go and have a look (aircraft, leaks): they still have to spot you themselves
+function sendLooking(x, z, r, t = 15) {
+  for (const h of G.hunters) if (!h.dead && h.state !== 'chase' && Math.abs(h.x - x) < r && Math.abs(h.z - z) < r) { h.huntT = Math.max(h.huntT, t); h.wt = randomOpenPoint(x, z, 1, 14) || h.wt; }
 }
 function alertAround(x, z, r, maxDelay = 1.5) {
   for (const h of G.hunters) if (Math.abs(h.x - x) < r && Math.abs(h.z - z) < r) h.alert(mr(0, maxDelay));
@@ -3467,6 +4283,16 @@ class Car {
   get fx() { return Math.sin(this.heading); }
   get fz() { return Math.cos(this.heading); }
   update(dt) {
+    if (this.air) { // flying through the air, courtesy of the hero
+      const A = this.air; A.vy -= 22 * dt; this.x += A.vx * dt; this.z += A.vz * dt; A.y += A.vy * dt; this.heading += A.spin * dt; A.roll += A.spin * 0.6 * dt;
+      if (A.y <= 0 && A.vy < 0) {
+        A.y = 0; this.air = null; this.speed = 0; this.damage(100); sfx.crash(); G.shake = Math.max(G.shake, 0.25);
+        for (let i = 0; i < 6; i++) emitPuff(this.x + mr(-2, 2), 0.5, this.z + mr(-2, 2), { life: 1.2, vy: mr(1, 3), vx: mr(-3, 3), vz: mr(-3, 3), size0: 1, size1: 3, alpha: 0.5, color: 0x8a8070 });
+        for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - this.x, h.z - this.z) < 3.5) { const dx = h.x - this.x, dz = h.z - this.z, dl = Math.hypot(dx, dz) || 1; launchHunter(h, dx / dl, dz / dl, true); }
+        this.g.rotation.set(0, this.heading, 0);
+      } else { const r = resolveCircle(this, 1.2); if (r) { A.vx *= -0.3; A.vz *= -0.3; } this.g.rotation.set(A.roll, this.heading, A.roll * 0.5); }
+      this.g.position.set(this.x, A.y, this.z); return;
+    }
     const pd = Math.abs(this.x - player.x) + Math.abs(this.z - player.z);
     this.far = pd > 420 && this.driver !== 'player';
     this.g.visible = pd < 480;
@@ -3610,10 +4436,17 @@ function zipStartNear() {
 }
 function useAction() {
   if (player.car) { exitCar(); return; }
+  if (G.super && !player.car && heroGrab()) return;
   if (player.mode === 'zip') { input.jumpEdge = true; return; }
+  const door = player.mode === 'move' ? safeDoorNear(player.x, player.y, player.z) : null;
+  if (door && !door.owned) { rentSafehouse(door); return; }
+  const sspot = G.inSafe && G.inSafe.owned && player.mode === 'move' ? safeSpotNear(G.inSafe, player.x, player.z) : null;
+  if (sspot === 'bed') { napInSafehouse(); return; }
+  if (sspot === 'stash') { raidStash(G.inSafe); return; }
   const shop = player.mode === 'move' ? shopNear(player.x, player.y, player.z) : null;
   if (shop) { tryOpenShop(shop); return; }
   const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
+  if (atm && WX.blackout && WX.blackout.city === WX.here) { showMsg('CASHPOINT IS DEAD. POWER CUT.', 2); return; }
   if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
   const Z = zipStartNear();
   if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
@@ -3767,16 +4600,13 @@ class Aircraft {
       const see = los3D(this.x, fromY, this.z, tp.x, py, tp.z);
       const near = heli ? Math.hypot(this.bx - tp.x, this.bz - tp.z) < 9 : Math.hypot(this.x - tp.x, this.z - tp.z) < 17;
       if (this.state !== 'track') {
-        if (near && see) { this.seeT += dt; if (this.seeT > 0.25 + player.disg * 0.8) { this.state = 'track'; this.lostT = 0; onSpotted(this.kind); } }
+        if (near && see) { this.seeT += dt; if (this.seeT > 0.8 + player.disg * 1.2 + (player.car ? 0 : (1 - G.conspic) * 0.6)) { this.state = 'track'; this.lostT = 0; onSpotted(this.kind); } }
         else this.seeT = 0;
       } else {
         const dist = Math.hypot(this.x - tp.x, this.z - tp.z);
-        if (see && dist < (heli ? 160 : 40)) { this.lostT = 0; reportSighting(tp.x, tp.z); G.airTracking++; }
-        else { this.lostT += dt; if (this.lostT > (heli ? 3 : 2)) { this.state = 'search'; if (heli) showMsg('THE HELICOPTER LOST YOU'); } }
-        if (heli && G.level >= 4 && see) {
-          this.fireCd -= dt;
-          if (this.fireCd <= 0) { this.fireCd = mr(1.8, 2.8); _from.set(this.x + Math.sin(this.yaw) * 2, this.y - 1.4, this.z + Math.cos(this.yaw) * 2); shootAtPlayer(_from, 0.28, 10, 0xff7050, 40); }
-        }
+        // they only keep you while they've a clear view: duck between buildings or indoors and they lose you
+        if (see && dist < (heli ? 80 : 35)) { this.lostT = 0; G.lkp.x = tp.x; G.lkp.z = tp.z; G.airTracking++; }
+        else { this.lostT += dt; if (this.lostT > (heli ? 1.2 : 0.9)) { this.state = 'search'; this.seeT = 0; showMsg(heli ? 'THE HELICOPTER LOST YOU' : 'THE DRONE LOST YOU', 2); } }
         if (!heli && Math.random() < dt * 1.5) sfx.drone();
       }
     }
@@ -3806,9 +4636,9 @@ class Aircraft {
   }
 }
 function onSpotted(kind) {
-  addHeat(kind === 'heli' ? 12 : 6);
+  addHeat(kind === 'heli' ? 6 : 3);
   if (G.spottedMsgT <= 0) { showMsg(kind === 'heli' ? 'SPOTTED BY A POLICE HELICOPTER' : 'A POLICE DRONE SPOTTED YOU', 2.5); sfx.alarm(); G.spottedMsgT = 6; }
-  const tp = targetPos(); alertAround(tp.x, tp.z, 70, 2.5);
+  const tp = targetPos(); sendLooking(tp.x, tp.z, 70, 20);
 }
 function manageAircraft(dt) {
   G.airT -= dt;
@@ -3928,6 +4758,7 @@ function playerShoot() {
   if (player.car || !player.alive || player.reloadT > 0 || player.fireCd > 0 || player.switchT > 0) return;
   const W = WEAPONS[player.weapon];
   if (W.melee) { crowbarSwing(false); return; }
+  if (W.laser) { if (G.held) { heroThrow(); player.fireCd = 0.4; G.fireHeld = false; return; } fireLaser(); return; }
   const A = player.ammo[player.weapon];
   if (A.mag <= 0) { if (A.res > 0) startReload(); else if (player.fireCd > -0.3 || !G.fireHeld) { sfx.empty(); showMsg('OUT OF AMMO'); player.fireCd = 0.3; } return; }
   A.mag--; player.fireCd = W.cd; player.recoil = player.weapon === 'shotgun' ? 1.8 : player.weapon === 'smg' ? 0.55 : 1; G.shotT = 0;
@@ -3950,7 +4781,95 @@ function playerShoot() {
     if (h.dead) showMsg(headHit ? 'HEADSHOT' : 'TAKEDOWN');
   }
   if (hits.size) sfx.hit();
-  alertAround(player.x, player.z, W.alert, 1);
+  alertAround(player.x, player.z, W.alert, 1); bumpLocal(0.15); player.drawnT = 0;
+}
+// superpower mode: the city's greatest hero (self-appointed)
+const BEG_LINES = ['PLEASE! I\'M JUST A DENTIST', 'HUGE FAN! HUGE! PLEASE GO AWAY', 'NOT THE EYES! NOT THE EYES!', 'TAKE MY WALLET!', 'I DIDN\'T SEE ANYTHING', 'SORRY! SORRY! SORRY!', 'YOU\'RE MY HERO! PLEASE LEAVE', 'I\'VE GOT A FAMILY! A SMALL ONE!', 'I VOTED FOR YOU!', 'MUMMY!', 'I LOVE YOUR CAPE!', 'I\'LL DO ANYTHING!'];
+const HELD_LINES = ['PUT ME DOWN! GENTLY!', 'I\'M SCARED OF HEIGHTS!', 'I\'LL TELL EVERYONE YOU\'RE GREAT!', 'MY LEGS ARE GOING!', 'THIS IS FINE. THIS IS FINE.', 'PLEASE NOT THE CANAL!'];
+const HERO_LINES = ['YOU\'RE WELCOME', 'SAY THANK YOU', 'ANOTHER LIFE SAVED. PROBABLY.', 'I\'M THE GOOD GUY', 'SMILE FOR THE CAMERAS', 'THEY LOVE ME REALLY'];
+const bubbleTex = new Map(), bubbles = [];
+function say(h, text) {
+  let t = bubbleTex.get(text);
+  if (!t) {
+    t = canvasTex(512, 96, (ctx, W, H) => {
+      ctx.font = 'bold 38px Arial, sans-serif'; const w = Math.min(W - 8, ctx.measureText(text).width + 40);
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#111'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.roundRect((W - w) / 2, 6, w, H - 22, 20); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#111'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, W / 2, (H - 16) / 2 + 4, W - 30);
+    });
+    bubbleTex.set(text, t);
+  }
+  let b = bubbles.find((q) => q.life <= 0);
+  if (!b) { if (bubbles.length >= 8) return; b = { s: new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true })), life: 0 }; b.s.renderOrder = 5; bubbles.push(b); }
+  b.s.material.map = t; b.s.material.needsUpdate = true; b.s.scale.set(2.6, 0.49, 1); b.s.position.set(0, 2.75, 0);
+  h.g.add(b.s); b.life = 2.4; b.h = h;
+}
+function updateBubbles(dt) { for (const b of bubbles) if (b.life > 0) { b.life -= dt; if (b.life <= 0 || b.h.dead) { b.life = 0; b.s.removeFromParent(); } } }
+const _hd = new THREE.Vector3();
+function heroGrab() {
+  if (G.held) { const h = G.held; h.held = false; G.held = null; h.state = 'search'; h.y = floorAt(h.x, h.z, h.y + 1); h.panicT = 6; say(h, 'THANK YOU THANK YOU'); return true; }
+  let best = null, bd = 3.2;
+  for (const h of G.hunters) { if (h.dead || h.contract) continue; const d = Math.hypot(h.x - player.x, h.z - player.z); if (d < bd && Math.abs(h.y - player.y) < 2) { bd = d; best = h; } }
+  if (!best) return false;
+  G.held = best; best.held = true; best.cowerT = 0; best.panicT = 0; sfx.scream(); say(best, 'AAAAH!'); showMsg(mpick(HERO_LINES), 1.5);
+  return true;
+}
+function heroThrow() {
+  const h = G.held; if (!h) return;
+  camera.getWorldDirection(_hd);
+  launchHunter(h, 0, 0, true, { x: _hd.x * 34, y: _hd.y * 34 + 7, z: _hd.z * 34 });
+  sfx.swoosh(); sfx.scream(); G.shake = Math.max(G.shake, 0.12); showMsg(mpick(HOMERUN_LINES), 1);
+  for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 30) o.panicT = mr(4, 7);
+}
+// a backhand that sends people and parked cars flying
+function heroSwat() {
+  if (player.shoveCd > 0) return; player.shoveCd = 0.45; player.shoveAnim = 1; sfx.shove();
+  camera.getWorldDirection(_hd); const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  let any = false;
+  for (const h of G.hunters) {
+    if (h.dead || h.held) continue; const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
+    if (d < 4 && (dx * fx + dz * fz) / (d || 1) > 0.3 && Math.abs(h.y - player.y) < 2) { launchHunter(h, dx / (d || 1), dz / (d || 1), true, { x: fx * 30, y: 12, z: fz * 30 }); any = true; }
+  }
+  for (const c of G.cars) {
+    if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz);
+    if (d < 5.5 && (dx * fx + dz * fz) / (d || 1) > 0.2 && player.y < 3) {
+      if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false);
+      c.driver = null; c.lane = null; c.air = { vx: fx * 26, vz: fz * 26, vy: 13, y: 0, spin: mr(-5, 5), roll: 0 }; any = true;
+    }
+  }
+  if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
+}
+function heroSlam() {
+  sfx.explode(); G.shake = 0.6; G.hitstopT = 0.12; G.fovKick = 14;
+  for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; emitPuff(player.x + Math.cos(a) * 1.5, player.y + 0.3, player.z + Math.sin(a) * 1.5, { life: 1, vx: Math.cos(a) * 9, vz: Math.sin(a) * 9, vy: 0.6, size0: 0.8, size1: 3, alpha: 0.6, color: 0x9a9080 }); }
+  for (const h of G.hunters) {
+    if (h.dead || h.held) continue; const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
+    if (d < 9 && Math.abs(h.y - player.y) < 3) launchHunter(h, dx / (d || 1), dz / (d || 1), true, { x: dx / (d || 1) * (24 - d * 1.5), y: 12 - d * 0.6, z: dz / (d || 1) * (24 - d * 1.5) });
+    else if (d < 40) h.panicT = mr(5, 8);
+  }
+  for (const c of G.cars) { if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz); if (d < 8) { if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false); c.driver = null; c.lane = null; c.air = { vx: dx / (d || 1) * 10, vz: dz / (d || 1) * 10, vy: 9, y: 0, spin: mr(-3, 3), roll: 0 }; } }
+  showMsg('SUPERHERO LANDING', 1.5);
+}
+// superpower mode: two red beams straight out of your eyes
+const _eyeL = new THREE.Vector3(), _eyeR = new THREE.Vector3(), _lz = new THREE.Vector3();
+const laserGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, 0.5);
+const laserMeshes = [0, 1].map(() => { const g = new THREE.Group();
+  g.add(new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0xff1a10, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
+  g.add(new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color: 0xff5030, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
+  g.children[0].scale.set(0.012, 0.012, 1); g.children[1].scale.set(0.05, 0.05, 1); g.visible = false; scene.add(g); return g; });
+function laserBeam(i, from, to) { const g = laserMeshes[i]; g.visible = true; g.position.copy(from); g.lookAt(to); g.scale.set(1, 1, from.distanceTo(to)); }
+function updateLaser(dt) { G.laserT = Math.max(0, (G.laserT || 0) - dt); if (G.laserT <= 0) for (const g of laserMeshes) g.visible = false; }
+function fireLaser() {
+  player.fireCd = WEAPONS.laser.cd; player.drawnT = 0; G.laserT = 0.12;
+  camera.getWorldDirection(_aim);
+  const r = fireRay(_aim, 220, false), o = camera.position;
+  const t = r ? Math.hypot(r.h.x - o.x, r.h.z - o.z) : raycastWorld(o, _aim, 220).t;
+  _lz.copy(o).addScaledVector(_aim, Math.min(t, 220));
+  _eyeL.set(-0.07, -0.1, -0.45).applyMatrix4(camera.matrixWorld); _eyeR.set(0.07, -0.1, -0.45).applyMatrix4(camera.matrixWorld);
+  laserBeam(0, _eyeL, _lz); laserBeam(1, _eyeR, _lz);
+  if (Math.random() < 0.5) emitPuff(_lz.x, _lz.y, _lz.z, { life: 0.35, vy: 1, size0: 0.25, size1: 1, alpha: 0.8, color: Math.random() < 0.5 ? 0xff4020 : 0xffc040 });
+  if (Math.random() < 0.3) sfx.zap ? sfx.zap() : sfx.smg();
+  if (r && !r.h.dead) { const dx = r.h.x - player.x, dz = r.h.z - player.z, dl = Math.hypot(dx, dz) || 1; launchHunter(r.h, dx / dl, dz / dl, !r.h.contract); showMsg(mpick(HOMERUN_LINES), 1); for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - r.h.x, h.z - r.h.z) < 30) h.panicT = mr(4, 7); }
 }
 // one bullet: returns the hunter it hit (damage is pooled so a shotgun blast lands as one hit)
 function fireRay(dir, range, tracer) {
@@ -3972,7 +4891,7 @@ function fireRay(dir, range, tracer) {
   } else if (carHit) {
     carHit.damage(5);
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0.4, size0: 0.15, size1: 0.6, alpha: 0.9, color: 0xffe0a0 });
-    if (carHit.driver === 'traffic') carHit.driver = 'hunter';
+    if (carHit.driver === 'traffic' && !G.super) carHit.driver = 'hunter';
   } else if (airHit) {
     airHit.damage(1);
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0, size0: 0.3, size1: 1, alpha: 0.9, color: 0xffe0a0 });
@@ -3987,6 +4906,7 @@ const SWING = { light: { dur: 0.36, hit: 0.11 }, heavy: { dur: 0.8, hit: 0.36 } 
 const HOMERUN_LINES = ['HOME RUN!', 'FORE!', 'BONK!', 'SEE YOU LATER', 'OUT OF THE PARK', 'AIRMAIL'];
 function crowbarSwing(heavy) {
   if (player.car || !player.alive || player.switchT > 0 || player.weapon !== 'crowbar') return;
+  player.drawnT = 0;
   if (player.swingT < (player.swingKind ? SWING[player.swingKind].dur : 0) * 0.85) return;
   if (heavy) {
     if (player.launchCd > 0) { showMsg(`BIG SWING IN ${player.launchCd.toFixed(1)}s`, 0.8); return; }
@@ -4028,11 +4948,12 @@ function crowbarImpact(heavy) {
   addHeat(4); alertAround(player.x, player.z, 20, 1);
 }
 // sends someone flying 5 to 10 m; unless that finished them off, they get back up a few seconds later
-function launchHunter(h, ux, uz, getsUp) {
+function launchHunter(h, ux, uz, getsUp, imp) {
   if (h.dead) return;
   const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
+  if (h.held) { h.held = false; if (G.held === h) G.held = null; }
   h.dead = true; h.marker.visible = false; h.g.position.set(h.x, h.y, h.z);
-  addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
+  addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, imp || { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
   const rag = ragdolls[ragdolls.length - 1];
   rag.launchFrom = { x: h.x, z: h.z };
   if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
@@ -4089,7 +5010,7 @@ function updateDrops(dt, t) {
 // ---------------------------------------------------------------------
 function selectWeapon(w) {
   if (!w || !player.owned.has(w) || player.car || w === player.weapon) return;
-  player.lastWeapon = player.weapon; player.weapon = w; player.reloadT = 0; player.switchT = 0.28; player.swingKind = null; player.swingT = 9;
+  player.lastWeapon = player.weapon; player.weapon = w; player.reloadT = 0; player.drawnT = 0; player.switchT = 0.28; player.swingKind = null; player.swingT = 9;
   sfx.swap(); showWeaponModel();
 }
 function cycleWeapon(dir) {
@@ -4098,7 +5019,7 @@ function cycleWeapon(dir) {
 }
 function primaryDown() { G.fireHeld = true; if (WEAPONS[player.weapon].melee) crowbarSwing(false); else playerShoot(); }
 function primaryUp() { G.fireHeld = false; }
-function secondary() { if (player.weapon === 'crowbar') crowbarSwing(true); else playerShove(); }
+function secondary() { if (G.super) heroSwat(); else if (player.weapon === 'crowbar') crowbarSwing(true); else playerShove(); }
 
 // ---------------------------------------------------------------------
 // shops and hired help
@@ -4129,7 +5050,7 @@ const shopCtx = {
     if (st === 'full') return it.id === 'medkit' ? "YOU'RE FINE, MATE" : it.id.startsWith('ammo_') ? "YOU CAN'T CARRY ANY MORE" : 'TWO HELPERS IS ALL YOU CAN FEED';
     if (it.id.startsWith('ammo_') && !player.owned.has(it.id.slice(5))) return 'BUY THE GUN FIRST';
     if (player.cash < it.price) return `YOU NEED $${it.price - player.cash} MORE`;
-    player.cash -= it.price; sfx.cash();
+    player.cash -= it.price; sfx.cash(); bumpLocal(0.08);
     const id = it.id;
     if (it.slot) { player.outfit[it.slot] = id; return putOnDisguise(); }
     if (id === 'crowbar' || id === 'shotgun' || id === 'smg') {
@@ -4195,7 +5116,7 @@ const atmCtx = {
     if (!p) p = randomOpenPoint(tp.x, tp.z, 60, 140) || { x: tp.x + 80, z: tp.z };
     const k = o.K.kind;
     const h = new Hunter(p.x, p.z, k === 'guarded' ? 'civ' : k === 'runner' ? 'runner' : 'civ', k === 'armed', 'search');
-    G.contract = { offer: o, h, t: 240, pay: o.pay, name: o.target };
+    G.contract = { offer: o, h, t: 240, pay: o.pay, name: o.target }; bumpLocal(0.1);
     dressTarget(h, G.contract);
     if (k === 'runner') h.fleer = true;
     G.hunters.push(h);
@@ -4252,7 +5173,7 @@ function putOnDisguise() {
 function wearDisguise(n) {
   if (player.disg <= 0) return;
   player.disg = Math.max(0, player.disg - n);
-  if (player.disg === 0) { showMsg('THEY\'VE CLOCKED YOUR DISGUISE', 2.4); updateOutfitView(); }
+  if (player.disg === 0) { showMsg('THEY\'VE CLOCKED YOUR DISGUISE', 2.4); updateOutfitView(); G.newsLook = { ...player.outfit }; } // the sketch on the news gets updated
 }
 const outfitEl = $('outfit');
 function updateOutfitView() {
@@ -4277,12 +5198,13 @@ function updateAllies(dt) {
   G.allies = G.allies.filter((a) => !a.dead);
 }
 function startReload() {
-  const W = WEAPONS[player.weapon]; if (W.melee) return;
+  const W = WEAPONS[player.weapon]; if (W.melee || W.laser) return;
   const A = player.ammo[player.weapon];
   if (player.reloadT > 0 || A.mag >= W.mag || A.res <= 0 || player.car) return;
   player.reloadT = W.reload; sfx.reload();
 }
 function playerShove() {
+  if (G.super && !player.car && player.alive) { heroSwat(); return; }
   if (player.car || player.shoveCd > 0 || !player.alive) return;
   player.shoveCd = 0.55; player.shoveAnim = 1; sfx.shove();
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
@@ -4409,10 +5331,10 @@ if (isTouch) {
 // HUD
 // =====================================================================
 const hud = {
-  city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'),
+  city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'), wx: $('hud-wx'),
   time: $('hud-time'), kills: $('hud-kills'), alert: $('hud-alert'), msg: $('hud-msg'), banner: $('hud-banner'),
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
-  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'),
+  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
 };
 function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
 let bannerT = 0;
@@ -4454,6 +5376,12 @@ function drawMinimap() {
     mm.fillRect(-1.1, -2.3, 2.2, 4.6); mm.restore();
   }
   for (const sp of shopSpots) { mm.fillStyle = sp.kind === 'guns' ? '#ff9a2a' : sp.kind === 'hire' ? '#4aa0ff' : '#ff5ac8'; const k = (big ? 6 : 4) / sc * 0.9; mm.fillRect(sp.x - k, sp.z - k, k * 2, k * 2); }
+  for (const S of safehouses) {
+    const cx = (S.x0 + S.x1) / 2, cz = (S.z0 + S.z1) / 2, k = (big ? 7 : 5) / sc;
+    mm.fillStyle = !S.owned ? '#9a9aa6' : S.burnedDay === G.day ? '#ff5a4a' : '#ffffff';
+    mm.fillRect(cx - k, cz - k * 0.2, k * 2, k * 1.2);
+    mm.beginPath(); mm.moveTo(cx - k * 1.3, cz - k * 0.2); mm.lineTo(cx, cz - k * 1.3); mm.lineTo(cx + k * 1.3, cz - k * 0.2); mm.closePath(); mm.fill();
+  }
   mm.fillStyle = '#9affb0'; for (const a of atmSpots) mm.fillRect(a.x - 1.6 / sc, a.z - 1.6 / sc, 3.2 / sc, 3.2 / sc);
   mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
   const dot = Math.max(1.8, 2.2 / sc);
@@ -4500,9 +5428,10 @@ function updateHUD(dt) {
   hud.city.textContent = G.locale;
   hud.day.textContent = `DAY ${Math.min(G.day, CFG.days)} / ${CFG.days}`;
   const hh = Math.floor(G.hour), mn = Math.floor(((G.hour - hh) * 60) / 15) * 15;
-  hud.clock.textContent = String(hh).padStart(2, '0') + ':' + String(mn).padStart(2, '0') + (G.dayAmt < 0.3 ? ' · NIGHT' : '');
+  hud.clock.textContent = String(hh).padStart(2, '0') + ':' + String(mn).padStart(2, '0') + (G.dayAmt < 0.3 ? ' · NIGHT' : '') + (WX.kind !== 'clear' ? ' · ' + WX_NAMES[WX.kind] : '');
+  hud.wx.textContent = WX.blackout && WX.blackout.city === WX.here ? 'POWER CUT: STREETS ARE DARK' : WX.festival && WX.festival.city === WX.here ? FESTIVALS[WX.here] + ': CROWDS' : '';
   hud.stars.innerHTML = Array.from({ length: 5 }, (_, i) => `<span class="${i < G.level ? 'on' : ''}">★</span>`).join('');
-  hud.pname.textContent = LEVEL_NAMES[G.level];
+  hud.pname.textContent = G.super ? 'THE PARAGON' : LEVEL_NAMES[G.level];
   const lo = LEVELS[G.level], hi = LEVELS[G.level + 1] ?? 330;
   hud.heat.style.width = (clamp((G.heat - lo) / (hi - lo), 0, 1) * 100).toFixed(0) + '%';
   const nh = G.helis.filter((a) => !a.dead && !a.leaving).length, nd = G.drones.filter((a) => !a.dead && !a.leaving).length;
@@ -4510,14 +5439,20 @@ function updateHUD(dt) {
   hud.time.textContent = fmtTime(G.elapsed) + ' survived';
   hud.kills.textContent = G.kills ? G.kills + (G.kills === 1 ? ' takedown' : ' takedowns') : '';
   const chasing = G.hunters.filter((h) => !h.dead && h.state === 'chase').length + G.cars.filter((c) => c.driver === 'hunter').length;
-  if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR'; hud.alert.className = 'hot'; }
+  if (G.safe) { hud.alert.textContent = 'SAFEHOUSE · LYING LOW'; hud.alert.className = 'calm'; }
+  else if (G.inSafe && G.inSafe.owned) { hud.alert.textContent = 'SAFEHOUSE BURNED'; hud.alert.className = 'hot'; }
+  else if (G.airTracking) { hud.alert.textContent = 'TRACKED FROM THE AIR'; hud.alert.className = 'hot'; }
   else if (chasing) { hud.alert.textContent = `${chasing} HUNTING YOU`; hud.alert.className = 'hot'; }
-  else if (G.lastSeenT > 10) { hud.alert.textContent = 'HIDDEN'; hud.alert.className = 'calm'; }
+  else if (G.super) { hud.alert.textContent = G.held ? 'HOLDING A FAN' : player.flying ? 'FLYING' : 'ADORED BY ALL'; hud.alert.className = 'calm'; }
+  else if (G.stareT > 0) { hud.alert.textContent = "SOMEONE'S STARING AT YOU"; hud.alert.className = 'warm'; }
+  else if (G.unseenT > 10) { hud.alert.textContent = G.conspic < 0.3 && !player.car ? 'BLENDING IN' : 'HIDDEN'; hud.alert.className = 'calm'; }
   else { hud.alert.textContent = 'THEY LOST SIGHT OF YOU'; hud.alert.className = 'warm'; }
   const W = WEAPONS[player.weapon], A = player.ammo[player.weapon];
-  hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
+  hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.laser ? (player.flying ? '<i>FLYING</i>' : '<i>UNLIMITED</i>') : W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
   hud.cash.textContent = '$' + player.cash;
   const nOut = Object.keys(player.outfit).length;
+  const ls = localSus();
+  hud.sus.innerHTML = ls > 0.02 ? `LOCALS ${ls < 0.25 ? 'CURIOUS' : ls < 0.55 ? 'WARY' : ls < 0.8 ? 'SUSPICIOUS' : 'ON TO YOU'} <span><i style="width:${(ls * 100).toFixed(0)}%"></i></span>` : '';
   hud.disg.innerHTML = nOut ? `DISGUISE <span><i style="width:${(player.disg * 100).toFixed(0)}%"></i></span>` : '';
   const CT = G.contract;
   if (CT) { const dd = Math.hypot(CT.h.x - player.x, CT.h.z - player.z); hud.job.innerHTML = `<b>CONTRACT</b> ${CT.name}<br>${Math.round(dd)} m · ${fmtTime(CT.t)} left · pays $${CT.pay}`; }
@@ -4531,12 +5466,15 @@ function updateHUD(dt) {
   if (player.car) prompt = Math.abs(player.car.speed) > 6 ? '' : (isTouch ? 'Tap CAR to get out' : 'Press E to get out');
   else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
   else if (player.mode === 'ladder') prompt = isTouch ? 'Push forward to climb, JUMP to let go' : 'W / S to climb, Space to let go';
+  else if (safeDoorNear(player.x, player.y, player.z) && !safeDoorNear(player.x, player.y, player.z).owned) { const S = safeDoorNear(player.x, player.y, player.z); prompt = `${isTouch ? 'Tap USE' : 'Press E'} to rent ${S.name} for $${S.price}`; }
+  else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'bed') prompt = G.napDay === G.day ? 'You already napped today' : `${isTouch ? 'Tap USE' : 'Press E'} to nap (skips 5 hours)`;
+  else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'stash') prompt = G.inSafe.stashDay === G.day ? 'Stash is empty. Back tomorrow' : `${isTouch ? 'Tap USE' : 'Press E'} to raid the stash`;
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
   else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
   else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
-  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
+  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
 }
 
 // =====================================================================
@@ -4570,6 +5508,7 @@ function updateLighting(t) {
   }
   const win = 0.04 + (1 - dayAmt) * 1.05 + dusk * 0.2;
   for (const m of emissiveFacades) m.emissiveIntensity = win;
+  applyWeatherLook(hemi, sun, dayAmt, under);
   const blink = Math.sin(t * 3) > 0.2;
   beaconMat.opacity = blink ? 1 : 0.15;
   for (const a of animated) a.obj.rotation.z += a.spin * 0.016;
@@ -4584,7 +5523,7 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   let p = null;
   for (let t = 0; t < 12 && !p; t++) {
     const c = randomOpenPoint(tp.x, tp.z, minD, maxD, 4);
-    if (c && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
+    if (c && !safeAt(c.x, 0, c.z) && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
   }
   if (!p) return;
   const r = Math.random(), copChance = G.level >= 2 ? (G.level - 1) * 0.08 : 0;
@@ -4592,7 +5531,7 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   const gunner = type !== 'brute' && Math.random() < Math.min(0.08 + (G.day - 1) * 0.022, 0.5);
   G.hunters.push(new Hunter(p.x, p.z, type, gunner, state));
 }
-const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min(14 + G.day * 2.4 + G.level * 2, 46) * localeFactor(tp.x, tp.z)); };
+const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min(26 + G.day * 1.2 + G.level * 2, 50) * localeFactor(tp.x, tp.z) * WX.crowd); }; // everyday crowds to blend into
 const maxChasers = () => Math.round(5 + G.level * 2 + G.day * 0.35);
 
 function clearWorld() {
@@ -4602,7 +5541,9 @@ function clearWorld() {
   for (const a of [...G.helis, ...G.drones]) a.remove(); G.helis.length = 0; G.drones.length = 0;
   for (const a of G.allies) a.remove(); G.allies.length = 0;
   for (const D of G.drops) scene.remove(D.m); G.drops.length = 0; G.getUps.length = 0;
-  G.contract = null; G.offers = []; G.offersDay = 0;
+  G.contract = null; G.offers = []; G.offersDay = 0; G.held = null;
+  for (const b of bubbles) { b.life = 0; b.s.removeFromParent(); }
+  for (const c of G.cars) c.air = null;
 }
 function spawnTraffic(count) {
   const total = lanes.reduce((s, l) => s + (l.a1 - l.a0), 0);
@@ -4627,20 +5568,27 @@ function resetGame() {
   showWeaponModel(); updateOutfitView();
   Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false, hitstopT: 0, fovKick: 0, fireHeld: false });
   G.lkp = { x: 0, z: 0 };
+  for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
+  Object.assign(G, { safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
   spawnTraffic(70);
   navRecenter(0, 0, true); computeFlow(0, 0);
   for (let i = 0; i < targetHunters(); i++) spawnHunter(40, 170);
   if (!G.pickups.length) { for (let i = 0; i < 10; i++) G.pickups.push(new Pickup('health')); for (let i = 0; i < 10; i++) G.pickups.push(new Pickup('ammo')); }
   else for (const p of G.pickups) p.place();
 }
-function startGame() {
-  initAudio(); resetGame();
+function startGame(sup = G.super) {
+  G.super = !!sup;
+  initAudio(); resetGame(); resetWeather(); G.newsLook = {};
+  SLOTS[0] = G.super ? 'laser' : 'pistol';
+  if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
+  player.flying = false; player.slamming = false;
   G.mode = 'playing';
   for (const id of ['menu', 'over', 'pause']) $(id).classList.add('hidden');
   $('hud').classList.remove('hidden');
   if (isTouch) $('touch').classList.remove('hidden');
   lockPointer();
-  showBanner(`DAY 1<small>EVERYONE IS AFTER THE BOUNTY ON YOUR HEAD</small>`, 3.5);
+  if (G.super) { showBanner(`THE PARAGON<small>THE CITY'S GREATEST HERO. ASK ANYONE. THEY'RE TOO SCARED TO SAY OTHERWISE.</small>`, 4); showMsg('CLICK LASER · SPACE TWICE FLY · E GRAB · F SWAT · C SLAM', 7); }
+  else { showBanner(`DAY 1<small>EVERYONE IS AFTER THE BOUNTY ON YOUR HEAD</small>`, 3.5); showMsg("NAN'S OLD FLAT IS THE WHITE HOUSE ON YOUR MAP. GET IN UNSEEN TO LIE LOW", 5); }
 }
 function pauseGame() {
   if (G.mode !== 'playing') return;
@@ -4672,9 +5620,19 @@ function endGame(won) {
   $('over').classList.remove('hidden');
 }
 function showBest() { const b = loadBest(); $('best').textContent = b ? `Best run: Day ${b.day}, ${fmtTime(b.time)} survived, ${b.kills} takedowns` : ''; }
-$('btn-play').addEventListener('click', startGame);
-$('btn-again').addEventListener('click', startGame);
+$('btn-play').addEventListener('click', () => startGame(false));
+$('btn-super').addEventListener('click', () => startGame(true));
+$('btn-again').addEventListener('click', () => startGame());
 $('btn-resume').addEventListener('click', resumeGame);
+// graphics: HIGH = reflections + post effects, MEDIUM = post effects only, LOW = neither (for slow machines)
+{
+  const GFX = ['HIGH', 'MEDIUM', 'LOW'];
+  let saved = 'HIGH'; try { saved = localStorage.getItem('hunted-gfx') || 'HIGH'; } catch { /* storage unavailable */ }
+  let gi = Math.max(0, GFX.indexOf(saved));
+  const apply = () => { PFX.on = gi < 2; PFX.refl = gi === 0; $('btn-gfx').textContent = 'GRAPHICS: ' + GFX[gi]; try { localStorage.setItem('hunted-gfx', GFX[gi]); } catch { /* private mode */ } };
+  $('btn-gfx').addEventListener('click', () => { gi = (gi + 1) % GFX.length; apply(); });
+  apply();
+}
 $('btn-quit').addEventListener('click', toMenu);
 $('btn-menu').addEventListener('click', toMenu);
 $('shop-leave').addEventListener('click', leaveShop);
@@ -4686,6 +5644,7 @@ showBest();
 function updatePlayer(dt) {
   player.shoveCd -= dt; player.fireCd -= dt; player.carHitCd -= dt; player.lastHurt += dt;
   player.launchCd = Math.max(0, player.launchCd - dt); player.meleeCd -= dt; player.switchT = Math.max(0, player.switchT - dt);
+  player.drawnT += dt; G.conspic = conspicuous(); G.stareT = Math.max(0, G.stareT - dt);
   player.recoil = Math.max(0, player.recoil - dt * 8); player.shoveAnim = Math.max(0, player.shoveAnim - dt * 4);
   if (player.reloadT > 0) { player.reloadT -= dt; if (player.reloadT <= 0) { const W = WEAPONS[player.weapon], A = player.ammo[player.weapon]; if (!W.melee) { const n = Math.min(W.mag - A.mag, A.res); A.mag += n; A.res -= n; } } }
   if (player.swingKind) { player.swingT += dt; if (!player.swingHit && player.swingT >= SWING[player.swingKind].hit) { player.swingHit = true; crowbarImpact(player.swingKind === 'heavy'); } }
@@ -4708,7 +5667,8 @@ function updatePlayer(dt) {
   player.sprinting = sprint;
   const speed = sprint ? 10 : 5.8;
   player.kx *= Math.max(0, 1 - dt * 6); player.kz *= Math.max(0, 1 - dt * 6);
-  parkourMove(dt, player, input, sprint, speed, parkourCb);
+  if (G.super && input.jumpEdge && !player.grounded && player.mode === 'move' && !player.flying) { player.flying = true; player.vy = 0; showMsg('FLYING. HOLD SPACE TO RISE, C TO DROP', 2); sfx.swoosh(); }
+  if (player.flying) flyMove(dt); else parkourMove(dt, player, input, sprint, speed, parkourCb);
   input.jumpEdge = false;
   for (const h of G.hunters) {
     if (h.dead || Math.abs(h.y - player.y) > 1.2) continue;
@@ -4720,6 +5680,22 @@ function updatePlayer(dt) {
     player.bob += Math.hypot(player.vx, player.vz) * dt * 1.6 * (player.slideT > 0 ? 0 : 1);
     if (Math.floor(ob / Math.PI) !== Math.floor(player.bob / Math.PI)) sfx.step();
   }
+}
+function flyMove(dt) {
+  const fast = input.sprint ? 42 : 15, cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  const wx = (fx * cp * input.fwd + rx * input.side) * fast, wz = (fz * cp * input.fwd + rz * input.side) * fast;
+  const above = player.y - floorAt(player.x, player.z, player.y + 0.3);
+  if (input.crouch && above > 5 && !player.slamming) { player.slamming = true; sfx.swoosh(); }
+  const wy = player.slamming ? -55 : sp * input.fwd * fast + (input.jump ? 14 : 0) - (input.crouch ? 12 : 0);
+  const k = Math.min(1, dt * (player.slamming ? 12 : 4));
+  player.vx = lerp(player.vx, wx, k); player.vz = lerp(player.vz, wz, k); player.vy = lerp(player.vy, wy, k);
+  const prevY = player.y;
+  player.x += player.vx * dt; player.z += player.vz * dt; player.y = Math.min(260, player.y + player.vy * dt);
+  resolveBody(player, 0.4, player.y, 1.8);
+  const fl = floorAt(player.x, player.z, Math.max(prevY, player.y) + 0.3);
+  if (player.y <= fl) { player.y = fl; if (player.vy < 0.5) { if (player.slamming) heroSlam(); else for (const h of G.hunters) if (!h.dead && Math.hypot(h.x - player.x, h.z - player.z) < 25) h.panicT = mr(3, 6); player.flying = false; player.slamming = false; player.grounded = true; player.vy = 0; } }
+  player.sprinting = false; player.bob += dt * 2;
 }
 const interiorCb = {
   hitPlayer: (dir, speed) => {
@@ -4780,7 +5756,7 @@ function updateCamera(dt, t) {
   const mantleDip = player.mode === 'mantle' ? -0.25 * Math.sin(clamp(player.anim.t / player.anim.dur, 0, 1) * Math.PI) : 0;
   const swingRoll = player.swingKind === 'heavy' && player.swingT < 0.7 ? Math.sin(clamp((player.swingT - 0.3) / 0.35, 0, 1) * Math.PI) * 0.05 : 0;
   camera.rotation.set(player.pitch + player.recoil * 0.03 + mantleDip - player.landDip * 0.08, player.yaw, player.alive ? G.camRoll + swingRoll : Math.min(1.2, G.deathT * 1.4));
-  vm.visible = player.alive;
+  vm.visible = player.alive && player.weapon !== 'laser';
   const b = player.bob;
   vm.position.set(Math.cos(b) * 0.012, Math.abs(Math.sin(b)) * -0.015 - (player.reloadT > 0 ? 0.25 : 0), player.recoil * 0.06);
   armR.rotation.x = 0.05 + player.recoil * 0.25;
@@ -4791,7 +5767,9 @@ function updateCamera(dt, t) {
   G.vmReach = lerp(G.vmReach || 0, reach, Math.min(1, dt * 10));
   armL.rotation.x = 0.1 + G.vmReach * 0.7; armL.position.y = -0.27 + G.vmReach * 0.6; armL.position.x = -0.08 - G.vmReach * 0.12;
   if (player.mode === 'ladder') armL.position.y += Math.sin(player.y * 3) * 0.06;
-  vm.position.y -= G.vmReach * 0.12 + player.switchT * 1.1;
+  G.holster = lerp(G.holster || 0, player.drawnT > 4 && !player.reloadT ? 1 : 0, Math.min(1, dt * 5));
+  vm.position.y -= G.vmReach * 0.12 + player.switchT * 1.1 + G.holster * 0.3;
+  vm.rotation.x = G.holster * 0.9;
   // two-handed guns bring the left hand forward under the barrel
   const twoHand = player.weapon === 'shotgun' || player.weapon === 'smg', fr = 1 - G.vmReach;
   armL.rotation.y = twoHand ? -0.5 + 0.38 * fr : -0.5;
@@ -4813,12 +5791,83 @@ function updateCamera(dt, t) {
   }
   armR.rotation.set(pose[0], pose[1], pose[2]); armR.position.x = pose[3]; armR.position.y = pose[4];
 }
+// ---------------------------------------------------------------------
+// safehouses: get in unseen and lie low
+// ---------------------------------------------------------------------
+const NAP_LINES = ['YOU SLEPT LIKE A BABY. A HUNTED BABY.', 'FIVE HOURS OF DREAMLESS PANIC. REFRESHING.', 'YOU NAPPED. THE CITY CALMED DOWN A BIT.'];
+const sleepEl = $('sleep');
+function seenGoingIn() {
+  if (G.airTracking) return true;
+  return G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS && Math.hypot(h.x - player.x, h.z - player.z) < 55);
+}
+function burnSafehouse(S, msg) {
+  S.burnedDay = G.day; G.safe = null;
+  reportSighting(S.door.x, S.door.z); alertAround(S.door.x, S.door.z, 80, 2); addHeat(8);
+  showMsg(msg, 3); sfx.alarm();
+}
+function updateSafehouse(dt) {
+  const S = player.car || !player.alive ? null : safeAt(player.x, player.y, player.z);
+  if (S && S !== G.inSafe) {
+    if (!S.owned) showMsg(`NOT YOURS. RENT IT AT THE DOOR FOR $${S.price}`, 2.5);
+    else if (S.burnedDay === G.day) showMsg('THIS PLACE IS BURNED UNTIL TOMORROW', 2.5);
+    else if (seenGoingIn()) burnSafehouse(S, 'THEY SAW YOU GO IN. THIS PLACE IS BURNED');
+    else {
+      showMsg(`${S.name}. SAFE. LIE LOW.`, 2.5); sfx.pickup();
+      for (const h of G.hunters) if (!h.dead && h.state === 'chase' && !h.hasLOS) { h.state = 'search'; h.wt = null; h.alertT = -1; }
+    }
+  }
+  G.inSafe = S;
+  G.safe = S && S.owned && S.burnedDay !== G.day ? S : null;
+  if (!G.safe) return;
+  if (G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS && Math.hypot(h.x - player.x, h.z - player.z) < 40)) { burnSafehouse(S, 'THEY FOUND YOU. THIS PLACE IS BURNED'); return; }
+  G.heat -= dt * 9; G.pingT += dt; // nobody leaks where you are while you're tucked away
+  if (player.alive) player.hp = Math.min(100, player.hp + 5 * dt);
+}
+function rentSafehouse(S) {
+  if (player.cash < S.price) { showMsg(`YOU NEED $${S.price - player.cash} MORE FOR ${S.name}`, 2.5); return; }
+  player.cash -= S.price; S.owned = true; sfx.cash(); bumpLocal(0.1);
+  showBanner(`${S.name}<small>${S.blurb.toUpperCase()}</small>`, 3);
+}
+function raidStash(S) {
+  if (S.stashDay === G.day) { showMsg('EMPTY. THE STASH REFILLS TOMORROW', 2); return; }
+  S.stashDay = G.day;
+  player.ammo.pistol.res = Math.min(WEAPONS.pistol.maxRes, player.ammo.pistol.res + 24);
+  player.cash += 15; player.hp = Math.min(100, player.hp + 30); sfx.cash();
+  showMsg('STASH: 24 ROUNDS, $15 AND A SLIGHTLY OLD SANDWICH', 3);
+}
+function napInSafehouse() {
+  const S = G.safe;
+  if (!S) { showMsg("YOU CAN'T SLEEP HERE. THEY KNOW ABOUT IT", 2.2); return; }
+  if (G.napDay === G.day) { showMsg('YOU ALREADY NAPPED TODAY. TOO WIRED TO SLEEP', 2.2); return; }
+  if (G.hunters.some((h) => !h.dead && h.state === 'chase' && Math.hypot(h.x - player.x, h.z - player.z) < 45)) { showMsg("YOU CAN'T SLEEP WITH THEM THIS CLOSE", 2.2); return; }
+  G.napDay = G.day; G.sleepT = 2.2; sleepEl.classList.add('show');
+  const h0 = G.hour;
+  for (let i = 0; i < 2000; i++) { G.elapsed += 0.25; if ((hourAt(G.elapsed) - h0 + 24) % 24 >= 5) break; }
+  player.hp = 100; player.stam = 100; player.exhausted = false;
+  G.heat -= 70; G.lastSeenT = 99; G.pingT = Math.max(G.pingT, 30);
+  // the more famous you are, the likelier someone tips them off while you snore
+  if (Math.random() < 0.08 + G.level * 0.08) {
+    S.burnedDay = Math.floor(G.elapsed / CFG.dayLength) + 1;
+    const n = 3 + G.level;
+    for (let k = 0; k < n; k++) {
+      const p = randomOpenPoint(S.door.x, S.door.z + 6, 2, 9);
+      if (p) G.hunters.push(new Hunter(p.x, p.z, mpick(['civ', 'civ', 'runner', 'brute']), Math.random() < 0.2, 'chase'));
+    }
+    reportSighting(S.door.x, S.door.z);
+    showMsg('YOU WOKE UP TO KNOCKING. LOTS OF KNOCKING.', 3.5); sfx.alarm();
+  } else showMsg(mpick(NAP_LINES), 3);
+}
+
 function updateDirector(dt) {
   G.hour = hourAt(G.elapsed);
+  { const tp0 = targetPos(), c0 = cityAt(tp0.x, tp0.z, 20);
+    const covered = !!G.inSafe || camera.position.y < -1 || (!player.car && !!zoneAt(player.x, player.y, player.z));
+    updateWeather(dt, { day: G.day, hour: G.hour, city: c0 ? c0.name : null, covered, say: (m) => showMsg(m, 3.5), banner: (h) => showBanner(h, 4) });
+    G.weatherSight = WX.sight; }
   const day = Math.floor(G.elapsed / CFG.dayLength) + 1;
   if (day > G.day) {
     G.day = day;
-    if (G.day > CFG.days) { endGame(true); return; }
+    if (G.day > CFG.days && !G.super) { endGame(true); return; }
     sfx.day();
     showBanner(`DAY ${G.day}<small>${G.day === CFG.days ? 'LAST DAY. HOLD ON.' : 'THE BOUNTY WENT UP. MORE OF THEM NOW.'}</small>`, 3.5);
   }
@@ -4838,17 +5887,20 @@ function updateDirector(dt) {
   // profile
   G.lastSeenT += dt;
   const seenByHunters = G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS);
-  G.heat += dt * (0.25 + (G.airTracking ? 3 : 0) + (seenByHunters ? 0.8 * (1 - 0.5 * player.disg) : 0));
+  const anyChasing = G.hunters.some((h) => !h.dead && h.state === 'chase');
+  G.heat += dt * ((G.airTracking ? 0.8 : 0) + (seenByHunters ? 0.8 * (1 - 0.5 * player.disg) : 0));
   if (player.disg > 0) wearDisguise(dt * 0.0035);
-  if (G.lastSeenT > 10) G.heat -= dt * 3.5;
+  G.unseenT = seenByHunters || G.airTracking ? 0 : G.unseenT + dt;
+  if (G.unseenT > 6) G.heat -= dt * (anyChasing ? 2.5 : 4) * (G.conspic < 0.3 ? 1.4 : 1); // lying low cools you off
+  { const here = localKey(tp.x, tp.z); for (const k in G.localSus) G.localSus[k] = Math.max(0, G.localSus[k] - dt * (k === here ? 0.003 : 0.012)); }
   G.heat = clamp(G.heat, heatFloor(), 330);
   let lvl = 0; for (let i = 0; i < LEVELS.length; i++) if (G.heat >= LEVELS[i]) lvl = i;
   if (lvl > G.level) { showMsg(`PROFILE: ${LEVEL_NAMES[lvl]}`, 2.5); sfx.alarm(); }
   G.level = lvl; G.peak = Math.max(G.peak || 0, lvl);
   G.spottedMsgT -= dt;
   // air tracking alerts ground units
-  if (G.airTracking) { G.airAlertT -= dt; if (G.airAlertT <= 0) { G.airAlertT = 2; alertAround(tp.x, tp.z, 60, 3); } }
-  manageAircraft(dt);
+  if (G.airTracking) { G.airAlertT -= dt; if (G.airAlertT <= 0) { G.airAlertT = 3; sendLooking(tp.x, tp.z, 60, 15); } }
+  if (!G.super) manageAircraft(dt);
   // population
   G.spawnT -= dt;
   const alive = G.hunters.filter((h) => !h.dead);
@@ -4868,11 +5920,13 @@ function updateDirector(dt) {
   // location leak
   G.pingT -= dt;
   if (G.pingT <= 0) {
-    G.pingT = Math.max(14, 50 - G.day * 1.2 - G.level * 4);
-    reportSighting(tp.x, tp.z);
-    let n = 0;
-    for (const h of G.hunters) if (Math.hypot(h.x - tp.x, h.z - tp.z) < 80) { if (Math.random() < 0.45) h.alert(mr(0, 2.5)); else h.wt = randomOpenPoint(tp.x, tp.z, 4, 25); n++; }
-    if (n || G.helis.length) { showMsg('YOUR LOCATION WAS LEAKED', 3); sfx.alarm(); }
+    G.pingT = Math.max(28, 70 - G.day - G.level * 6);
+    // only once you're properly wanted does someone post a rough idea of where you are
+    if (G.level >= 2 && !G.safe && !G.super) {
+      G.lkp.x = tp.x + mr(-25, 25); G.lkp.z = tp.z + mr(-25, 25);
+      sendLooking(G.lkp.x, G.lkp.z, 80, 25);
+      showMsg('SOMEONE POSTED ROUGHLY WHERE YOU ARE', 3); sfx.alarm();
+    }
   }
   // hunter drivers
   G.hunterCarT -= dt * (G.airTracking ? 2 : 1);
@@ -4892,6 +5946,7 @@ function updateDirector(dt) {
   // heartbeat + aircraft hum
   let nearest = 1e9;
   for (const h of G.hunters) if (h.state === 'chase') nearest = Math.min(nearest, Math.hypot(h.x - player.x, h.z - player.z));
+  G.nearestChaser = nearest;
   G.heartT -= dt;
   if (nearest < 22 && G.heartT <= 0) { sfx.heart(0.25 * (1 - nearest / 22) + 0.05); G.heartT = 0.35 + (nearest / 22) * 0.6; }
   let hd = 1e9, dd = 1e9;
@@ -4908,9 +5963,35 @@ function frame() {
   simulate(dt, t);
   updateLighting(t);
   updateCamera(dt, t);
-  renderer.clear();
-  renderer.render(scene, camera);
-  if (vm.visible && G.mode !== 'menu') { renderer.clearDepth(); renderer.render(vmScene, vmCamera); }
+  PFX.frameMs = lerp(PFX.frameMs, dt * 1000, 0.05);
+  // adrenaline: how fast you're going and how close they are drive the screen effects
+  const playing = G.mode === 'playing';
+  const hs = player.car ? Math.abs(player.car.speed) / 3 : Math.hypot(player.vx, player.vz);
+  const spd = playing ? clamp((hs - 5.5) / 5, 0, 1) * 0.7 + (player.slideT > 0 ? 0.35 : 0) + (player.mode === 'zip' ? clamp(player.zipV / 18, 0, 0.8) : 0) : 0;
+  G.pfxSpeed = lerp(G.pfxSpeed || 0, clamp(spd, 0, 1), Math.min(1, dt * 5));
+  const near = G.nearestChaser ?? 1e9;
+  const danger = playing && !G.super ? clamp(1 - near / 25, 0, 1) * 0.7 + clamp((45 - player.hp) / 45, 0, 1) * 0.5 + G.hurtFlash * 0.4 : 0;
+  G.pfxDanger = lerp(G.pfxDanger || 0, clamp(danger, 0, 1), Math.min(1, dt * 3));
+  const zn = player.car ? null : zoneAt(player.x, player.y, player.z);
+  const indoor = playing && !player.car && (!!zn || !!G.inSafe || camera.position.y < -1);
+  if (player.grounded) G.floorY = player.y;
+  renderFrame({ drawVM: vm.visible && G.mode !== 'menu', indoor, floorY: G.floorY ?? 0, speed: G.pfxSpeed, danger: G.pfxDanger, kick: clamp(G.fovKick / 8, 0, 1) });
+}
+// Channel 9: what the billboards and TVs are saying about you
+function newsState() {
+  const seen = G.lastSeenT < 900 ? localeName(G.lkp.x, G.lkp.z) : 'NOBODY KNOWS';
+  const dark = !!(WX.blackout && WX.blackout.city === WX.here);
+  const bits = [];
+  if (G.level >= 1 && !G.super) bits.push(`BOUNTY TARGET LAST SEEN NEAR ${seen}`, `PROFILE: ${LEVEL_NAMES[G.level]}`);
+  if (G.level >= 3 && !G.super) bits.push('AIR UNITS SEARCHING', 'CALL CHANNEL 9 WITH ANY SIGHTINGS');
+  if (WX.festival) bits.push(`${FESTIVALS[WX.festival.city]} IN ${WX.festival.city} TODAY`);
+  if (WX.blackout) bits.push(`POWER CUT IN ${WX.blackout.city}`);
+  bits.push(`WEATHER: ${WX_NAMES[WX.kind]}`);
+  return {
+    level: G.level, super: G.super, look: G.newsLook || {}, lastSeen: seen, kills: G.kills, day: Math.min(G.day, CFG.days),
+    clock: hud.clock.textContent.slice(0, 5), weather: WX_NAMES[WX.kind], city: G.locale || 'PORT HALDEN',
+    festival: WX.festival ? FESTIVALS[WX.festival.city] : null, festivalCity: WX.festival ? WX.festival.city : '', dark, crawl: bits.join('   ·   '),
+  };
 }
 function simulate(dt, t) {
   if (G.mode === 'playing') {
@@ -4925,11 +6006,14 @@ function simulate(dt, t) {
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
-    updateGetUps(dt); updateDrops(dt, t); updateContract(dt); updateAllies(dt); updateShopLight();
+    updateSafehouse(dt);
+    updateGetUps(dt); updateDrops(dt, t); updateLaser(dt); updateBubbles(dt); updateContract(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
+    updateNews(dt, newsState());
     if (!player.alive) { G.overT -= dt; if (G.overT <= 0 && G.mode === 'playing') endGame(false); }
     updateHUD(dt);
+    if (G.sleepT > 0) { G.sleepT -= dt; if (G.sleepT <= 0) sleepEl.classList.remove('show'); }
   } else if (G.mode === 'menu') {
     G.hour = 18.2;
     for (const c of G.cars) c.update(dt);
@@ -4951,7 +6035,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>
