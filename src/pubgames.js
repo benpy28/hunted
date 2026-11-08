@@ -5,6 +5,9 @@
 //  - POOL: E at the table. $2 a game, reds and yellows: you're reds. Turn to aim from behind the white, and
 //    E strikes it at whatever the power bar says. Pot one of yours and you go again. Pot the white and it's
 //    their go. Clear your reds and then sink the black to win; the black early and you lose.
+//  - MONDAY IS DARTS LEAGUE NIGHT (7:30 till 11): a crowd round every oche and the home team a player short.
+//    Stand in as their ringer: no stake, a tougher opponent from the visiting team, and $15 from the captain
+//    if you win your leg. Two legs a night, then they find a proper player.
 //  - Either way, while you're playing you're just another punter, and the regulars stop looking at the door.
 import * as THREE from '../vendor/three.module.min.js';
 import { mr, mpick, clamp, scene } from './core.js';
@@ -12,9 +15,13 @@ import { worldHooks, propBuf } from './world.js';
 import { walkIns } from './streets.js';
 import { lnFrame } from './launderette.js';
 import { buildPerson, SKINS, HAIRS, SHIRTS, PANTS } from './people.js';
+import { TD_EVENTS, eventOn } from './townday.js';
 
-export const PG_STATE = { darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0, msgT: 0 };
+export const PG_STATE = { leagueDay: 0, leagueLegs: 0, leagueWon: 0, leaguePlayed: 0, crowd: null, darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0, msgT: 0 };
 export const pgPubs = []; // {W, F, board:{x,y,z,n,right}, oche:{x,z}, table?:{ac,bc}}
+TD_EVENTS.push({ id: 'darts', town: null, days: [0], from: 19.5, to: 23, name: 'DARTS LEAGUE NIGHT', where: 'EVERY BAR WITH A BOARD', blurb: 'The county league. A crowd round every oche, and every home team a player short. Stand in as a ringer: win your leg and the captain pays $15.' });
+const PG_TEAMS = ['THE ANCHOR ARROWS', 'SPIRE STREET SPARROWS', 'THE TIDEMARK TUNGSTENS', 'WHEATLEY WANDERERS', 'THE DOUBLE TOPS', 'QUAYSIDE FLIGHTS', 'THE BULLSEYE BOYS', 'TREBLE TROUBLE'];
+export const pgLeagueOn = (K) => !!eventOn('darts', null, K.G.day, K.hour);
 const PG_NAMES = ['BIG DEREK', 'SHEILA', 'TWO-DARTS TEL', 'MAUREEN', 'YOUNG KEV', 'OLD WALLY', 'PAULINE', 'THE PROFESSOR', 'GAZ', 'DOT'];
 
 // =====================================================================
@@ -90,15 +97,22 @@ function pgStick(Q, rx, ry, col) {
   return g;
 }
 function pgClearDarts(D) { for (const g of D.stuck) scene.remove(g); D.stuck.length = 0; }
-function pgStartDarts(Q, K) {
+function pgStartDarts(Q, K, league) {
   const P = K.player;
-  if (P.cash < 3) { K.showMsg('$3 ON THE DARTS, AND YOU HAVEN\'T GOT IT', 1.6); return; }
-  P.cash -= 3; K.sfx.cash();
+  if (league) {
+    if (PG_STATE.leagueDay !== K.G.day) { PG_STATE.leagueDay = K.G.day; PG_STATE.leagueLegs = 0; }
+    if (PG_STATE.leagueLegs >= 2) { K.showMsg('"CHEERS, BUT OUR KEITH\'S TURNED UP NOW. HAVE A HALF ON US"', 2); return; }
+    PG_STATE.leagueLegs++; PG_STATE.leaguePlayed++;
+  } else {
+    if (P.cash < 3) { K.showMsg('$3 ON THE DARTS, AND YOU HAVEN\'T GOT IT', 1.6); return; }
+    P.cash -= 3; K.sfx.cash();
+  }
   const foe = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: mpick(SHIRTS), pants: mpick(PANTS) });
   const [fx, fz] = Q.F.toXZ(Q.F.A1 - 3.3, Q.F.D - 2.4); foe.group.position.set(fx, 0.21, fz); foe.group.rotation.y = Q.board.face + Math.PI; scene.add(foe.group);
-  PG_STATE.darts = { Q, name: mpick(PG_NAMES), skill: mr(0.018, 0.04), you: [], them: [], visit: [], turn: 'you', t: 0, stuck: [], foe, waitT: 0, swayT: Math.random() * 10, sway: { y: 0, p: 0 } };
+  PG_STATE.darts = { Q, league: !!league, name: mpick(PG_NAMES), skill: league ? mr(0.013, 0.024) : mr(0.018, 0.04), you: [], them: [], visit: [], turn: 'you', t: 0, stuck: [], foe, waitT: 0, swayT: Math.random() * 10, sway: { y: 0, p: 0 } };
   PG_STATE.dartsGames++;
-  K.showMsg(`$3 ON IT. YOU AGAINST ${PG_STATE.darts.name}: THREE VISITS EACH, HIGHEST TOTAL WINS. ${K.isTouch ? 'USE' : 'E'} TO THROW`, 3);
+  if (league) { const Cr = PG_STATE.crowd; PG_STATE.darts.team = Cr ? Cr.away : mpick(PG_TEAMS); K.showMsg(`LEAGUE NIGHT. YOU'RE PLAYING FOR ${Cr ? Cr.home : 'THE HOME TEAM'} AGAINST ${PG_STATE.darts.name} OF ${PG_STATE.darts.team}. WIN THE LEG AND IT'S $15. ${K.isTouch ? 'USE' : 'E'} TO THROW`, 3.4); if (Cr) K.say({ g: Cr.folk[0].group }, 'COME ON, RINGER!'); }
+  else K.showMsg(`$3 ON IT. YOU AGAINST ${PG_STATE.darts.name}: THREE VISITS EACH, HIGHEST TOTAL WINS. ${K.isTouch ? 'USE' : 'E'} TO THROW`, 3);
 }
 function pgDartsSum(a) { return a.reduce((s, v) => s + v.reduce((t, d) => t + d.pts, 0), 0); }
 function pgThrow(K) {
@@ -137,8 +151,15 @@ function pgEndDarts(K, quit) {
   const D = PG_STATE.darts; if (!D) return;
   PG_STATE.darts = null;
   pgClearDarts(D); scene.remove(D.foe.group);
-  if (quit) { K.showMsg(`YOU PUT THE DARTS DOWN. ${D.name} KEEPS YOUR $3`, 1.8); return; }
+  if (quit) { K.showMsg(D.league ? 'YOU PUT THE DARTS DOWN. THE CAPTAIN CONCEDES THE LEG WITH A FACE LIKE THUNDER' : `YOU PUT THE DARTS DOWN. ${D.name} KEEPS YOUR $3`, 1.8); return; }
   const a = pgDartsSum(D.you), b = pgDartsSum(D.them);
+  if (D.league) {
+    const Cr = PG_STATE.crowd;
+    if (a > b) { K.player.cash += 15; PG_STATE.leagueWon++; PG_STATE.dartsWon++; K.sfx.cash(); K.sfx.cheer && K.sfx.cheer(); K.coolHeat(4); K.showMsg(`YOU WIN THE LEG, ${a} TO ${b}! THE CAPTAIN PRESSES $15 INTO YOUR HAND. YOU'RE A LEGEND IN HERE NOW`, 3.2); if (Cr) { Cr.cheerT = 3; K.say({ g: Cr.folk[1].group }, 'RINGER! RINGER! RINGER!'); } }
+    else if (a === b) K.showMsg(`A TIE, ${a} ALL. THE CAPTAIN SHRUGS: "HALF A POINT'S HALF A POINT"`, 2.4);
+    else { K.showMsg(`${D.name} TAKES THE LEG, ${b} TO ${a}. THE CAPTAIN STARES INTO HIS PINT`, 2.6); if (Cr) K.say({ g: Cr.folk[0].group }, 'WHERE DID WE FIND THIS ONE?'); }
+    return;
+  }
   if (a > b) { K.player.cash += 6; PG_STATE.dartsWon++; K.sfx.cash(); K.showMsg(`YOU WIN, ${a} TO ${b}. $6 FROM THE POT. ${D.name} BUYS YOU A HALF`, 3); K.coolHeat(2); }
   else if (a === b) { K.player.cash += 3; K.showMsg(`A DRAW, ${a} ALL. YOUR $3 BACK`, 2.4); }
   else K.showMsg(`${D.name} WINS, ${b} TO ${a}. "BETTER LUCK NEXT TIME, PAL"`, 2.6);
@@ -301,6 +322,34 @@ function pgShoot(K) {
 }
 
 // =====================================================================
+// League night: the crowd round the oche
+// =====================================================================
+function pgCrowdFor(Q) {
+  const folk = [], F = Q.F;
+  for (let k = 0; k < 6; k++) {
+    const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: k < 3 ? 0x1a3a8a : 0x8a1a2a, pants: mpick(PANTS) }); // team shirts: home blue, away claret
+    const a = F.A1 - 2.0 - (k % 3) * 0.7 - (k >= 3 ? 0.4 : 0), b = F.D - 3.0 - (k >= 3 ? 0.8 : 0) + (k % 2) * 0.3;
+    const [x, z] = F.toXZ(a, b); p.group.position.set(x, 0, z);
+    p.group.rotation.y = Math.atan2(Q.board.x - x, Q.board.z - z);
+    scene.add(p.group); folk.push(p);
+  }
+  const home = mpick(PG_TEAMS); let away = mpick(PG_TEAMS); if (away === home) away = PG_TEAMS[(PG_TEAMS.indexOf(home) + 1) % PG_TEAMS.length];
+  return { Q, folk, home, away, cheerT: 0, chatT: 2 };
+}
+function pgClearCrowd() { const Cr = PG_STATE.crowd; if (!Cr) return; for (const p of Cr.folk) scene.remove(p.group); PG_STATE.crowd = null; }
+function pgUpdate(dt, K) {
+  const P = K.player, on = pgLeagueOn(K), Q = on && !P.car ? pgPubAt(P.x, P.z) : null;
+  if (PG_STATE.crowd && PG_STATE.crowd.Q !== Q) pgClearCrowd();
+  if (!Q) return;
+  if (!PG_STATE.crowd) { PG_STATE.crowd = pgCrowdFor(Q); K.showMsg(`DARTS LEAGUE NIGHT: ${PG_STATE.crowd.home} v ${PG_STATE.crowd.away}. THE HOME TEAM'S A PLAYER SHORT...`, 2.6); }
+  const Cr = PG_STATE.crowd;
+  Cr.cheerT = Math.max(0, Cr.cheerT - dt);
+  Cr.folk.forEach((p, i) => { const up = Cr.cheerT > 0 ? -2.6 - Math.sin(K.time * 12 + i) * 0.3 : -0.2; p.armL.rotation.x = p.armR.rotation.x = up; });
+  Cr.chatT -= dt;
+  if (Cr.chatT <= 0) { Cr.chatT = (6 + Math.random() * 6); K.say({ g: mpick(Cr.folk).group }, mpick(['SHOT, MATE!', 'GAME SHOT!', 'NEED A RINGER, WE DO', 'ONE HUNDRED AND... FORTY', 'WHOSE ROUND IS IT?', 'DOUBLE SIXTEEN, LOVELY'])); }
+}
+
+// =====================================================================
 // The venue hooks
 // =====================================================================
 function pgUseTarget(K) {
@@ -309,7 +358,7 @@ function pgUseTarget(K) {
   if (PG_STATE.pool) return { kind: 'shoot', first: true };
   if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
   const Q = pgPubAt(P.x, P.z); if (!Q) return null;
-  if (Math.hypot(P.x - Q.oche.x, P.z - Q.oche.z) < 1.2) return { kind: 'darts', Q };
+  if (Math.hypot(P.x - Q.oche.x, P.z - Q.oche.z) < 1.2) return { kind: pgLeagueOn(K) ? 'league' : 'darts', Q };
   if (Q.table) { const [x, z] = Q.F.toXZ(Q.table.ac, Q.table.bc); if (Math.abs(P.x - x) < 1.9 && Math.abs(P.z - z) < 1.9) return { kind: 'pool', Q }; }
   return null;
 }
@@ -318,6 +367,7 @@ function pgUsePrompt(T, K, useK) {
   if (T.kind === 'throw') { const D = PG_STATE.darts; return D.turn === 'you' ? `${useK} to throw (dart ${D.visit.length + 1} of 3) · ${back} to give up` : `${D.name}'s throw...`; }
   if (T.kind === 'shoot') { const G = PG_STATE.pool; if (G.turn !== 'you' || G.state !== 'aim') return G.state === 'roll' ? '...' : `${G.name} is lining one up`; const p = Math.round(pgPower(G) * 10); return `${useK} to strike · POWER ${'|'.repeat(p)}${'.'.repeat(10 - p)} · ${back} to walk away`; }
   if (T.kind === 'darts') return `${useK} to play darts ($3 against a regular)`;
+  if (T.kind === 'league') return PG_STATE.leagueDay === K.G.day && PG_STATE.leagueLegs >= 2 ? 'League night: they\'ve got a full team now' : `${useK} to stand in as the home team's ringer (win the leg: $15)`;
   if (T.kind === 'pool') return `${useK} to play pool ($2, reds and yellows)`;
   return '';
 }
@@ -325,17 +375,18 @@ function pgUse(T, K) {
   if (T.kind === 'throw') { pgThrow(K); return; }
   if (T.kind === 'shoot') { pgShoot(K); return; }
   if (T.kind === 'darts') { pgStartDarts(T.Q, K); return; }
+  if (T.kind === 'league') { pgStartDarts(T.Q, K, true); return; }
   if (T.kind === 'pool') pgStartPool(T.Q, K);
 }
 export const pubGames = {
   name: 'pubgames', roofs: [],
   useTarget: pgUseTarget, usePrompt: pgUsePrompt, use: pgUse,
-  conspic: () => (PG_STATE.darts || PG_STATE.pool ? -0.28 : 0),
-  update: () => {},
+  conspic: (K) => (PG_STATE.darts ? (PG_STATE.darts.league ? -0.36 : -0.28) : PG_STATE.pool ? -0.28 : PG_STATE.crowd && K.near(PG_STATE.crowd.Q.oche.x, PG_STATE.crowd.Q.oche.z, 5) ? -0.18 : 0),
+  update: pgUpdate,
   ride: (dt, K) => (PG_STATE.darts ? pgDartsRide(dt, K) : PG_STATE.pool ? pgPoolRide(dt, K) : false),
   plan: () => false,
-  reset() { const k = { player: { cash: 0 }, showMsg: () => {}, sfx: {}, coolHeat: () => {} }; if (PG_STATE.darts) pgEndDarts(k, true); if (PG_STATE.pool) pgPoolEnd(k, false, ''); Object.assign(PG_STATE, { darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0 }); },
-  diary: () => { const b = []; if (PG_STATE.dartsWon) b.push(`WON AT DARTS (${PG_STATE.dartsWon})`); if (PG_STATE.poolWon) b.push(`WON AT POOL (${PG_STATE.poolWon})`); return b; },
-  debug: () => ({ pubs: pgPubs.length, tables: pgPubs.filter((Q) => Q.table).length, ...PG_STATE, darts: PG_STATE.darts ? { turn: PG_STATE.darts.turn, you: pgDartsSum(PG_STATE.darts.you), them: pgDartsSum(PG_STATE.darts.them) } : null, pool: PG_STATE.pool ? { turn: PG_STATE.pool.turn, state: PG_STATE.pool.state, reds: pbLeft(PG_STATE.pool, 'red'), yellows: pbLeft(PG_STATE.pool, 'yellow') } : null }),
-  PG_STATE, pgPubs, dartScore, poolRack, poolStep, pgStartDarts, pgStartPool, pgPubAt, pgEndDarts, pgPoolEnd, pgSettle, pgFoeTarget, pgStrike,
+  reset() { const k = { player: { cash: 0 }, showMsg: () => {}, sfx: {}, coolHeat: () => {} }; if (PG_STATE.darts) pgEndDarts(k, true); if (PG_STATE.pool) pgPoolEnd(k, false, ''); pgClearCrowd(); Object.assign(PG_STATE, { leagueDay: 0, leagueLegs: 0, leagueWon: 0, leaguePlayed: 0, darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0 }); },
+  diary: () => { const b = []; if (PG_STATE.dartsWon) b.push(`WON AT DARTS (${PG_STATE.dartsWon})`); if (PG_STATE.poolWon) b.push(`WON AT POOL (${PG_STATE.poolWon})`); if (PG_STATE.leagueWon) b.push(`A LEAGUE NIGHT RINGER (${PG_STATE.leagueWon} LEGS WON)`); return b; },
+  debug: () => ({ pubs: pgPubs.length, tables: pgPubs.filter((Q) => Q.table).length, ...PG_STATE, crowd: PG_STATE.crowd ? { home: PG_STATE.crowd.home, away: PG_STATE.crowd.away, n: PG_STATE.crowd.folk.length } : null, darts: PG_STATE.darts ? { league: PG_STATE.darts.league, turn: PG_STATE.darts.turn, you: pgDartsSum(PG_STATE.darts.you), them: pgDartsSum(PG_STATE.darts.them) } : null, pool: PG_STATE.pool ? { turn: PG_STATE.pool.turn, state: PG_STATE.pool.state, reds: pbLeft(PG_STATE.pool, 'red'), yellows: pbLeft(PG_STATE.pool, 'yellow') } : null }),
+  PG_STATE, pgPubs, dartScore, poolRack, poolStep, pgStartDarts, pgStartPool, pgPubAt, pgEndDarts, pgPoolEnd, pgSettle, pgFoeTarget, pgStrike, pgLeagueOn, pgClearCrowd,
 };
