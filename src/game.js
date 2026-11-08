@@ -12,10 +12,12 @@ import {
 } from './world.js';
 import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
-import { updateInteriors, zoneAt, undergroundRects, isUnderground } from './interiors.js';
+import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
 import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll } from './people.js';
+import { atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
+import { Ally } from './allies.js';
 
 const CFG = { days: 30, dayLength: 90, startHour: 16.5 };
 
@@ -30,11 +32,23 @@ const G = {
   kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 25, heartT: 0, overT: 0, airT: 0,
   shake: 0, hurtFlash: 0, msgT: 0,
   heat: 0, level: 0, lkp: { x: 0, z: 0 }, lastSeenT: 99, airTracking: 0, airAlertT: 0, spottedMsgT: 0,
-  locale: '', localeT: 0,
+  locale: '', localeT: 0, allies: [], drops: [], getUps: [], contract: null, offers: [], offersDay: 0, hitstopT: 0, fovKick: 0, fireHeld: false,
 };
+// weapons: the pistol you start with, plus whatever the gun shops will sell you
+const WEAPONS = {
+  pistol: { name: 'PISTOL', mag: 12, cd: 0.17, spread: 0.008, pellets: 1, reload: 1.3, maxRes: 180, heat: 2.5, alert: 45 },
+  crowbar: { name: 'CROWBAR', melee: true },
+  shotgun: { name: 'SHOTGUN', mag: 6, cd: 0.85, spread: 0.055, pellets: 8, reload: 2.1, maxRes: 60, heat: 3.5, alert: 55, range: 50 },
+  smg: { name: 'SMG', mag: 30, cd: 0.075, spread: 0.02, pellets: 1, reload: 1.6, maxRes: 300, heat: 1.1, alert: 55, auto: true },
+};
+const SLOTS = ['pistol', 'crowbar', 'shotgun', 'smg'];
+const START_CASH = 45;
+const freshAmmo = () => ({ pistol: { mag: 12, res: 48 }, shotgun: { mag: 0, res: 0 }, smg: { mag: 0, res: 0 } });
 const player = {
   x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: 0, pitch: 0, hp: 100, stam: 100, exhausted: false,
-  lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, mag: 12, reserve: 48, reloadT: 0, fireCd: 0,
+  lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, ammo: freshAmmo(), reloadT: 0, fireCd: 0,
+  cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0,
+  outfit: {}, disg: 0,
   bob: 0, dragT: 0, carHitCd: 0, recoil: 0, shoveAnim: 0, camOff: 0, sprinting: false,
 };
 resetParkour(player);
@@ -125,19 +139,22 @@ class Hunter {
   alert(delay = 0) {
     if (this.state === 'chase') return;
     if (delay > 0) { if (this.alertT < 0) this.alertT = delay; return; }
-    this.state = 'chase'; this.lastSeen = 0; this.noticeT = mr(0.35, 1.1); // a double-take before they commit
+    this.state = 'chase'; this.lastSeen = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
+    if (player.disg > 0) wearDisguise(0.035);
   }
   remove() { scene.remove(this.g); this.dead = true; }
-  die(impulse, hitY, byPlayer = false) {
+  die(impulse, hitY, byPlayer = false, loot = byPlayer) {
     if (this.dead) return;
     this.dead = true; this.marker.visible = false;
     this.g.position.set(this.x, this.y, this.z);
     addRagdoll(this.p, this.T.scale, { x: this.vx + this.kx, y: 0, z: this.vz + this.kz }, impulse, hitY);
     if (byPlayer) { G.kills++; addHeat(this.type === 'cop' ? 22 : 14); }
+    if (loot) maybeDropCash(this);
+    if (this.contract) contractTargetDown(this);
   }
-  damage(n, dirX, dirZ, hitY) {
+  damage(n, dirX, dirZ, hitY, byPlayer = true) {
     this.hp -= n; this.alert();
-    if (this.hp <= 0) this.die({ x: dirX * 7, y: 2.5, z: dirZ * 7 }, hitY, true);
+    if (this.hp <= 0) this.die({ x: dirX * 7, y: 2.5, z: dirZ * 7 }, hitY, byPlayer, true);
     else { this.stun = Math.max(this.stun, 0.25); this.kx += dirX * 2.5 * this.T.knock; this.kz += dirZ * 2.5 * this.T.knock; }
   }
   update(dt) {
@@ -155,7 +172,7 @@ class Hunter {
       this.hasLOS = see;
       if (this.state !== 'chase') {
         const noisy = Math.abs(dy) > 3 ? 0 : player.car ? 30 : (player.sprinting ? 16 : player.crouch > 0.5 ? 3 : 7);
-        const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.5 : 1) * (1 + G.level * 0.08);
+        const sight = lerp(17, 34, G.dayAmt) * (player.car ? 1.5 : 1) * (1 + G.level * 0.08) * (player.car ? 1 : 1 - 0.6 * player.disg);
         if (d < noisy || (see && d < sight)) { this.alert(); shout(this); }
       } else if (see) { this.lastSeen = 0; if (d < 60) reportSighting(tp.x, tp.z); }
     }
@@ -176,7 +193,7 @@ class Hunter {
       else if (this.role === 'stalker' && d > 6) { // keep a distance until you turn your back
         const fx3 = -Math.sin(player.yaw), fz3 = -Math.cos(player.yaw), facing = ((this.x - tp.x) * fx3 + (this.z - tp.z) * fz3) / (d || 1);
         if (facing > 0.3 || player.car) hold = 15; else spdK = 1.15;
-      } else if (this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
+      } else if (this.fleer ? d < 40 : this.role === 'coward' && (G.shotT < 4 || G.kills > 0 && crowd < 3) && d < 26) hold = -1; // runs off when things get loud
       // you're on another level: find stairs or a ladder that gets them closer (brutes won't do ladders)
       let goLadder = null;
       if (Math.abs(dy) > 1.4 && d < 90) {
@@ -552,6 +569,10 @@ function zipStartNear() {
 function useAction() {
   if (player.car) { exitCar(); return; }
   if (player.mode === 'zip') { input.jumpEdge = true; return; }
+  const shop = player.mode === 'move' ? shopNear(player.x, player.y, player.z) : null;
+  if (shop) { tryOpenShop(shop); return; }
+  const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
+  if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
   const Z = zipStartNear();
   if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
   enterCar();
@@ -704,7 +725,7 @@ class Aircraft {
       const see = los3D(this.x, fromY, this.z, tp.x, py, tp.z);
       const near = heli ? Math.hypot(this.bx - tp.x, this.bz - tp.z) < 9 : Math.hypot(this.x - tp.x, this.z - tp.z) < 17;
       if (this.state !== 'track') {
-        if (near && see) { this.seeT += dt; if (this.seeT > 0.25) { this.state = 'track'; this.lostT = 0; onSpotted(this.kind); } }
+        if (near && see) { this.seeT += dt; if (this.seeT > 0.25 + player.disg * 0.8) { this.state = 'track'; this.lostT = 0; onSpotted(this.kind); } }
         else this.seeT = 0;
       } else {
         const dist = Math.hypot(this.x - tp.x, this.z - tp.z);
@@ -788,7 +809,12 @@ class Pickup {
     this.m.rotation.y = t * 2;
     if (!player.car && Math.hypot(player.x - this.x, player.z - this.z) < 1.4) {
       if (this.kind === 'health') { if (player.hp >= 100) return; player.hp = Math.min(100, player.hp + 35); player.stam = 100; showMsg('+35 HEALTH'); }
-      else { player.reserve = Math.min(180, player.reserve + 24); showMsg('+24 AMMO'); }
+      else {
+        const A = player.ammo; A.pistol.res = Math.min(WEAPONS.pistol.maxRes, A.pistol.res + 24);
+        if (player.owned.has('shotgun')) A.shotgun.res = Math.min(WEAPONS.shotgun.maxRes, A.shotgun.res + 6);
+        if (player.owned.has('smg')) A.smg.res = Math.min(WEAPONS.smg.maxRes, A.smg.res + 30);
+        showMsg('+AMMO');
+      }
       sfx.pickup(); this.active = false; this.m.visible = false; this.respawnT = 35;
     }
   }
@@ -811,6 +837,22 @@ armR.add(gun);
 const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color: 0xffd27a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
 flash.position.set(0, 0.07, -0.55); flash.scale.setScalar(0.25); flash.visible = false; armR.add(flash);
 armL.position.set(-0.08, -0.27, -0.42); armL.rotation.set(0.1, -0.5, 0);
+const vmWood = new THREE.MeshLambertMaterial({ color: 0x6a4428 }), vmRed = new THREE.MeshLambertMaterial({ color: 0xa8281e }), vmSteel = new THREE.MeshLambertMaterial({ color: 0x55585e });
+const vmBox = (grp, w, h, d, x, y, z, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); grp.add(m); return m; };
+const shotgunVM = new THREE.Group();
+vmBox(shotgunVM, 0.06, 0.06, 0.8, 0, 0.09, -0.6, vmGunMat); vmBox(shotgunVM, 0.05, 0.05, 0.62, 0, 0.035, -0.52, vmGunMat);
+vmBox(shotgunVM, 0.075, 0.07, 0.15, 0, 0.04, -0.62, vmWood); vmBox(shotgunVM, 0.07, 0.1, 0.24, 0, 0.06, -0.2, vmGunMat);
+vmBox(shotgunVM, 0.065, 0.13, 0.26, 0, -0.01, 0.0, vmWood);
+const smgVM = new THREE.Group();
+vmBox(smgVM, 0.075, 0.11, 0.36, 0, 0.07, -0.34, vmGunMat); vmBox(smgVM, 0.04, 0.04, 0.16, 0, 0.09, -0.58, vmSteel);
+vmBox(smgVM, 0.05, 0.2, 0.07, 0, -0.06, -0.38, vmGunMat); vmBox(smgVM, 0.055, 0.14, 0.07, 0, -0.03, -0.22, vmGunMat);
+const crowbarVM = new THREE.Group();
+vmBox(crowbarVM, 0.035, 0.035, 0.64, 0, 0, -0.24, vmRed); vmBox(crowbarVM, 0.035, 0.14, 0.035, 0, 0.055, -0.56, vmRed);
+vmBox(crowbarVM, 0.03, 0.03, 0.08, 0, 0.11, -0.53, vmRed); vmBox(crowbarVM, 0.04, 0.02, 0.06, 0, -0.012, 0.07, vmSteel);
+crowbarVM.position.set(0, 0.02, -0.22); crowbarVM.rotation.set(0.85, 0, 0.55);
+for (const g2 of [shotgunVM, smgVM, crowbarVM]) { g2.visible = false; armR.add(g2); }
+const VM_MODELS = { pistol: gun, shotgun: shotgunVM, smg: smgVM, crowbar: crowbarVM };
+function showWeaponModel() { for (const k in VM_MODELS) VM_MODELS[k].visible = k === player.weapon; flash.position.z = player.weapon === 'shotgun' ? -1.02 : player.weapon === 'smg' ? -0.68 : -0.55; }
 
 // =====================================================================
 // Shooting
@@ -839,33 +881,52 @@ function rayCar(o, d, car, maxT) {
   }
   return t0;
 }
-const _camDir = new THREE.Vector3();
+const _camDir = new THREE.Vector3(), _aim = new THREE.Vector3();
 function playerShoot() {
-  if (player.car || !player.alive || player.reloadT > 0 || player.fireCd > 0) return;
-  if (player.mag <= 0) { if (player.reserve > 0) startReload(); else { sfx.empty(); showMsg('OUT OF AMMO'); } return; }
-  player.mag--; player.fireCd = 0.17; player.recoil = 1; G.shotT = 0;
-  sfx.shot(); addHeat(2.5);
-  flash.visible = true; flash.material.rotation = Math.random() * 6; setTimeout(() => (flash.visible = false), 45);
-  camera.getWorldDirection(_camDir);
-  const spread = 0.008 + Math.min(0.03, Math.hypot(player.vx, player.vz) * 0.002);
-  _camDir.x += mr(-spread, spread); _camDir.y += mr(-spread, spread); _camDir.z += mr(-spread, spread); _camDir.normalize();
+  if (player.car || !player.alive || player.reloadT > 0 || player.fireCd > 0 || player.switchT > 0) return;
+  const W = WEAPONS[player.weapon];
+  if (W.melee) { crowbarSwing(false); return; }
+  const A = player.ammo[player.weapon];
+  if (A.mag <= 0) { if (A.res > 0) startReload(); else if (player.fireCd > -0.3 || !G.fireHeld) { sfx.empty(); showMsg('OUT OF AMMO'); player.fireCd = 0.3; } return; }
+  A.mag--; player.fireCd = W.cd; player.recoil = player.weapon === 'shotgun' ? 1.8 : player.weapon === 'smg' ? 0.55 : 1; G.shotT = 0;
+  if (player.weapon === 'shotgun') { sfx.shotgun(); setTimeout(() => sfx.pump(), 350); G.shake = Math.max(G.shake, 0.18); }
+  else if (player.weapon === 'smg') sfx.smg(); else sfx.shot();
+  addHeat(W.heat);
+  flash.visible = true; flash.material.rotation = Math.random() * 6; flash.scale.setScalar(player.weapon === 'shotgun' ? 0.45 : 0.25); setTimeout(() => (flash.visible = false), 45);
+  camera.getWorldDirection(_aim);
+  const moveSpread = Math.min(0.03, Math.hypot(player.vx, player.vz) * 0.002) + (player.weapon === 'smg' && G.fireHeld ? 0.008 : 0);
+  const hits = new Map(); let headHit = false;
+  for (let k = 0; k < W.pellets; k++) {
+    const spread = W.spread + moveSpread;
+    _camDir.copy(_aim); _camDir.x += mr(-spread, spread); _camDir.y += mr(-spread, spread); _camDir.z += mr(-spread, spread); _camDir.normalize();
+    const r = fireRay(_camDir, W.range || 160, k < 4);
+    if (r) { hits.set(r.h, (hits.get(r.h) || 0) + r.dmg); if (r.head) headHit = true; }
+  }
+  for (const [h, dmg] of hits) {
+    const dx = h.x - player.x, dz = h.z - player.z, dl = Math.hypot(dx, dz) || 1;
+    h.damage(dmg, dx / dl, dz / dl, h.y + 1.2);
+    if (h.dead) showMsg(headHit ? 'HEADSHOT' : 'TAKEDOWN');
+  }
+  if (hits.size) sfx.hit();
+  alertAround(player.x, player.z, W.alert, 1);
+}
+// one bullet: returns the hunter it hit (damage is pooled so a shotgun blast lands as one hit)
+function fireRay(dir, range, tracer) {
   const o = camera.position;
-  let tHit = raycastWorld(o, _camDir, 160).t, target = null, carHit = null, airHit = null;
+  let tHit = raycastWorld(o, dir, range).t, target = null, carHit = null, airHit = null;
   for (const h of G.hunters) {
-    if (h.dead || Math.abs(h.x - o.x) > 160 || Math.abs(h.z - o.z) > 160) continue;
-    const s = h.T.scale, t = rayCylinder(o, _camDir, h.x, h.z, 0.36 * s, h.y, h.y + 1.95 * s, tHit);
+    if (h.dead || Math.abs(h.x - o.x) > range || Math.abs(h.z - o.z) > range) continue;
+    const s = h.T.scale, t = rayCylinder(o, dir, h.x, h.z, 0.36 * s, h.y, h.y + 1.95 * s, tHit);
     if (t > 0 && t < tHit) { tHit = t; target = h; carHit = null; }
   }
-  for (const c of G.cars) { if (c.far) continue; const t = rayCar(o, _camDir, c, tHit); if (t > 0 && t < tHit) { tHit = t; carHit = c; target = null; } }
-  for (const a of [...G.helis, ...G.drones]) { if (a.dead) continue; const t = raySphere(o, _camDir, a.x, a.y, a.z, a.radius, tHit); if (t > 0 && t < tHit) { tHit = t; airHit = a; carHit = null; target = null; } }
-  const hitP = o.clone().addScaledVector(_camDir, tHit);
-  spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
+  for (const c of G.cars) { if (c.far) continue; const t = rayCar(o, dir, c, tHit); if (t > 0 && t < tHit) { tHit = t; carHit = c; target = null; } }
+  for (const a of [...G.helis, ...G.drones]) { if (a.dead) continue; const t = raySphere(o, dir, a.x, a.y, a.z, a.radius, tHit); if (t > 0 && t < tHit) { tHit = t; airHit = a; carHit = null; target = null; } }
+  const hitP = o.clone().addScaledVector(dir, tHit);
+  if (tracer) spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
   if (target) {
-    const head = hitP.y > target.y + 1.5 * target.T.scale, dl = Math.hypot(_camDir.x, _camDir.z) || 1;
-    target.damage(head ? 3 : 1, _camDir.x / dl, _camDir.z / dl, hitP.y);
-    sfx.hit();
+    const head = hitP.y > target.y + 1.5 * target.T.scale;
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.25, vy: 0.3, size0: 0.15, size1: 0.6, alpha: 0.9, color: 0xffffff });
-    if (target.dead) showMsg(head ? 'HEADSHOT' : 'TAKEDOWN');
+    return { h: target, dmg: head ? 3 : 1, head };
   } else if (carHit) {
     carHit.damage(5);
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0.4, size0: 0.15, size1: 0.6, alpha: 0.9, color: 0xffe0a0 });
@@ -873,10 +934,312 @@ function playerShoot() {
   } else if (airHit) {
     airHit.damage(1);
     emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0, size0: 0.3, size1: 1, alpha: 0.9, color: 0xffe0a0 });
-  } else emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.5, vy: 0.6, size0: 0.2, size1: 0.9, alpha: 0.6, color: 0xbbbbbb });
-  alertAround(player.x, player.z, 45, 1);
+  } else if (tracer) emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.5, vy: 0.6, size0: 0.2, size1: 0.9, alpha: 0.6, color: 0xbbbbbb });
+  return null;
 }
-function startReload() { if (player.reloadT > 0 || player.mag >= 12 || player.reserve <= 0 || player.car) return; player.reloadT = 1.3; sfx.reload(); }
+
+// ---------------------------------------------------------------------
+// the crowbar: quick whacks on left click, a wound-up home-run swing on right click
+// ---------------------------------------------------------------------
+const SWING = { light: { dur: 0.36, hit: 0.11 }, heavy: { dur: 0.8, hit: 0.36 } };
+const HOMERUN_LINES = ['HOME RUN!', 'FORE!', 'BONK!', 'SEE YOU LATER', 'OUT OF THE PARK', 'AIRMAIL'];
+function crowbarSwing(heavy) {
+  if (player.car || !player.alive || player.switchT > 0 || player.weapon !== 'crowbar') return;
+  if (player.swingT < (player.swingKind ? SWING[player.swingKind].dur : 0) * 0.85) return;
+  if (heavy) {
+    if (player.launchCd > 0) { showMsg(`BIG SWING IN ${player.launchCd.toFixed(1)}s`, 0.8); return; }
+    player.launchCd = 4;
+  } else { if (player.meleeCd > 0) return; player.meleeCd = 0.42; }
+  player.swingKind = heavy ? 'heavy' : 'light'; player.swingT = 0; player.swingHit = false;
+  sfx.whoosh();
+}
+function meleeTargets(range, cone) {
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw), out = [];
+  for (const h of G.hunters) {
+    if (h.dead || Math.abs(h.y - player.y) > 1.4) continue;
+    const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
+    if (d < range && (d < 0.6 || (dx * fx + dz * fz) / d > cone)) out.push({ h, d, ux: d ? dx / d : fx, uz: d ? dz / d : fz });
+  }
+  return out.sort((a, b) => a.d - b.d);
+}
+function crowbarImpact(heavy) {
+  if (!heavy) {
+    const t = meleeTargets(2.5, 0.45)[0];
+    if (!t) return;
+    const h = t.h, dmg = h.T.hp <= 2 ? 1 : h.T.hp / 3 + 0.01; // 2 whacks for most people, 3 for cops and brutes
+    h.damage(dmg, t.ux, t.uz, h.y + 1.4);
+    if (!h.dead) { h.stun = Math.max(h.stun, 0.7); h.kx += t.ux * 5 * h.T.knock; h.kz += t.uz * 5 * h.T.knock; }
+    else showMsg('TAKEDOWN', 1);
+    sfx.bonk(); G.shake = Math.max(G.shake, 0.12); player.recoil = 0.6;
+    emitPuff(h.x, h.y + 1.5, h.z, { life: 0.25, vy: 0.5, size0: 0.2, size1: 0.7, alpha: 0.8, color: 0xffffff });
+    addHeat(1.5); alertAround(player.x, player.z, 14, 1);
+    return;
+  }
+  const ts = meleeTargets(3.0, 0.15).slice(0, 4);
+  if (!ts.length) return;
+  for (const t of ts) {
+    const h = t.h; h.hp -= 1;
+    launchHunter(h, t.ux, t.uz, h.hp > 0);
+  }
+  sfx.homerun(); showMsg(mpick(HOMERUN_LINES), 1.2);
+  G.hitstopT = 0.09; G.shake = Math.max(G.shake, 0.35); G.fovKick = 9;
+  addHeat(4); alertAround(player.x, player.z, 20, 1);
+}
+// sends someone flying 5 to 10 m; unless that finished them off, they get back up a few seconds later
+function launchHunter(h, ux, uz, getsUp) {
+  if (h.dead) return;
+  const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
+  h.dead = true; h.marker.visible = false; h.g.position.set(h.x, h.y, h.z);
+  addRagdoll(h.p, h.T.scale, { x: 0, y: 0, z: 0 }, { x: ux * sp, y: mr(8.5, 11) * heavy, z: uz * sp }, h.y + 1.0 * h.T.scale);
+  const rag = ragdolls[ragdolls.length - 1];
+  rag.launchFrom = { x: h.x, z: h.z };
+  if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
+  else { G.kills++; addHeat(h.type === 'cop' ? 22 : 14); maybeDropCash(h); if (h.contract) contractTargetDown(h); }
+}
+function updateGetUps(dt) {
+  for (let i = G.getUps.length - 1; i >= 0; i--) {
+    const U = G.getUps[i]; U.t -= dt;
+    const idx = ragdolls.indexOf(U.rag);
+    if (idx < 0) { G.getUps.splice(i, 1); continue; }
+    // while they're still flying, they skittle anyone they land on
+    if (U.t > 2.2) {
+      const P = U.rag.p[1], Q = U.rag.prev[1], vx = (P.x - Q.x) * 60, vz = (P.z - Q.z) * 60;
+      if (Math.hypot(vx, vz) > 3) for (const h of G.hunters) {
+        if (h.dead || h.stun > 0.5 || Math.abs(h.x - P.x) > 0.9 || Math.abs(h.z - P.z) > 0.9 || Math.abs(h.y + 1 - P.y) > 1.3) continue;
+        h.stun = 1.6; h.kx += vx * 0.5; h.kz += vz * 0.5; sfx.thud();
+      }
+    }
+    if (U.t > 0) continue;
+    const hx = (U.rag.p[3].x + U.rag.p[4].x) / 2, hz = (U.rag.p[3].z + U.rag.p[4].z) / 2, hy = Math.min(U.rag.p[3].y, U.rag.p[4].y);
+    U.rag.dispose(); ragdolls.splice(idx, 1); G.getUps.splice(i, 1);
+    const p = { x: hx, z: hz }; resolveCircle(p, 0.4);
+    const nh = new Hunter(p.x, p.z, U.type, U.gunner, 'chase');
+    nh.y = floorAt(p.x, p.z, hy + 0.6); nh.hp = U.hp; nh.stun = 1.4; nh.noticeT = 0;
+    if (U.contract) dressTarget(nh, U.contract); nh.guard = U.guard; nh.fleer = U.fleer;
+    G.hunters.push(nh);
+  }
+}
+
+// ---------------------------------------------------------------------
+// cash: hunters you drop sometimes have a few quid on them
+// ---------------------------------------------------------------------
+const cashGeo = new THREE.BoxGeometry(0.34, 0.1, 0.18), cashMat = new THREE.MeshBasicMaterial({ color: 0x5fd06a });
+function maybeDropCash(h) {
+  const cop = h.type === 'cop';
+  if (Math.random() > (cop ? 0.7 : 0.42)) return;
+  const amt = Math.round(cop ? mr(9, 22) : mr(3, 13));
+  const m = new THREE.Mesh(cashGeo, cashMat); scene.add(m);
+  G.drops.push({ x: h.x + mr(-0.4, 0.4), z: h.z + mr(-0.4, 0.4), y: floorAt(h.x, h.z, h.y + 0.5), amt, t: 30, m });
+}
+function updateDrops(dt, t) {
+  for (let i = G.drops.length - 1; i >= 0; i--) {
+    const D = G.drops[i]; D.t -= dt;
+    D.m.position.set(D.x, D.y + 0.45 + Math.sin(t * 4 + D.x) * 0.08, D.z); D.m.rotation.y = t * 2.5;
+    D.m.visible = D.t > 4 || Math.sin(D.t * 12) > 0;
+    const got = !player.car && player.alive && Math.abs(player.x - D.x) < 1.5 && Math.abs(player.z - D.z) < 1.5 && Math.abs(player.y - D.y) < 1.6;
+    if (got) { player.cash += D.amt; showMsg(`+$${D.amt}`, 1.2); sfx.cash(); }
+    if (got || D.t <= 0) { scene.remove(D.m); G.drops.splice(i, 1); }
+  }
+}
+
+// ---------------------------------------------------------------------
+// weapons in hand
+// ---------------------------------------------------------------------
+function selectWeapon(w) {
+  if (!w || !player.owned.has(w) || player.car || w === player.weapon) return;
+  player.lastWeapon = player.weapon; player.weapon = w; player.reloadT = 0; player.switchT = 0.28; player.swingKind = null; player.swingT = 9;
+  sfx.swap(); showWeaponModel();
+}
+function cycleWeapon(dir) {
+  const owned = SLOTS.filter((w) => player.owned.has(w)); if (owned.length < 2) return;
+  const i = owned.indexOf(player.weapon); selectWeapon(owned[(i + dir + owned.length) % owned.length]);
+}
+function primaryDown() { G.fireHeld = true; if (WEAPONS[player.weapon].melee) crowbarSwing(false); else playerShoot(); }
+function primaryUp() { G.fireHeld = false; }
+function secondary() { if (player.weapon === 'crowbar') crowbarSwing(true); else playerShove(); }
+
+// ---------------------------------------------------------------------
+// shops and hired help
+// ---------------------------------------------------------------------
+function tryOpenShop(spot, ctx = shopCtx) {
+  const close = G.hunters.some((h) => !h.dead && h.state === 'chase' && Math.hypot(h.x - player.x, h.z - player.z) < 22 && Math.abs(h.y - player.y) < 3);
+  if (close) { showMsg("THEY WON'T SERVE YOU WITH HUNTERS ON YOUR TAIL", 2.2); return; }
+  G.mode = 'shop'; keys.clear(); recomputeKeys(); G.fireHeld = false;
+  openShop(spot, ctx);
+  if (document.exitPointerLock) document.exitPointerLock();
+  setAircraftVolume(0, 0);
+}
+function leaveShop() { if (G.mode !== 'shop') return; closeShop(); G.mode = 'playing'; lockPointer(); }
+const shopCtx = {
+  cash: () => player.cash,
+  items(kind, spot) { const all = CATALOG[kind]; return spot && spot.cats ? all.filter((it) => spot.cats.includes(it.cat)) : all; },
+  state(it) {
+    if (it.slot) return player.outfit[it.slot] === it.id ? 'owned' : '';
+    if (['crowbar', 'shotgun', 'smg'].includes(it.id) && player.owned.has(it.id)) return 'owned';
+    if ((it.id === 'pal' || it.id === 'guard') && G.allies.filter((a) => !a.dead).length >= 2) return 'full';
+    if (it.id === 'medkit' && player.hp >= 100) return 'full';
+    if (it.id.startsWith('ammo_') && player.ammo[it.id.slice(5)].res >= WEAPONS[it.id.slice(5)].maxRes) return 'full';
+    return '';
+  },
+  buy(it) {
+    const st = this.state(it);
+    if (st === 'owned') return 'YOU ALREADY HAVE ONE';
+    if (st === 'full') return it.id === 'medkit' ? "YOU'RE FINE, MATE" : it.id.startsWith('ammo_') ? "YOU CAN'T CARRY ANY MORE" : 'TWO HELPERS IS ALL YOU CAN FEED';
+    if (it.id.startsWith('ammo_') && !player.owned.has(it.id.slice(5))) return 'BUY THE GUN FIRST';
+    if (player.cash < it.price) return `YOU NEED $${it.price - player.cash} MORE`;
+    player.cash -= it.price; sfx.cash();
+    const id = it.id;
+    if (it.slot) { player.outfit[it.slot] = id; return putOnDisguise(); }
+    if (id === 'crowbar' || id === 'shotgun' || id === 'smg') {
+      player.owned.add(id);
+      if (id !== 'crowbar') { const W = WEAPONS[id]; player.ammo[id].mag = W.mag; player.ammo[id].res += W.mag * 2; }
+      selectWeapon(id); player.switchT = 0;
+    } else if (id === 'ammo_pistol') player.ammo.pistol.res = Math.min(WEAPONS.pistol.maxRes, player.ammo.pistol.res + 24);
+    else if (id === 'ammo_shotgun') player.ammo.shotgun.res = Math.min(WEAPONS.shotgun.maxRes, player.ammo.shotgun.res + 12);
+    else if (id === 'ammo_smg') player.ammo.smg.res = Math.min(WEAPONS.smg.maxRes, player.ammo.smg.res + 60);
+    else if (id === 'medkit') player.hp = Math.min(100, player.hp + 50);
+    else if (id === 'pal' || id === 'guard') {
+      const a = new Ally(id, player.x + Math.cos(player.yaw) * 1.4, player.y, player.z - Math.sin(player.yaw) * 1.4);
+      G.allies.push(a);
+      return `${a.name} IS ON YOUR SIDE NOW`;
+    }
+    return null;
+  },
+};
+// ---------------------------------------------------------------------
+// ATM contracts: pick a target, take them down, get paid on the spot
+// ---------------------------------------------------------------------
+const ATM_SPOT = { name: 'CASHPOINT', kind: 'atm', blurbs: ['BALANCE: EMBARRASSING. OPPORTUNITIES: AVAILABLE.', 'INSERT CARD. OR DON\'T. WE KNOW WHO YOU ARE.', 'THE BANK OF NO QUESTIONS ASKED'] };
+const C_FIRST = ['BARRY', 'DENISE', 'CLIVE', 'TREVOR', 'SHARON', 'NIGEL', 'BEV', 'DUNCAN', 'MAUREEN', 'GORDON', 'LORRAINE', 'KEITH'];
+const C_NICK = ['THE BEAK', 'TWO LUNCHES', 'NO NECK', 'THE SPREADSHEET', 'MUDDY BOOTS', 'BIG SPOON', 'THE WEASEL', 'SOGGY', 'TAXMAN', 'KNEES'];
+const C_LAST = ['MCCLUSKY', 'PILCHARD', 'BUNTING', 'GRIMSHAW', 'NUTTALL', 'POTTS', 'FAIRWEATHER', 'CRUMB', 'HADDOCK', 'WIGGINS'];
+const C_WHY = ['owes a man named Clive a lot of money', 'put a bounty on YOU, so this is personal', 'parks across three spaces at the supermarket', 'has been selling fake bounty tips', 'ran off with the office raffle', 'is the one who leaked your address', 'replied-all to the whole city', 'cheats at the pub quiz'];
+const C_KINDS = [
+  { kind: 'easy', label: 'STROLLING ABOUT', pay: [55, 85], tip: 'Not expecting trouble.' },
+  { kind: 'runner', label: 'A RUNNER', pay: [80, 120], tip: 'Will leg it the second they see you.' },
+  { kind: 'guarded', label: 'HAS MINDERS', pay: [120, 175], tip: 'Two big lads go everywhere with them.' },
+  { kind: 'armed', label: 'ARMED', pay: [100, 150], tip: 'Carries a pistol and isn\'t shy.' },
+];
+const targetMat = new THREE.SpriteMaterial({
+  map: canvasTex(64, 64, (ctx) => { ctx.strokeStyle = '#ffd23a'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(32, 32, 22, 0, Math.PI * 2); ctx.stroke(); ctx.fillStyle = '#ffd23a'; ctx.fillRect(29, 2, 6, 16); ctx.fillRect(29, 46, 6, 16); ctx.fillRect(2, 29, 16, 6); ctx.fillRect(46, 29, 16, 6); }),
+  depthTest: false, transparent: true, sizeAttenuation: false,
+});
+function makeOffers() {
+  G.offersDay = G.day; G.offers = [];
+  const kinds = C_KINDS.slice().sort(() => Math.random() - 0.5).slice(0, 3);
+  for (let i = 0; i < kinds.length; i++) {
+    const K = kinds[i];
+    const name = `${mpick(C_FIRST)} "${mpick(C_NICK)}" ${mpick(C_LAST)}`;
+    const pay = Math.round(mr(K.pay[0], K.pay[1]) * (1 + (G.day - 1) * 0.02) / 5) * 5;
+    G.offers.push({ id: 'c' + i, K, target: name, name: `${name}`, pay, why: mpick(C_WHY) });
+  }
+}
+const atmCtx = {
+  cash: () => player.cash,
+  items() {
+    if (G.offersDay !== G.day || !G.offers.length) makeOffers();
+    return G.offers.map((o) => ({ id: o.id, name: o.name, desc: `${o.K.label}. ${o.why[0].toUpperCase() + o.why.slice(1)}. ${o.K.tip}`, price: o.pay, tag: G.contract && G.contract.offer === o ? 'ACTIVE' : `PAYS $${o.pay}` }));
+  },
+  state(it) { return G.contract && G.contract.offer.id === it.id ? 'owned' : ''; },
+  buy(it) {
+    if (G.contract) return 'FINISH YOUR CURRENT JOB FIRST';
+    const o = G.offers.find((q) => q.id === it.id); if (!o) return 'THAT ONE\'S GONE';
+    const tp = targetPos(), c = cityAt(tp.x, tp.z, 30);
+    let p = null;
+    for (let t = 0; t < 30 && !p; t++) {
+      const q = randomOpenPoint(tp.x, tp.z, 70, 170, 4);
+      if (q && (!c || cityAt(q.x, q.z, 0) === c) && !los(q.x, q.z, tp.x, tp.z)) p = q;
+    }
+    if (!p) p = randomOpenPoint(tp.x, tp.z, 60, 140) || { x: tp.x + 80, z: tp.z };
+    const k = o.K.kind;
+    const h = new Hunter(p.x, p.z, k === 'guarded' ? 'civ' : k === 'runner' ? 'runner' : 'civ', k === 'armed', 'search');
+    G.contract = { offer: o, h, t: 240, pay: o.pay, name: o.target };
+    dressTarget(h, G.contract);
+    if (k === 'runner') h.fleer = true;
+    G.hunters.push(h);
+    if (k === 'guarded') for (let i = 0; i < 2; i++) { const g = new Hunter(p.x + mr(-2, 2), p.z + mr(-2, 2), 'brute', false, 'search'); g.guard = true; g.wt = null; G.hunters.push(g); h.guards = (h.guards || []).concat(g); }
+    sfx.pickup();
+    setTimeout(() => leaveShop(), 700);
+    return `JOB TAKEN: ${o.target}. FOLLOW THE YELLOW MARKER. 4 MINUTES.`;
+  },
+};
+function dressTarget(h, C) {
+  h.contract = C; C.h = h;
+  h.p.torso.material = lam(0xe8b820); h.p.armL.material = h.p.armR.material = lam(0xe8b820);
+  const tm = new THREE.Sprite(targetMat); tm.scale.setScalar(0.05); tm.position.y = 2.6; h.g.add(tm); h.targetMarker = tm;
+  h.marker.position.y = 2.25;
+}
+function contractTargetDown(h) {
+  const C = G.contract; if (!C || C.h !== h) return;
+  player.cash += C.pay; sfx.cash(); setTimeout(() => sfx.cash(), 160);
+  showBanner(`<small>CONTRACT COMPLETE</small>+$${C.pay}`, 2.6);
+  endContract();
+  G.offers = G.offers.filter((o) => o !== C.offer); if (!G.offers.length) G.offersDay = 0;
+}
+function endContract() {
+  const C = G.contract; if (!C) return;
+  if (C.h.targetMarker) C.h.targetMarker.visible = false;
+  for (const g of C.h.guards || []) g.guard = false;
+  C.h.contract = null; G.contract = null;
+}
+function updateContract(dt) {
+  const C = G.contract; if (!C) return;
+  C.t -= dt;
+  if (C.t <= 0) { showMsg('CONTRACT EXPIRED. THE TARGET GOT AWAY', 2.5); C.h.remove(); endContract(); return; }
+  // the target only joins the hunt when they actually see you; runners never do
+  if (C.h.fleer && C.h.state === 'chase') C.h.marker.visible = false;
+  // their minders stick with them until they spot you
+  for (const g of C.h.guards || []) if (!g.dead && g.state !== 'chase' && !C.h.dead) { g.wt = { x: C.h.x + mr(-2, 2), z: C.h.z + mr(-2, 2) }; if (C.h.state === 'chase') g.alert(mr(0, 0.6)); }
+}
+
+// ---------------------------------------------------------------------
+// disguises: daft accessories that make you harder to recognise until people clock you
+// ---------------------------------------------------------------------
+const DISGUISE_LINES = ['NEW LOOK. NOBODY WILL EVER KNOW', 'A MASTER OF DISGUISE', 'YOUR OWN MUM WOULDN\'T KNOW YOU', 'INCOGNITO. TECHNICALLY.'];
+const outfitItem = (id) => CATALOG.costume.find((c) => c.id === id);
+function putOnDisguise() {
+  let sum = 0; for (const k in player.outfit) sum += outfitItem(player.outfit[k]).dg;
+  player.disg = Math.min(1, sum);
+  G.heat = Math.max(heatFloor(), G.heat - 14);
+  // anyone who's lost sight of you loses track of who they're looking for
+  for (const h of G.hunters) if (!h.dead && h.state === 'chase' && !h.hasLOS) { h.state = 'search'; h.wt = null; }
+  G.lastSeenT = Math.max(G.lastSeenT, 11);
+  updateOutfitView();
+  return mpick(DISGUISE_LINES);
+}
+function wearDisguise(n) {
+  if (player.disg <= 0) return;
+  player.disg = Math.max(0, player.disg - n);
+  if (player.disg === 0) { showMsg('THEY\'VE CLOCKED YOUR DISGUISE', 2.4); updateOutfitView(); }
+}
+const outfitEl = $('outfit');
+function updateOutfitView() {
+  const o = player.outfit;
+  outfitEl.className = Object.values(o).map((id) => 'o-' + id).join(' ') + (player.disg <= 0 && Object.keys(o).length ? ' burnt' : '');
+  vmSleeve.color.set(o.body === 'hivis' ? 0xff7a1a : 0x3a4a3a);
+}
+
+// one warm light that hops to whichever shop you're next to, so the interiors read at night
+const shopLight = new THREE.PointLight(0xffe6c0, 0, 16, 1.4); scene.add(shopLight);
+function updateShopLight() {
+  let best = null, bd = 30;
+  for (const sp of shopSpots) { const d = Math.hypot(sp.x - player.x, sp.z - player.z); if (d < bd) { bd = d; best = sp; } }
+  if (!best) { shopLight.intensity = 0; return; }
+  shopLight.position.set(best.x, 3.6, best.z - (best.face === 'pz' ? 1.5 : -1.5));
+  shopLight.intensity = 14 * (1 - bd / 30);
+}
+const allyCtx = { player, hunters: null, inCar: false, msg: (t) => showMsg(t, 2.2) };
+function updateAllies(dt) {
+  allyCtx.hunters = G.hunters; allyCtx.inCar = !!player.car;
+  for (const a of G.allies) if (!a.dead) a.update(dt, allyCtx);
+  G.allies = G.allies.filter((a) => !a.dead);
+}
+function startReload() {
+  const W = WEAPONS[player.weapon]; if (W.melee) return;
+  const A = player.ammo[player.weapon];
+  if (player.reloadT > 0 || A.mag >= W.mag || A.res <= 0 || player.car) return;
+  player.reloadT = W.reload; sfx.reload();
+}
 function playerShove() {
   if (player.car || player.shoveCd > 0 || !player.alive) return;
   player.shoveCd = 0.55; player.shoveAnim = 1; sfx.shove();
@@ -905,7 +1268,14 @@ function recomputeKeys() {
   input.crouch = keys.has('KeyC') || keys.has('ControlLeft') || touchCrouch;
 }
 window.addEventListener('keydown', (e) => {
+  if (G.mode === 'shop') {
+    if (/^Digit[0-9]$/.test(e.code)) shopBuy((+e.code.slice(5) + 9) % 10);
+    if (e.code === 'Escape' || e.code === 'KeyE' || e.code === 'KeyQ') leaveShop();
+    return;
+  }
   if (G.mode !== 'playing') return;
+  if (/^Digit[1-4]$/.test(e.code)) selectWeapon(SLOTS[+e.code.slice(5) - 1]);
+  if (e.code === 'KeyQ') selectWeapon(player.lastWeapon);
   if (e.code === 'Space' && !e.repeat) input.jumpEdge = true;
   keys.add(e.code); recomputeKeys();
   if (e.code === 'KeyE') useAction();
@@ -931,9 +1301,11 @@ document.addEventListener('pointerlockerror', () => { lockFailed = true; });
 canvas.addEventListener('mousedown', (e) => {
   if (isTouch || G.mode !== 'playing') return;
   if (document.pointerLockElement !== canvas && !lockFailed) { lockPointer(); return; }
-  if (e.button === 0) playerShoot();
-  if (e.button === 2) playerShove();
+  if (e.button === 0) primaryDown();
+  if (e.button === 2) secondary();
 });
+window.addEventListener('mouseup', (e) => { if (e.button === 0) primaryUp(); });
+window.addEventListener('wheel', (e) => { if (G.mode === 'playing' && Math.abs(e.deltaY) > 4) cycleWeapon(e.deltaY > 0 ? 1 : -1); }, { passive: true });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 function lockPointer() {
   if (isTouch) return;
@@ -979,9 +1351,9 @@ if (isTouch) {
     el.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); down(el); }, { passive: false });
     if (up) el.addEventListener('touchend', (e) => { e.preventDefault(); up(el); }, { passive: false });
   };
-  let fireHeld = null;
-  btn('btn-fire', () => { playerShoot(); clearInterval(fireHeld); fireHeld = setInterval(playerShoot, 220); }, () => clearInterval(fireHeld));
-  btn('btn-shove', playerShove);
+  btn('btn-fire', primaryDown, primaryUp);
+  btn('btn-shove', secondary);
+  btn('btn-wpn', () => cycleWeapon(1));
   btn('btn-jump', () => { touchJump = true; input.jump = true; input.jumpEdge = true; }, () => { touchJump = false; input.jump = false; });
   btn('btn-slide', () => { touchCrouch = true; input.crouch = true; }, () => { touchCrouch = false; input.crouch = false; });
   btn('btn-run', (el) => { input.runToggle = !input.runToggle; input.sprint = input.runToggle; el.classList.toggle('on', input.runToggle); });
@@ -998,7 +1370,7 @@ const hud = {
   city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'),
   time: $('hud-time'), kills: $('hud-kills'), alert: $('hud-alert'), msg: $('hud-msg'), banner: $('hud-banner'),
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
-  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'),
+  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'),
 };
 function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
 let bannerT = 0;
@@ -1039,7 +1411,11 @@ function drawMinimap() {
     mm.fillStyle = c.driver === 'hunter' ? '#ff3b3b' : c.driver === 'player' ? '#5ab4ff' : c.wrecked ? '#222' : '#e6e6e6';
     mm.fillRect(-1.1, -2.3, 2.2, 4.6); mm.restore();
   }
+  for (const sp of shopSpots) { mm.fillStyle = sp.kind === 'guns' ? '#ff9a2a' : sp.kind === 'hire' ? '#4aa0ff' : '#ff5ac8'; const k = (big ? 6 : 4) / sc * 0.9; mm.fillRect(sp.x - k, sp.z - k, k * 2, k * 2); }
+  mm.fillStyle = '#9affb0'; for (const a of atmSpots) mm.fillRect(a.x - 1.6 / sc, a.z - 1.6 / sc, 3.2 / sc, 3.2 / sc);
+  mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
   const dot = Math.max(1.8, 2.2 / sc);
+  mm.fillStyle = '#3cff8a'; for (const a of G.allies) if (!a.dead) { mm.beginPath(); mm.arc(a.x, a.z, dot * 1.2, 0, Math.PI * 2); mm.fill(); }
   for (const h of G.hunters) { if (h.dead) continue; mm.fillStyle = h.type === 'cop' ? '#5a8cff' : h.state === 'chase' ? '#ff3b3b' : '#c9b8b8'; mm.beginPath(); mm.arc(h.x, h.z, h.state === 'chase' ? dot * 1.2 : dot, 0, Math.PI * 2); mm.fill(); }
   for (const a of [...G.helis, ...G.drones]) {
     if (a.dead) continue;
@@ -1047,7 +1423,21 @@ function drawMinimap() {
     mm.fillStyle = '#fff'; mm.strokeStyle = '#1d2a4a'; mm.lineWidth = 1 / sc;
     mm.beginPath(); mm.arc(a.x, a.z, (a.kind === 'heli' ? 4 : 2.4) / sc * 1.4, 0, Math.PI * 2); mm.fill(); mm.stroke();
   }
+  if (G.contract) {
+    const T = G.contract.h, r0 = (big ? 7 : 5) / sc;
+    mm.strokeStyle = '#ffd23a'; mm.lineWidth = 2.2 / sc; mm.beginPath(); mm.arc(T.x, T.z, r0, 0, Math.PI * 2); mm.stroke();
+    mm.fillStyle = '#ffd23a'; mm.beginPath(); mm.arc(T.x, T.z, r0 * 0.4, 0, Math.PI * 2); mm.fill();
+  }
   mm.restore();
+  // contract target off the edge of the minimap: a yellow arrow on the rim pointing at them
+  if (G.contract && !big) {
+    const T = G.contract.h, dx = T.x - tp.x, dz = T.z - tp.z, dd = Math.hypot(dx, dz);
+    if (dd > range * 0.92) {
+      const a = Math.atan2(dz, dx) + yaw, R0 = W / 2 - 9;
+      mm.save(); mm.translate(W / 2 + Math.cos(a) * R0, W / 2 + Math.sin(a) * R0); mm.rotate(a);
+      mm.fillStyle = '#ffd23a'; mm.beginPath(); mm.moveTo(7, 0); mm.lineTo(-5, -6); mm.lineTo(-5, 6); mm.closePath(); mm.fill(); mm.restore();
+    }
+  }
   mm.save(); mm.translate(W / 2, W / 2); if (big) mm.rotate(-(player.car ? player.car.heading + Math.PI + player.camOff : player.yaw));
   mm.fillStyle = '#5ab4ff'; mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
   mm.beginPath(); mm.moveTo(0, -8); mm.lineTo(6, 6); mm.lineTo(0, 3); mm.lineTo(-6, 6); mm.closePath(); mm.fill(); mm.stroke();
@@ -1082,7 +1472,16 @@ function updateHUD(dt) {
   else if (chasing) { hud.alert.textContent = `${chasing} HUNTING YOU`; hud.alert.className = 'hot'; }
   else if (G.lastSeenT > 10) { hud.alert.textContent = 'HIDDEN'; hud.alert.className = 'calm'; }
   else { hud.alert.textContent = 'THEY LOST SIGHT OF YOU'; hud.alert.className = 'warm'; }
-  hud.ammo.innerHTML = player.car ? '' : player.reloadT > 0 ? 'RELOADING…' : `<b>${player.mag}</b> / ${player.reserve}`;
+  const W = WEAPONS[player.weapon], A = player.ammo[player.weapon];
+  hud.ammo.innerHTML = player.car ? '' : `<small>${W.name}</small>` + (W.melee ? (player.launchCd > 0 ? `<i>BIG SWING ${player.launchCd.toFixed(1)}s</i>` : '<i>BIG SWING READY</i>') : player.reloadT > 0 ? 'RELOADING…' : `<b>${A.mag}</b> / ${A.res}`);
+  hud.cash.textContent = '$' + player.cash;
+  const nOut = Object.keys(player.outfit).length;
+  hud.disg.innerHTML = nOut ? `DISGUISE <span><i style="width:${(player.disg * 100).toFixed(0)}%"></i></span>` : '';
+  const CT = G.contract;
+  if (CT) { const dd = Math.hypot(CT.h.x - player.x, CT.h.z - player.z); hud.job.innerHTML = `<b>CONTRACT</b> ${CT.name}<br>${Math.round(dd)} m · ${fmtTime(CT.t)} left · pays $${CT.pay}`; }
+  hud.job.classList.toggle('hidden', !CT);
+  const al = G.allies.filter((a) => !a.dead);
+  hud.allies.innerHTML = al.map((a) => `<span>${a.name} <em style="width:${Math.max(0, a.hp / a.T.hp * 100).toFixed(0)}%"></em></span>`).join('');
   hud.carbar.classList.toggle('hidden', !player.car);
   if (player.car) hud.carhp.style.width = player.car.hp + '%';
   hud.cross.classList.toggle('hidden', !!player.car);
@@ -1090,10 +1489,12 @@ function updateHUD(dt) {
   if (player.car) prompt = Math.abs(player.car.speed) > 6 ? '' : (isTouch ? 'Tap CAR to get out' : 'Press E to get out');
   else if (player.mode === 'zip') prompt = isTouch ? 'JUMP to let go' : 'Space to let go';
   else if (player.mode === 'ladder') prompt = isTouch ? 'Push forward to climb, JUMP to let go' : 'W / S to climb, Space to let go';
+  else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
+  else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
   else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
-  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip'));
+  if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
 }
 
 // =====================================================================
@@ -1157,6 +1558,9 @@ function clearWorld() {
   for (const r of ragdolls) r.dispose(); ragdolls.length = 0;
   for (const c of G.cars) scene.remove(c.g); G.cars.length = 0;
   for (const a of [...G.helis, ...G.drones]) a.remove(); G.helis.length = 0; G.drones.length = 0;
+  for (const a of G.allies) a.remove(); G.allies.length = 0;
+  for (const D of G.drops) scene.remove(D.m); G.drops.length = 0; G.getUps.length = 0;
+  G.contract = null; G.offers = []; G.offersDay = 0;
 }
 function spawnTraffic(count) {
   const total = lanes.reduce((s, l) => s + (l.a1 - l.a0), 0);
@@ -1176,8 +1580,10 @@ function spawnTraffic(count) {
 function resetGame() {
   clearWorld();
   resetParkour(player);
-  Object.assign(player, { x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: Math.PI / 4, pitch: 0, hp: 100, stam: 100, exhausted: false, lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, mag: 12, reserve: 48, reloadT: 0, fireCd: 0, dragT: 0, carHitCd: 0, camOff: 0 });
-  Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false });
+  Object.assign(player, { x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, yaw: Math.PI / 4, pitch: 0, hp: 100, stam: 100, exhausted: false, lastHurt: 99, shoveCd: 0, kx: 0, kz: 0, alive: true, car: null, ammo: freshAmmo(), reloadT: 0, fireCd: 0, dragT: 0, carHitCd: 0, camOff: 0,
+    cash: START_CASH, weapon: 'pistol', lastWeapon: 'pistol', owned: new Set(['pistol']), launchCd: 0, meleeCd: 0, swingT: 9, swingKind: null, swingHit: true, switchT: 0, outfit: {}, disg: 0 });
+  showWeaponModel(); updateOutfitView();
+  Object.assign(G, { elapsed: 0, day: 1, kills: 0, pingT: 40, spawnT: 0, flowT: 0, hunterCarT: 30, overT: 0, shake: 0, hurtFlash: 0, heat: 0, level: 0, lastSeenT: 99, airT: 3, locale: '', localeT: 0, bigMap: false, hitstopT: 0, fovKick: 0, fireHeld: false });
   G.lkp = { x: 0, z: 0 };
   spawnTraffic(70);
   navRecenter(0, 0, true); computeFlow(0, 0);
@@ -1229,6 +1635,7 @@ $('btn-again').addEventListener('click', startGame);
 $('btn-resume').addEventListener('click', resumeGame);
 $('btn-quit').addEventListener('click', toMenu);
 $('btn-menu').addEventListener('click', toMenu);
+$('shop-leave').addEventListener('click', leaveShop);
 showBest();
 
 // =====================================================================
@@ -1236,8 +1643,11 @@ showBest();
 // =====================================================================
 function updatePlayer(dt) {
   player.shoveCd -= dt; player.fireCd -= dt; player.carHitCd -= dt; player.lastHurt += dt;
+  player.launchCd = Math.max(0, player.launchCd - dt); player.meleeCd -= dt; player.switchT = Math.max(0, player.switchT - dt);
   player.recoil = Math.max(0, player.recoil - dt * 8); player.shoveAnim = Math.max(0, player.shoveAnim - dt * 4);
-  if (player.reloadT > 0) { player.reloadT -= dt; if (player.reloadT <= 0) { const n = Math.min(12 - player.mag, player.reserve); player.mag += n; player.reserve -= n; } }
+  if (player.reloadT > 0) { player.reloadT -= dt; if (player.reloadT <= 0) { const W = WEAPONS[player.weapon], A = player.ammo[player.weapon]; if (!W.melee) { const n = Math.min(W.mag - A.mag, A.res); A.mag += n; A.res -= n; } } }
+  if (player.swingKind) { player.swingT += dt; if (!player.swingHit && player.swingT >= SWING[player.swingKind].hit) { player.swingHit = true; crowbarImpact(player.swingKind === 'heavy'); } }
+  if (G.fireHeld && !player.car) { const W = WEAPONS[player.weapon]; if (W.auto || (isTouch && !W.melee && player.fireCd < -0.07)) playerShoot(); else if (W.melee && isTouch) crowbarSwing(false); }
   if (player.lastHurt > 4 && player.hp < 100 && player.alive) player.hp = Math.min(100, player.hp + 2.5 * dt);
   if (player.car) {
     const c = player.car;
@@ -1321,11 +1731,13 @@ function updateCamera(dt, t) {
   camera.position.set(player.x + sx, player.y + eye + bobY + sy, player.z);
   // adrenaline: the view widens with speed, tilts on the zipline and dips through vaults and mantles
   const hs = Math.hypot(player.vx, player.vz);
-  const wantFov = 72 + clamp((hs - 5.8) * 1.4, 0, 8) + (player.slideT > 0 ? 6 : 0) + (player.mode === 'zip' ? clamp(player.zipV * 0.6, 0, 14) : 0) + (player.mode === 'vault' ? 5 : 0);
+  const wantFov = 72 + clamp((hs - 5.8) * 1.4, 0, 8) + (player.slideT > 0 ? 6 : 0) + (player.mode === 'zip' ? clamp(player.zipV * 0.6, 0, 14) : 0) + (player.mode === 'vault' ? 5 : 0) + G.fovKick;
+  G.fovKick = Math.max(0, G.fovKick - dt * 25);
   if (Math.abs(camera.fov - wantFov) > 0.05) { camera.fov = lerp(camera.fov, wantFov, Math.min(1, dt * 6)); camera.updateProjectionMatrix(); }
   G.camRoll = lerp(G.camRoll || 0, player.mode === 'zip' ? 0.07 * Math.sin(G.elapsed * 2) + 0.05 : player.slideT > 0 ? 0.06 : -input.side * 0.012 * (player.sprinting ? 1 : 0.4), Math.min(1, dt * 6));
   const mantleDip = player.mode === 'mantle' ? -0.25 * Math.sin(clamp(player.anim.t / player.anim.dur, 0, 1) * Math.PI) : 0;
-  camera.rotation.set(player.pitch + player.recoil * 0.03 + mantleDip - player.landDip * 0.08, player.yaw, player.alive ? G.camRoll : Math.min(1.2, G.deathT * 1.4));
+  const swingRoll = player.swingKind === 'heavy' && player.swingT < 0.7 ? Math.sin(clamp((player.swingT - 0.3) / 0.35, 0, 1) * Math.PI) * 0.05 : 0;
+  camera.rotation.set(player.pitch + player.recoil * 0.03 + mantleDip - player.landDip * 0.08, player.yaw, player.alive ? G.camRoll + swingRoll : Math.min(1.2, G.deathT * 1.4));
   vm.visible = player.alive;
   const b = player.bob;
   vm.position.set(Math.cos(b) * 0.012, Math.abs(Math.sin(b)) * -0.015 - (player.reloadT > 0 ? 0.25 : 0), player.recoil * 0.06);
@@ -1337,7 +1749,27 @@ function updateCamera(dt, t) {
   G.vmReach = lerp(G.vmReach || 0, reach, Math.min(1, dt * 10));
   armL.rotation.x = 0.1 + G.vmReach * 0.7; armL.position.y = -0.27 + G.vmReach * 0.6; armL.position.x = -0.08 - G.vmReach * 0.12;
   if (player.mode === 'ladder') armL.position.y += Math.sin(player.y * 3) * 0.06;
-  vm.position.y -= G.vmReach * 0.12;
+  vm.position.y -= G.vmReach * 0.12 + player.switchT * 1.1;
+  // two-handed guns bring the left hand forward under the barrel
+  const twoHand = player.weapon === 'shotgun' || player.weapon === 'smg', fr = 1 - G.vmReach;
+  armL.rotation.y = twoHand ? -0.5 + 0.38 * fr : -0.5;
+  if (twoHand) { armL.position.z = -0.42 - 0.26 * fr - sh * 0.25; armL.position.x += 0.07 * fr; armL.position.y += 0.03 * fr; }
+  // crowbar swings: the arm moves a little, the bar does the travelling
+  let pose = [0.05 + player.recoil * 0.25, 0.18, 0, 0.2, -0.24];
+  if (player.weapon === 'crowbar') {
+    pose = [0.25 + player.recoil * 0.2, 0.2, 0, 0.2, -0.25, 0.85, 0, 0.55];
+    if (player.swingKind && player.swingT < SWING[player.swingKind].dur) {
+      const k = player.swingT / SWING[player.swingKind].dur, b0 = pose;
+      const keys = player.swingKind === 'light'
+        ? [[0, ...b0], [0.28, 0.5, 0.25, 0, 0.23, -0.2, 1.35, 0, 0.15], [0.48, -0.25, 0.05, 0, 0.12, -0.3, -0.2, 0, 0.75], [1, ...b0]]
+        : [[0, ...b0], [0.42, 0.35, -0.3, -0.2, 0.32, -0.17, 1.25, 0, -1.0], [0.55, 0.0, 0.45, 0.25, -0.05, -0.24, 0.25, 0, 1.55], [0.72, -0.1, 0.55, 0.3, -0.12, -0.27, 0.05, 0, 1.9], [1, ...b0]];
+      let i = 0; while (i < keys.length - 2 && k > keys[i + 1][0]) i++;
+      const A = keys[i], B = keys[i + 1], u = clamp((k - A[0]) / (B[0] - A[0]), 0, 1), e = u * u * (3 - 2 * u);
+      pose = [1, 2, 3, 4, 5, 6, 7, 8].map((j) => lerp(A[j], B[j], e));
+    }
+    crowbarVM.rotation.set(pose[5], pose[6], pose[7]);
+  }
+  armR.rotation.set(pose[0], pose[1], pose[2]); armR.position.x = pose[3]; armR.position.y = pose[4];
 }
 function updateDirector(dt) {
   G.hour = hourAt(G.elapsed);
@@ -1364,7 +1796,8 @@ function updateDirector(dt) {
   // profile
   G.lastSeenT += dt;
   const seenByHunters = G.hunters.some((h) => !h.dead && h.state === 'chase' && h.hasLOS);
-  G.heat += dt * (0.25 + (G.airTracking ? 3 : 0) + (seenByHunters ? 0.8 : 0));
+  G.heat += dt * (0.25 + (G.airTracking ? 3 : 0) + (seenByHunters ? 0.8 * (1 - 0.5 * player.disg) : 0));
+  if (player.disg > 0) wearDisguise(dt * 0.0035);
   if (G.lastSeenT > 10) G.heat -= dt * 3.5;
   G.heat = clamp(G.heat, heatFloor(), 330);
   let lvl = 0; for (let i = 0; i < LEVELS.length; i++) if (G.heat >= LEVELS[i]) lvl = i;
@@ -1380,10 +1813,10 @@ function updateDirector(dt) {
   if (G.spawnT <= 0) {
     G.spawnT = 0.6;
     if (alive.length < targetHunters()) spawnHunter();
-    for (const h of alive) if (h.state !== 'chase' && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
-    for (const h of alive) if (h.state === 'chase' && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
+    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
+    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
     // not everyone joins in: past the cap, the furthest ones who can't see you go back to searching
-    const ch = alive.filter((h) => h.state === 'chase');
+    const ch = alive.filter((h) => h.state === 'chase' && !h.contract);
     if (ch.length > maxChasers()) {
       ch.sort((a, b) => Math.hypot(b.x - tp.x, b.z - tp.z) - Math.hypot(a.x - tp.x, a.z - tp.z));
       for (let i = 0; i < ch.length - maxChasers(); i++) if (!ch[i].hasLOS || Math.hypot(ch[i].x - tp.x, ch[i].z - tp.z) > 30) { ch[i].state = 'search'; ch[i].wt = null; ch[i].alertT = -1; }
@@ -1428,7 +1861,8 @@ function updateDirector(dt) {
 const clock = new THREE.Clock();
 function frame() {
   requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.05), t = performance.now() / 1000;
+  let dt = Math.min(clock.getDelta(), 0.05); const t = performance.now() / 1000;
+  if (G.hitstopT > 0) { G.hitstopT -= dt; dt *= 0.18; } // a beat of slow-mo on a big hit
   simulate(dt, t);
   updateLighting(t);
   updateCamera(dt, t);
@@ -1449,6 +1883,7 @@ function simulate(dt, t) {
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
+    updateGetUps(dt); updateDrops(dt, t); updateContract(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
     if (!player.alive) { G.overT -= dt; if (G.overT <= 0 && G.mode === 'playing') endGame(false); }
@@ -1457,14 +1892,21 @@ function simulate(dt, t) {
     G.hour = 18.2;
     for (const c of G.cars) c.update(dt);
   }
-  for (let i = ragdolls.length - 1; i >= 0; i--) if (!ragdolls[i].update(G.mode === 'paused' ? 0 : dt)) { ragdolls[i].dispose(); ragdolls.splice(i, 1); }
-  if (G.mode !== 'paused') { updatePuffs(dt); updateTracers(dt); updateAmbientSmoke(dt); }
+  for (let i = ragdolls.length - 1; i >= 0; i--) if (!ragdolls[i].update(G.mode === 'paused' || G.mode === 'shop' ? 0 : dt)) { ragdolls[i].dispose(); ragdolls.splice(i, 1); }
+  if (G.mode !== 'paused' && G.mode !== 'shop') { updatePuffs(dt); updateTracers(dt); updateAmbientSmoke(dt); }
+  animateShopkeepers(t);
 }
 
 player.x = 0; player.z = 0;
+spawnShopkeepers(scene);
+// the Galleria's novelty shops sell disguises too, each its own speciality
+{
+  const MALL_CATS = { 'SPECS APPEAL': ['eyes'], 'BEARD BARN': ['face'], 'BIG HAT BARN': ['hat'], 'WIGS 4 U': ['wig'], 'SUIT YOURSELF': ['body', 'hat'] };
+  for (const m of mallShops) if (MALL_CATS[m.name]) shopSpots.push({ x: m.x, z: m.z, y: m.y, r: 1.8, kind: 'costume', name: m.name, city: 'PORT HALDEN', cats: MALL_CATS[m.name], face: 'mall' });
+}
 spawnTraffic(70);
 $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

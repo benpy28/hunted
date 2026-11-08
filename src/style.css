@@ -81,6 +81,7 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #btn-reload { right: calc(210px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }
 #btn-pause { right: calc(140px + env(safe-area-inset-right)); top: calc(16px + env(safe-area-inset-top)); }
 #btn-map { right: calc(140px + env(safe-area-inset-right)); top: calc(70px + env(safe-area-inset-top)); }
+#btn-wpn { right: calc(200px + env(safe-area-inset-right)); top: calc(70px + env(safe-area-inset-top)); }
 
 /* ---------- Overlays ---------- */
 .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -117,3 +118,52 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 .is-touch #hud-ammo { bottom: auto; top: calc(132px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); font-size: 14px; }
 .is-touch #hud-ammo b { font-size: 24px; }
 .is-touch #hud-card { transform-origin: top left; }
+
+/* ---------- wallet, weapons, helpers ---------- */
+#hud-ammo small { display: block; font-size: 11px; letter-spacing: 3px; color: #9aa6ba; text-align: right; }
+#hud-ammo i { font-style: normal; font-size: 13px; letter-spacing: 1.5px; color: #ffcf6a; }
+#hud-cash { position: absolute; right: calc(24px + env(safe-area-inset-right)); bottom: calc(84px + env(safe-area-inset-bottom));
+  font-weight: 800; font-size: 15px; letter-spacing: 1px; color: #8fe39a; text-shadow: 0 1px 4px #000; }
+#hud-allies { position: absolute; left: calc(14px + env(safe-area-inset-left)); bottom: calc(96px + env(safe-area-inset-bottom)); font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #8fffb8; }
+#hud-allies span { display: block; margin-top: 4px; text-shadow: 0 1px 3px #000; }
+#hud-allies em { display: block; height: 3px; width: 0; max-width: 110px; background: #3cff8a; border-radius: 2px; margin-top: 2px; }
+#shop { background: rgba(6, 6, 12, .72); }
+.shop-panel { max-width: 640px; width: 92vw; }
+#shop-cash { font-weight: 900; letter-spacing: 3px; color: #8fe39a; margin: 10px 0 12px; }
+#shop-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; }
+.shop-row { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; text-align: left; padding: 9px 12px;
+  border-radius: 10px; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.06); color: #fff; font-weight: 800; letter-spacing: 1px; }
+.shop-row:hover { background: rgba(255,255,255,.13); }
+.shop-row .k { color: #ffcf6a; font-size: 13px; }
+.shop-row small { display: block; font-weight: 500; font-size: 12px; letter-spacing: 0; color: #b8c0d0; margin-top: 2px; }
+.shop-row .p { color: #8fe39a; font-size: 16px; }
+.shop-row.poor .p { color: #ff8a7a; }
+.shop-row.owned { opacity: .5; }
+#shop-note { min-height: 20px; margin-top: 10px; font-weight: 800; letter-spacing: 2px; color: #ffd27a; }
+.is-touch #hud-cash { bottom: auto; top: calc(186px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right)); }
+#hud-job { position: absolute; left: 50%; top: calc(54px + env(safe-area-inset-top)); transform: translateX(-50%); text-align: center;
+  font-size: 12px; font-weight: 700; letter-spacing: 1px; color: #ffe08a; text-shadow: 0 1px 4px #000; white-space: nowrap;
+  padding: 5px 14px; border-radius: 12px; background: rgba(20,16,4,.6); border: 1px solid rgba(255,210,58,.35); }
+#hud-job b { color: #ffd23a; letter-spacing: 3px; margin-right: 4px; }
+
+/* ---------- disguises (what you can see of them from inside) ---------- */
+#hud-disg { font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #ff9ae0; margin-top: 6px; display: flex; align-items: center; gap: 8px; }
+#hud-disg:empty { display: none; }
+#hud-disg span { flex: 1; height: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+#hud-disg i { display: block; height: 100%; background: linear-gradient(90deg, #ff6ad0, #ffd0f4); }
+#outfit { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+#outfit > div { position: absolute; display: none; }
+#outfit.burnt > div { opacity: .55; }
+#outfit.o-specs .glasses, #outfit.o-aviators .glasses { display: block; inset: -9vh -6vw; border: 2.4vw solid #121212; border-radius: 46% / 40%; }
+#outfit.o-specs .glasses::after, #outfit.o-aviators .glasses::after { content: ''; position: absolute; left: 50%; top: 5vh; width: 8vw; height: 5vh; transform: translateX(-50%); background: #121212; border-radius: 0 0 50% 50%; }
+#outfit.o-aviators .glasses { border-color: #c8c0a0; background: rgba(150, 110, 40, .16); border-width: 1.2vw; }
+#outfit.o-aviators .glasses::after { background: #c8c0a0; height: 2.2vh; width: 12vw; top: 9vh; }
+#outfit.o-tophat .hat, #outfit.o-cowboy .hat { display: block; left: -10%; right: -10%; top: -6vh; height: 13vh; background: #18181c; border-radius: 0 0 50% 50% / 0 0 100% 100%; }
+#outfit.o-cowboy .hat { background: #e8a030; height: 16vh; border-bottom: 1.2vh solid #b8701a; }
+#outfit.o-clownwig .wig, #outfit.o-mullet .wig { display: block; left: -5%; right: -5%; top: -9vh; height: 15vh; border-radius: 50%; filter: blur(5px);
+  background: radial-gradient(circle at 20% 70%, #ff3a3a 0 18%, transparent 19%), radial-gradient(circle at 45% 80%, #ffd23a 0 16%, transparent 17%), radial-gradient(circle at 70% 70%, #3aa0ff 0 18%, transparent 19%), radial-gradient(circle at 90% 75%, #3ad06a 0 15%, transparent 16%); }
+#outfit.o-mullet .wig { background: #7a4a20; height: 9vh; top: -5vh; }
+#outfit.o-nose .nose { display: block; left: 50%; bottom: -9vh; width: 16vw; height: 18vh; transform: translateX(-50%); border-radius: 50%; background: #f08a8a; filter: blur(6px); }
+#outfit.o-tache .tache { display: block; left: 50%; bottom: -4vh; width: 36vw; height: 10vh; transform: translateX(-50%); border-radius: 50% 50% 40% 40%; background: #3a2412; filter: blur(7px); }
+#outfit.o-beard .beard { display: block; left: 50%; bottom: -10vh; width: 60vw; height: 22vh; transform: translateX(-50%); border-radius: 50%; background: #d8d8d8; filter: blur(8px); }
+.is-touch #outfit .tache, .is-touch #outfit .beard, .is-touch #outfit .nose { opacity: .7; }
