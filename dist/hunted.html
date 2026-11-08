@@ -3016,6 +3016,7 @@ const isUnderground = (y) => y < -1.2;
 
 const walkIns = []; // {x, z, name, kind, city, keeper:{x,z,face}, rect}
 // places townsfolk go to do things: sit on a bench, wait for the bus, queue at a food cart
+const streetProps = []; // kickable bins, wheelie bins and hydrants {kind, x, z, col, color}
 const lifeSpots = []; // {kind: 'bench'|'bus'|'cart', x, z, face, sx, sz} (sx,sz: where you sit or stand)
 
 // ---------------------------------------------------------------------
@@ -3238,12 +3239,9 @@ function bench(x, z, alongX, faceSign) {
   const fxs = alongX ? 0 : faceSign, fzs = alongX ? faceSign : 0, face = Math.atan2(fxs, fzs);
   for (const o of [-0.45, 0.45]) lifeSpots.push({ kind: 'bench', x: x + fxs * 0.9 + (alongX ? o : 0), z: z + fzs * 0.9 + (alongX ? 0 : o), face, sx: x + fxs * 0.05 + (alongX ? o : 0), sz: z + fzs * 0.05 + (alongX ? 0 : o) });
 }
-function bin(x, z) { propBuf.cyl(x, z, 0.3, 0.33, 0.15, 1.0, 0x2a4a3a, 10); propBuf.cyl(x, z, 0.36, 0.2, 1.0, 1.15, 0x1a2a22, 10); col(x, z, 0.3, 0.3, 1.1); }
-function hydrant(x, z) {
-  propBuf.cyl(x, z, 0.16, 0.16, 0.15, 0.75, 0xc8281e, 8); propBuf.cyl(x, z, 0.2, 0.06, 0.75, 0.95, 0xc8281e, 8);
-  propBuf.box(x - 0.27, x + 0.27, 0.48, 0.6, z - 0.06, z + 0.06, 0xd8d8d0); propBuf.box(x - 0.06, x + 0.06, 0.48, 0.6, z - 0.22, z + 0.22, 0xc8281e);
-  col(x, z, 0.2, 0.2, 0.9);
-}
+// bins and hydrants aren't baked into the street: streetprops.js draws them so they can be kicked over and burst
+function bin(x, z) { streetProps.push({ kind: 'bin', x, z, col: col(x, z, 0.3, 0.3, 1.1) }); }
+function hydrant(x, z) { streetProps.push({ kind: 'hydrant', x, z, col: col(x, z, 0.2, 0.2, 0.9) }); }
 function newsBoxes(x, z, alongX) {
   const n = 2 + Math.floor(srand() * 2);
   for (let k = 0; k < n; k++) {
@@ -3345,7 +3343,7 @@ function dumpster(x, z, alongX) {
   if (srand() < 0.5) propBuf.box(x - lx * 0.6, x + lx * 0.4, 1.4, 1.75, z - lz * 0.5, z + lz * 0.6, 0x1a1a1a); // overflowing bin bags
   col(x, z, lx, lz, 1.45);
 }
-function wheelie(x, z) { const c = spick([0x2a6a3a, 0x2a4a8a, 0x5a5a60, 0x7a5a2a]); propBuf.box(x - 0.3, x + 0.3, 0.15, 1.15, z - 0.35, z + 0.35, c); propBuf.box(x - 0.33, x + 0.33, 1.15, 1.22, z - 0.4, z + 0.38, shadeC(c)); col(x, z, 0.3, 0.35, 1.2); }
+function wheelie(x, z) { const c = spick([0x2a6a3a, 0x2a4a8a, 0x5a5a60, 0x7a5a2a]); streetProps.push({ kind: 'wheelie', x, z, color: c, col: col(x, z, 0.3, 0.35, 1.2) }); }
 const shadeC = (c) => new THREE.Color(c).multiplyScalar(0.75).getHex();
 function acUnit(x, z) { propBuf.box(x - 0.45, x + 0.45, 0.15, 0.95, z - 0.4, z + 0.4, 0xc8c8c4); propBuf.cyl(x, z, 0.3, 0.3, 0.95, 0.97, 0x3a3a3a, 10); col(x, z, 0.45, 0.4, 0.95); }
 function laundryLine(a, b, y) {
@@ -3857,6 +3855,11 @@ sfx.vzap = () => { noise(0.12, 0.3, 3200, 2); tone(1600, 0.1, 'square', 0.06, 0.
 sfx.ice = () => { tone(1900, 0.12, 'sine', 0.08, 1.5); noise(0.1, 0.18, 5000, 3); };
 sfx.cheer = () => { for (let i = 0; i < 4; i++) noise(0.5, 0.08, 900 + i * 300, 0.6, i * 0.05); tone(520, 0.2, 'triangle', 0.05, 1.2, 0.1); };
 sfx.sigh = () => { noise(0.9, 0.05, 500, 0.5); };
+sfx.bell = () => { tone(2350, 0.35, 'sine', 0.07); tone(2350, 0.3, 'sine', 0.06, 1, 0.13); tone(4700, 0.12, 'sine', 0.02, 1, 0.13); };
+sfx.bin = () => { noise(0.3, 0.45, 2200, 1.6); tone(330, 0.25, 'triangle', 0.1, 0.7); noise(0.18, 0.25, 800, 0.8, 0.12); };
+sfx.thunk = () => { tone(180, 0.1, 'triangle', 0.08, 0.7); noise(0.06, 0.15, 1500, 1.2); };
+sfx.clank = () => { tone(1250, 0.18, 'square', 0.05, 0.9); tone(1880, 0.12, 'sine', 0.05); };
+sfx.gush = () => { noise(1.4, 0.35, 1800, 0.4); noise(0.9, 0.25, 600, 0.6, 0.1); };
 sfx.explode = () => { noise(0.9, 0.6, 180, 0.4); tone(60, 0.7, 'sawtooth', 0.2, 0.4); };
 
 // continuous rotor / propeller hum, volume driven by distance to the nearest aircraft
@@ -4858,7 +4861,7 @@ const ashMat = new THREE.MeshLambertMaterial({ color: 0x16130f });
 const sootMat = new THREE.MeshLambertMaterial({ color: 0x3a3632 });
 const crumbles = [], words = [], dizzies = [];
 const wordTex = new Map();
-const WORD_COLORS = { 'ZAP!': '#ff5a3a', 'BONK!': '#ffd23a', 'POW!': '#ff8a2a', 'BLAM!': '#ffe04a', 'RAT-A-TAT!': '#ffd23a', 'WHAM!': '#5ab4ff', 'WHOOSH!': '#9ad8ff', 'OOF!': '#ffffff', 'FWOOSH!': '#ff6a2a', 'KA-BOOM!': '#ff5a3a', 'THWACK!': '#ffd23a' };
+const WORD_COLORS = { 'ZAP!': '#ff5a3a', 'BONK!': '#ffd23a', 'POW!': '#ff8a2a', 'BLAM!': '#ffe04a', 'RAT-A-TAT!': '#ffd23a', 'WHAM!': '#5ab4ff', 'WHOOSH!': '#9ad8ff', 'OOF!': '#ffffff', 'FWOOSH!': '#ff6a2a', 'KA-BOOM!': '#ff5a3a', 'THWACK!': '#ffd23a', 'SPLOOSH!': '#7ad0ff', 'CLANG!': '#d8d8e0', 'CRASH!': '#ffb03a', 'STRIKE!': '#ff5a3a', 'DING!': '#ffe04a' };
 function wordMat(text) {
   if (!wordTex.has(text)) wordTex.set(text, new THREE.SpriteMaterial({ map: canvasTex(512, 160, (ctx, W, H) => {
     ctx.font = 'italic 900 92px Arial Black, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -4920,6 +4923,7 @@ function knockFX(rag, kind, hitY, dx = 0, dz = 0) {
     for (let i = 0; i < 9; i++) kick(rag, mr(-3, 3), mr(0, 2), mr(-3, 3), i);
     at('RAT-A-TAT!'); dizzy(rag, 3);
   } else if (kind === 'car') { at('WHAM!'); dizzy(rag, 4); }
+  else if (kind === 'water') { at(mpick(['SPLOOSH!', 'WHOOSH!'])); dizzy(rag, 2.5); }
   else if (kind === 'super') { at(mpick(['WHOOSH!', 'POW!', 'WHAM!'])); dizzy(rag, 3); }
   else { at('OOF!', 0.5); dizzy(rag, 2.5); }
 }
@@ -4948,6 +4952,578 @@ function updateKnockFX(dt) {
   }
 }
 const knockDebug = { crumbles, words, dizzies };
+
+// Cyclists: townsfolk pedal along the bike lane at the curb edge of every road, ring their bells at
+// anyone in the way, swerve round stopped cars, and go flying over the handlebars if a car, a shove, a
+// crowbar or a bullet catches them (then they get up, cross, and walk it off). The bike stays where it
+// fell and anyone can pick it up: press E next to a bike to ride it yourself (fast and quiet, it goes on
+// pavements and in alleys where a car can't), or press E right beside someone riding past to yank them
+// off and take theirs. When the town is hunting you, some riders give chase on their bikes and jump off
+// to grab you.
+
+
+
+
+
+const bikes = [];  // every bike in the world: {g, wheels, x, z, y, heading, rider, lying, speed, lane, lat, spin}
+const riders = []; // hunters currently riding (kept in sync each frame, for traffic to brake for)
+const BK_COLORS = [0xd02a2a, 0x2a5aa0, 0x1a1a1a, 0x2a8a4a, 0xe0b020, 0xe07aa0, 0xd8d8d8, 0x6b3a8c, 0x2f7f8f];
+const BK_CURB = 2.3;   // how far the bike lane sits outside the car lane (car lanes are 3.4 m off the centre line)
+
+const _bkWheelGeo = new THREE.TorusGeometry(0.33, 0.035, 5, 14).rotateY(Math.PI / 2);
+const _bkSpokeGeo = new THREE.BoxGeometry(0.02, 0.62, 0.02);
+const bkTyreMat = lam(0x161616), bkSteelMat = lam(0x9a9aa0), bkSeatMat = lam(0x222222);
+function bkBeam(g, a, b, t, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(t, t, 1), mat);
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  m.position.addVectors(A, B).multiplyScalar(0.5); m.scale.z = A.distanceTo(B); m.lookAt(B); g.add(m);
+}
+const bkProto = new Map();
+function bkModel(color) {
+  if (!bkProto.has(color)) {
+    const g = new THREE.Group(), frame = lam(color);
+    const rear = [0, 0.34, -0.52], front = [0, 0.34, 0.52], seat = [0, 0.88, -0.18], crank = [0, 0.36, 0], stem = [0, 0.98, 0.4];
+    bkBeam(g, rear, seat, 0.05, frame); bkBeam(g, seat, crank, 0.05, frame); bkBeam(g, crank, rear, 0.04, frame);
+    bkBeam(g, seat, stem, 0.05, frame); bkBeam(g, crank, stem, 0.05, frame); bkBeam(g, stem, front, 0.045, bkSteelMat);
+    bkBeam(g, [-0.27, 1.02, 0.42], [0.27, 1.02, 0.42], 0.035, bkSteelMat);
+    const s = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.26), bkSeatMat); s.position.set(0, 0.92, -0.2); g.add(s);
+    for (const z of [-0.52, 0.52]) {
+      const w = new THREE.Group(); w.position.set(0, 0.34, z); w.name = 'wheel';
+      w.add(new THREE.Mesh(_bkWheelGeo, bkTyreMat));
+      for (let k = 0; k < 3; k++) { const sp = new THREE.Mesh(_bkSpokeGeo, bkSteelMat); sp.rotation.x = (k * Math.PI) / 3; w.add(sp); }
+      g.add(w);
+    }
+    bkProto.set(color, g);
+  }
+  const g = bkProto.get(color).clone();
+  scene.add(g);
+  return g;
+}
+
+function bkMake(x, z, heading, color = mpick(BK_COLORS)) {
+  const g = bkModel(color);
+  const B = { g, wheels: g.children.filter((c) => c.name === 'wheel'), x, z, y: groundY(x, z), heading, rider: null, lying: false, speed: 0, lane: null, lat: 0, spin: 0, fallT: 0, tip: 0 };
+  bikes.push(B);
+  return B;
+}
+function bkLaneSide(l) { return l.axis === 'z' ? l.dir : -l.dir; } // which way is the curb from this car lane
+function bkLanePoint(l, along, lat) { const f = l.fixed + bkLaneSide(l) * lat; return l.axis === 'z' ? [f, along] : [along, f]; }
+function bkLaneHeading(l) { return l.axis === 'z' ? (l.dir > 0 ? 0 : Math.PI) : (l.dir > 0 ? Math.PI / 2 : -Math.PI / 2); }
+function bkAlongOf(l, x, z) { return l.axis === 'z' ? z : x; }
+
+// put the bike down on its side where it is, rider or no rider
+function bkDrop(B) {
+  if (B.rider) { if (B.rider.g) B.rider.g.rotation.z = 0; B.rider.bike = null; B.rider = null; }
+  B.lying = true; B.fallT = 0; B.speed = 0; B.lane = null; B.idleT = 0;
+}
+
+// a rider pedalling: legs going round, hands on the bars, bum on the saddle
+function bkPose(h, B, dt) {
+  B.spin += (B.speed / 0.34) * dt;
+  const c = B.spin * 0.5, p = h.p;
+  p.legL.rotation.x = -0.55 + Math.sin(c) * 0.38; p.legR.rotation.x = -0.55 - Math.sin(c) * 0.38;
+  p.armL.rotation.x = -1.15; p.armR.rotation.x = -1.15;
+  if (h.bellT > 0) p.armR.rotation.x = -1.6 + Math.sin(h.bellT * 30) * 0.2;
+  const s = h.T.scale, fx = Math.sin(B.heading), fz = Math.cos(B.heading);
+  h.g.position.set(h.x - fx * 0.18 * s, h.y + 0.12, h.z - fz * 0.18 * s);
+  h.g.rotation.set(0, B.heading, -B.tip * 0.6);
+}
+function bkPlace(B) {
+  B.g.position.set(B.x, B.y + (B.lying ? 0.06 : 0), B.z);
+  B.g.rotation.set(0, B.heading, B.lying ? Math.min(1, B.fallT * 4) * (Math.PI / 2 - 0.12) : -B.tip);
+  for (const w of B.wheels) w.rotation.x = B.spin;
+}
+
+// the hook in Hunter.update: returns true while this person is on a bike (and has been moved this frame)
+function bikeRide(h, dt, C) {
+  const B = h.bike;
+  if (!B || B.rider !== h) { h.bike = null; return false; }
+  // a shove, a whack, a bullet or anything else that staggers them puts them on the floor
+  if (h.stun > 0.05 || h.hp < h.T.hp) {
+    const ux = Math.sin(B.heading), uz = Math.cos(B.heading), sp = Math.max(4, B.speed);
+    bkDrop(B); C.setHitKind('car');
+    C.launchHunter(h, ux, uz, true, { x: ux * sp * 0.8 + h.kx * 0.4 + mr(-1, 1), y: 5 + sp * 0.25, z: uz * sp * 0.8 + h.kz * 0.4 + mr(-1, 1) });
+    C.say(h, mpick(BK_OFF_LINES));
+    return true;
+  }
+  h.bellT = Math.max(0, (h.bellT || 0) - dt);
+  const P = C.player, tp = C.targetPos();
+  const ox = h.x, oz = h.z;
+  if (h.state === 'chase' && !C.G.super) {
+    // pedal straight at you, then hop off and grab
+    const dx = tp.x - h.x, dz = tp.z - h.z, d = Math.hypot(dx, dz);
+    if (d < 2.6 || P.car && d < 5) { bkDrop(B); h.stun = 0.15; h.attackCd = 0.3; return false; }
+    let ax = tp.x, az = tp.z; // round corners the same way the crowds do, rather than straight into a wall
+    if (d > 8 && !los(h.x, h.z, tp.x, tp.z)) { const n = navTarget(h.x + Math.sin(B.heading) * 1.5, h.z + Math.cos(B.heading) * 1.5, 3); if (n) { ax = n.x; az = n.z; } }
+    const want = Math.atan2(ax - h.x, az - h.z), turn = angDiff(B.heading, want);
+    B.heading += clamp(turn, -2.8 * dt, 2.8 * dt);
+    if (Math.abs(turn) > 1.2) B.speed = Math.max(3, B.speed - 10 * dt); // brake for sharp corners
+    B.speed = Math.min(B.speed + 5 * dt, 10.5 * Math.min(1.2, C.dayMult()));
+    h.x += Math.sin(B.heading) * B.speed * dt; h.z += Math.cos(B.heading) * B.speed * dt;
+    const hit = moveBody(h, ox, oz, 0.4, h.y, 1.8);
+    const got = Math.hypot(h.x - ox, h.z - oz);
+    h.stuckT = got < B.speed * dt * 0.4 ? (h.stuckT || 0) + dt : 0;
+    if (hit && got < B.speed * dt * 0.25) B.speed = Math.min(B.speed, 2); // nose into a wall: stop and steer round
+    if (h.stuckT > 0.8) { bkDrop(B); return false; }
+    B.tip = clamp(turn * 0.3, -0.3, 0.3);
+  } else {
+    // cruising down the bike lane
+    const l = B.lane;
+    if (!l) { bkDrop(B); return false; }
+    let want = B.cruise, latWant = BK_CURB;
+    const fx = Math.sin(B.heading), fz = Math.cos(B.heading);
+    for (const c of C.G.cars) { // a car stopped in the bike lane: pull out round it
+      if (c.far) continue;
+      const ax = c.x - h.x, az = c.z - h.z; if (Math.abs(ax) > 14 || Math.abs(az) > 14) continue;
+      const ahead = ax * fx + az * fz, side = Math.abs(ax * fz - az * fx);
+      if (ahead > -c.hl && ahead < c.hl + 7 && side < c.hw + 0.9 && Math.abs(c.speed) < 2) latWant = Math.min(latWant, BK_CURB - c.hw - 1.6);
+    }
+    const blockers = [{ x: P.x, z: P.z, me: true }];
+    for (const o of C.G.hunters) if (o !== h && !o.dead && !o.inside && Math.abs(o.x - h.x) < 7 && Math.abs(o.z - h.z) < 7) blockers.push(o);
+    for (const o of blockers) { // someone in the way: ring the bell and brake
+      if (o.me && (P.car || !P.alive)) continue;
+      const ax = o.x - h.x, az = o.z - h.z, ahead = ax * fx + az * fz, side = Math.abs(ax * fz - az * fx);
+      if (ahead > 0.4 && ahead < 6 && side < 0.9) {
+        want = ahead < 2 ? 0 : Math.min(want, 2);
+        if (!h.bellCd || C.G.elapsed > h.bellCd) { h.bellCd = C.G.elapsed + mr(1.8, 3); h.bellT = 0.35; if (o.me && C.G.mode === 'playing' && ahead < 5) C.sfx.bell(); if (Math.random() < 0.4) C.say(h, mpick(o.me ? BK_BELL_LINES : ['EXCUSE ME!', 'BIKE LANE!', 'DING DING!'])); }
+      }
+    }
+    B.speed += clamp(want - B.speed, -6 * dt, 2.5 * dt);
+    B.lat += clamp(latWant - B.lat, -2 * dt, 2 * dt);
+    let along = bkAlongOf(l, h.x, h.z) + l.dir * B.speed * dt;
+    if (l.dir > 0 ? along > l.a1 - 2 : along < l.a0 + 2) {
+      if (Math.hypot(h.x - P.x, h.z - P.z) > 60) { h.remove(); B.rider = null; h.bike = null; B.dead = true; return true; }
+      // turn round onto the other side of the road
+      const s = bkLaneSide(l), other = lanes.find((o) => o.axis === l.axis && o.dir === -l.dir && Math.abs(o.fixed - (l.fixed - s * 6.8)) < 0.6);
+      if (other) { B.lane = other; along = clamp(along, other.a0 + 3, other.a1 - 3); B.speed = 2; }
+      else B.speed = 0;
+    }
+    const L = B.lane, [nx, nz] = bkLanePoint(L, along, B.lat), hd = bkLaneHeading(L);
+    h.x = nx; h.z = nz;
+    B.tip = clamp(angDiff(B.heading, hd), -0.25, 0.25) + (latWant - B.lat) * 0.04;
+    B.heading += angDiff(B.heading, hd) * Math.min(1, dt * 4);
+    if (moveBody(h, ox, oz, 0.35, h.y, 1.8) && B.speed > 3) B.speed *= 0.5;
+  }
+  h.y = groundY(h.x, h.z); h.face = B.heading; h.vx = Math.sin(B.heading) * B.speed; h.vz = Math.cos(B.heading) * B.speed;
+  B.x = h.x; B.z = h.z; B.y = h.y;
+  bkPose(h, B, dt);
+  return true;
+}
+const BK_BELL_LINES = ['BIKE LANE, MATE!', 'DING DING!', 'MOVE IT!', 'CYCLIST COMING THROUGH', 'IT\'S A LANE NOT A LOUNGE', 'ON YOUR LEFT!'];
+const BK_OFF_LINES = ['MY BIKE!', 'WAAAH!', 'NOT AGAIN!', 'I\'M OK! I\'M OK!', 'MY NEW SHORTS!', 'OWWW, MY DIGNITY'];
+
+// put someone on a bike riding down a lane
+function bkMount(h, B, lane, along) {
+  B.rider = h; B.lying = false; B.lane = lane; B.lat = BK_CURB; B.cruise = mr(5.2, 7.8); B.speed = B.cruise * 0.8; B.fallT = 0;
+  if (lane) { const [x, z] = bkLanePoint(lane, along, BK_CURB); h.x = B.x = x; h.z = B.z = z; B.heading = bkLaneHeading(lane); }
+  h.bike = B; h.y = B.y = groundY(h.x, h.z); h.wt = null; h.act = null;
+  return B;
+}
+// spawn a cyclist out of sight on a random bike lane in town
+function spawnCyclist(C, state = 'search', minD = 60, maxD = 150) {
+  const tp = C.targetPos(), cands = lanes.filter((l) => {
+    const near = l.axis === 'z' ? Math.abs(l.fixed - tp.x) : Math.abs(l.fixed - tp.z);
+    return near < maxD && l.cruise < 19; // town streets, not the highways
+  });
+  for (let t = 0; t < 16 && cands.length; t++) {
+    const l = mpick(cands), along = clamp((l.axis === 'z' ? tp.z : tp.x) + mr(-maxD, maxD), l.a0 + 4, l.a1 - 4);
+    const [x, z] = bkLanePoint(l, along, BK_CURB), d = Math.hypot(x - tp.x, z - tp.z);
+    if (d < minD || d > maxD || !cityAt(x, z, 4) || pointBlocked(x, z, 0.4)) continue;
+    if (C.G.cars.some((c) => Math.abs(c.x - x) < 7 && Math.abs(c.z - z) < 7)) continue;
+    const h = new C.Hunter(x, z, Math.random() < 0.3 ? 'runner' : 'civ', false, state);
+    C.G.hunters.push(h);
+    const B = bkMake(x, z, bkLaneHeading(l));
+    bkMount(h, B, l, along);
+    return h;
+  }
+  return null;
+}
+
+let bkSpawnT = 0;
+function updateBikes(dt, C) {
+  const P = C.player, tp = C.targetPos();
+  riders.length = 0;
+  for (let i = bikes.length - 1; i >= 0; i--) {
+    const B = bikes[i];
+    if (B.rider && B.rider !== P && B.rider.gone) B.dead = true; // rode off out of the area: the bike goes with them
+    else if (B.rider && (B.rider.dead || B.rider.bike !== B)) bkDrop(B);
+    if (B.dead) { scene.remove(B.g); bikes.splice(i, 1); continue; }
+    if (B.rider) riders.push(B.rider);
+    if (B.rider === P) {
+      B.x = P.x; B.z = P.z; B.y = P.y; B.heading = P.yaw + Math.PI;
+      const sp = Math.hypot(P.vx, P.vz); B.speed = sp; B.spin += (sp / 0.34) * dt;
+      B.tip = clamp(-C.input.side * 0.12 * Math.min(1, sp / 6), -0.2, 0.2);
+    }
+    if (B.lying) {
+      B.fallT += dt; B.idleT = (B.idleT || 0) + dt;
+      // cars knock lying bikes along the road
+      for (const c of C.G.cars) if (!c.far && Math.abs(c.speed) > 3 && Math.hypot(c.x - B.x, c.z - B.z) < c.hl + 0.4) { B.x += c.fx * c.speed * dt * 1.2; B.z += c.fz * c.speed * dt * 1.2; B.heading += dt * 6; }
+      const far = Math.hypot(B.x - tp.x, B.z - tp.z);
+      if (far > 220 || (B.idleT > 240 && far > 60)) { B.dead = true; }
+    }
+    if (B.rider !== P && !B.rider) B.y = groundY(B.x, B.z);
+    bkPlace(B);
+  }
+  if (C.G.mode !== 'playing') return;
+  // keep a few cyclists about in town (more when it's busy, a posse of them when you're wanted)
+  bkSpawnT -= dt;
+  if (bkSpawnT <= 0) {
+    bkSpawnT = 1.5;
+    const here = cityAt(tp.x, tp.z, 40);
+    const want = here ? Math.round(7 * (C.crowd ? C.crowd() : 1)) : 0;
+    const ridingCalm = riders.filter((h) => h !== P && h.state !== 'chase').length;
+    if (ridingCalm < want && !C.G.super) spawnCyclist(C);
+    const chasing = riders.filter((h) => h !== P && h.state === 'chase').length;
+    if (C.G.level >= 2 && chasing < Math.min(4, C.G.level - 1) && C.chasers() > 2 && Math.random() < 0.35) spawnCyclist(C, 'chase', 45, 110);
+  }
+}
+
+// ---- the player and bikes ----
+function bikeNear(x, z, r = 2.2) {
+  let best = null, bd = r;
+  for (const B of bikes) { if (B.rider || B.dead) continue; const d = Math.hypot(B.x - x, B.z - z); if (d < bd) { bd = d; best = B; } }
+  return best;
+}
+function riderNear(x, z, r = 2.4) {
+  let best = null, bd = r;
+  for (const B of bikes) { const h = B.rider; if (!h || !h.p || h.dead) continue; const d = Math.hypot(B.x - x, B.z - z); if (d < bd) { bd = d; best = B; } }
+  return best;
+}
+// E: hop on a bike lying nearby, or pull someone off theirs; E again to get off
+function playerBikeAction(C) {
+  const P = C.player;
+  if (P.bike) { const B = P.bike; bkDrop(B); B.x = P.x; B.z = P.z; B.heading = P.yaw + Math.PI; B.fallT = 0.2; C.showMsg('OFF THE BIKE', 0.8); return true; }
+  if (P.car || P.mode !== 'move') return false;
+  let B = bikeNear(P.x, P.z);
+  if (!B) {
+    B = riderNear(P.x, P.z);
+    if (!B) return false;
+    const h = B.rider, ux = h.x - P.x, uz = h.z - P.z, ul = Math.hypot(ux, uz) || 1;
+    bkDrop(B); C.setHitKind('shove');
+    C.launchHunter(h, ux / ul, uz / ul, true, { x: (ux / ul) * 4, y: 4, z: (uz / ul) * 4 }); C.say(h, 'THAT\'S MY BIKE!');
+    C.addHeat(6); C.alertAround(P.x, P.z, 16, 0.8); C.showMsg('BIKE NICKED', 1.2);
+  } else C.showMsg('ON YOUR BIKE. E TO HOP OFF', 1.6);
+  B.rider = P; B.lying = false; B.fallT = 0; B.lane = null; P.bike = B; C.sfx.bell();
+  return true;
+}
+// called from the player's update when they're on a bike: no climbing gear, but much faster
+function playerBikeSpeed(sprint) { return sprint ? 15.5 : 10.5; }
+function clearBikes(P) { for (const B of bikes) scene.remove(B.g); bikes.length = 0; riders.length = 0; if (P) P.bike = null; }
+function bikeDebug() { return { bikes: bikes.length, riding: bikes.filter((B) => B.rider).length, lying: bikes.filter((B) => B.lying).length }; }
+
+// Street streetPropObjs you can mess with. Bins and wheelie bins get kicked over (a shove, a sprint into them,
+// a crowbar, a bullet, a car, the hero), tumble down the street spilling rubbish, lose their lids, and
+// bowl over anyone they hit. Fire hydrants burst when a car, a crowbar or enough bullets hit them: the
+// cap pings off and a tall jet of water shoots up for half a minute, flinging anyone who steps on it up
+// into the air (you included: a free ride up onto a low roof) and soaking anyone who runs through it.
+// At the start of each day the council quietly stands the far-off bins back up and fixes the hydrants.
+
+
+
+
+
+
+
+const SP_BASE = 0.15; // the pavement top every prop stands on
+const spPropMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+function spGeo(fn) { const b = new GeoBuf(); fn(b); return b.geometry(); }
+// shapes are spBuilt around their middle, so they can tumble about it
+const SP_SHAPES = {
+  bin: { body: spGeo((b) => b.cyl(0, 0, 0.3, 0.33, -0.425, 0.425, 0x2a4a3a, 10)), lid: spGeo((b) => b.cyl(0, 0, 0.36, 0.2, -0.075, 0.075, 0x1a2a22, 10)), half: 0.425, lidY: 0.5, rad: 0.33 },
+  wheelie: { body: spGeo((b) => b.box(-0.3, 0.3, -0.5, 0.5, -0.35, 0.35, 0xffffff, { bottom: true })), lid: spGeo((b) => b.box(-0.33, 0.33, -0.035, 0.035, -0.4, 0.38, 0xc0c0c0, { bottom: true })), half: 0.5, lidY: 0.535, rad: 0.32 },
+  hydrant: {
+    body: spGeo((b) => { b.cyl(0, 0, 0.16, 0.16, 0, 0.6, 0xc8281e, 8); b.box(-0.27, 0.27, 0.33, 0.45, -0.06, 0.06, 0xd8d8d0); b.box(-0.06, 0.06, 0.33, 0.45, -0.22, 0.22, 0xc8281e); }),
+    lid: spGeo((b) => b.cyl(0, 0, 0.2, 0.06, -0.1, 0.1, 0xc8281e, 8)), half: 0, lidY: 0.7, rad: 0.15,
+  },
+};
+const spKinds = {};
+const _spM = new THREE.Matrix4(), _spQ = new THREE.Quaternion(), _spE = new THREE.Euler(0, 0, 0, 'YXZ'), _spP = new THREE.Vector3(), _spS = new THREE.Vector3(1, 1, 1), _spC = new THREE.Color();
+const streetPropObjs = [];   // {kind, x, z, y, col, state: 'up'|'loose', vx, vy, vz, rx, ry, spin, lid, burst...}
+const geysers = []; // bursting hydrants
+let spBuilt = false;
+function spSetMat(mesh, i, x, y, z, rx, ry) { _spE.set(rx, ry, 0); _spQ.setFromEuler(_spE); _spP.set(x, y, z); _spM.compose(_spP, _spQ, _spS); mesh.setMatrixAt(i, _spM); mesh.instanceMatrix.needsUpdate = true; }
+// props are drawn in chunks (one pair of instanced meshes per kind per 160 m cell), so the
+// camera only draws the nearby ones and far chunks are hidden altogether
+const SP_CELL = 160, spCells = [];
+function buildStreetProps() {
+  if (spBuilt) return; spBuilt = true;
+  const groups = new Map();
+  for (const sp of streetProps) {
+    const key = `${sp.kind}:${Math.floor(sp.x / SP_CELL)}:${Math.floor(sp.z / SP_CELL)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sp);
+  }
+  for (const [key, list] of groups) {
+    const k = list[0].kind, S = SP_SHAPES[k];
+    const body = new THREE.InstancedMesh(S.body, spPropMat, list.length), lid = new THREE.InstancedMesh(S.lid, spPropMat, list.length);
+    let cx = 0, cz = 0; for (const sp of list) { cx += sp.x; cz += sp.z; } cx /= list.length; cz /= list.length;
+    let r = 0; for (const sp of list) r = Math.max(r, Math.hypot(sp.x - cx, sp.z - cz));
+    for (const m of [body, lid]) m.boundingSphere = new THREE.Sphere(new THREE.Vector3(cx, 1, cz), r + 30); // room for things knocked a way off
+    scene.add(body, lid);
+    spKinds[key] = { body, lid };
+    spCells.push({ body, lid, x: cx, z: cz, r });
+    list.forEach((sp, i) => {
+      const P = { kind: k, mk: key, i, S, x: sp.x, z: sp.z, ox: sp.x, oz: sp.z, col: sp.col, colH: sp.col.h, state: 'up', y: SP_BASE + S.half, vx: 0, vy: 0, vz: 0, rx: 0, ry: mr(-0.3, 0.3), spin: 0,
+        lid: { x: sp.x, z: sp.z, y: SP_BASE + S.half + S.lidY, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, spin: 0, state: 'on' }, hits: 0 };
+      if (k === 'wheelie') { body.setColorAt(i, _spC.set(sp.color)); lid.setColorAt(i, _spC.set(sp.color)); }
+      streetPropObjs.push(P); spDraw(P);
+    });
+    if (body.instanceColor) { body.instanceColor.needsUpdate = true; lid.instanceColor.needsUpdate = true; }
+  }
+}
+let spCullT = 0;
+function spCull(dt, x, z) {
+  spCullT -= dt; if (spCullT > 0) return; spCullT = 0.5;
+  for (const c of spCells) c.body.visible = c.lid.visible = Math.hypot(c.x - x, c.z - z) - c.r < 320;
+}
+function spDraw(P) {
+  const K = spKinds[P.mk];
+  spSetMat(K.body, P.i, P.x, P.y, P.z, P.rx, P.ry);
+  const L = P.lid;
+  if (L.state === 'gone') spSetMat(K.lid, P.i, 0, -50, 0, 0, 0);
+  else if (L.state === 'on') { const up = P.S.lidY; spSetMat(K.lid, P.i, P.x + Math.sin(P.ry) * Math.sin(P.rx) * up, P.y + Math.cos(P.rx) * up, P.z + Math.cos(P.ry) * Math.sin(P.rx) * up, P.rx, P.ry); }
+  else spSetMat(K.lid, P.i, L.x, L.y, L.z, L.rx, L.ry);
+}
+
+// ---- kicking things over ----
+// knock a bin flying in direction (ux, uz) at speed sp
+function kickProp(P, ux, uz, sp, C, up = 4) {
+  if (P.kind === 'hydrant') { hitHydrant(P, sp > 8 ? 3 : 1, C); return; }
+  const was = P.state;
+  P.state = 'loose'; P.col.h = -1; P.restT = 0;
+  P.vx = ux * sp + mr(-0.6, 0.6); P.vz = uz * sp + mr(-0.6, 0.6); P.vy = Math.max(P.vy, up + sp * 0.15);
+  P.ry = Math.atan2(ux, uz); P.spin = 5 + sp * 0.9;
+  if (P.lid.state === 'on') { const L = P.lid; L.state = 'loose'; L.x = P.x; L.z = P.z; L.y = P.y + P.S.lidY; L.vx = P.vx * 0.6 + mr(-2, 2); L.vz = P.vz * 0.6 + mr(-2, 2); L.vy = P.vy + mr(2, 4); L.spin = mr(8, 14); L.ry = P.ry; }
+  if (was === 'up') {
+    spSpill(P, ux, uz);
+    if (C) { C.sfx.bin(); if (Math.hypot(P.x - C.player.x, P.z - C.player.z) < 30 && Math.random() < 0.6) comicWord(mpick(['CLANG!', 'CRASH!', 'BONK!']), P.x, P.y + 1.2, P.z); C.binKicked && C.binKicked(P); }
+  }
+}
+// rubbish everywhere: crisp packets and paper fly out, and a little spLitter is left on the ground
+const SP_LITTER_MAX = 240;
+const spLitterGeo = new THREE.PlaneGeometry(0.22, 0.16).rotateX(-Math.PI / 2);
+const spLitterMat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+let spLitter = null, spLitterN = 0;
+const SP_LITTER_COLS = [0xe8e0d0, 0xd02a2a, 0x2a5aa0, 0xe0b020, 0xf0f0f0, 0x8a6a4a, 0x2a8a4a];
+function spSpill(P, ux, uz) {
+  for (let k = 0; k < 6; k++) emitPuff(P.x + mr(-0.4, 0.4), P.y + mr(0, 0.6), P.z + mr(-0.4, 0.4), { life: mr(0.6, 1.1), vx: ux * mr(1, 4) + mr(-1.5, 1.5), vy: mr(1.5, 3.5), vz: uz * mr(1, 4) + mr(-1.5, 1.5), size0: 0.15, size1: 0.35, alpha: 0.9, color: mpick(SP_LITTER_COLS) });
+  if (!spLitter) { spLitter = new THREE.InstancedMesh(spLitterGeo, spLitterMat, SP_LITTER_MAX); spLitter.frustumCulled = false; spLitter.count = 0; scene.add(spLitter); }
+  const n = 4 + Math.floor(Math.random() * 4);
+  for (let k = 0; k < n; k++) {
+    const i = spLitterN % SP_LITTER_MAX; spLitterN++;
+    const d = mr(0.4, 2.6), x = P.x + ux * d + mr(-0.9, 0.9), z = P.z + uz * d + mr(-0.9, 0.9);
+    const y = floorAt(x, z, SP_BASE + 0.5) + 0.02;
+    spSetMat(spLitter, i, x, y, z, 0, mr(0, 6.28)); spLitter.setColorAt(i, _spC.set(mpick(SP_LITTER_COLS)));
+    spLitter.count = Math.min(SP_LITTER_MAX, spLitterN);
+  }
+  if (spLitter.instanceColor) spLitter.instanceColor.needsUpdate = true;
+}
+
+// ---- hydrants ----
+const spJetMat = new THREE.MeshBasicMaterial({ color: 0xbfe6ff, transparent: true, opacity: 0.55, depthWrite: false });
+const spJetGeo = new THREE.CylinderGeometry(0.16, 0.32, 1, 10, 1, true).translate(0, 0.5, 0);
+const spPuddleMat = new THREE.MeshBasicMaterial({ color: 0x5a7a9a, transparent: true, opacity: 0.35, depthWrite: false });
+const spPuddleGeo = new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2);
+function hitHydrant(P, n, C) {
+  if (P.kind !== 'hydrant' || P.burst) return false;
+  P.hits += n;
+  if (C) C.sfx.clank();
+  if (P.hits < 3) return false;
+  P.burst = { t: 0, dur: mr(28, 36) };
+  const L = P.lid; L.state = 'loose'; L.x = P.x; L.z = P.z; L.y = SP_BASE + P.S.lidY; L.vx = mr(-1.5, 1.5); L.vz = mr(-1.5, 1.5); L.vy = mr(14, 18); L.spin = mr(10, 16);
+  const jet = new THREE.Mesh(spJetGeo, spJetMat); jet.position.set(P.x, SP_BASE + 0.6, P.z); scene.add(jet);
+  const pud = new THREE.Mesh(spPuddleGeo, spPuddleMat); pud.position.set(P.x, SP_BASE + 0.015, P.z); pud.scale.setScalar(0.1); scene.add(pud);
+  P.burst.jet = jet; P.burst.pud = pud;
+  geysers.push(P);
+  spDraw(P);
+  if (C) {
+    C.sfx.gush(); comicWord('SPLOOSH!', P.x, 3, P.z);
+    if (Math.hypot(P.x - C.player.x, P.z - C.player.z) < 50) C.showMsg('THE HYDRANT\'S GONE', 1.4);
+    C.hydrantBurst && C.hydrantBurst(P);
+  }
+  return true;
+}
+function spJetHeight(B) { const left = B.dur - B.t; return B.t < 0.6 ? B.t / 0.6 * 9 : left < 6 ? Math.max(0, left / 6) * 9 : 9 + Math.sin(B.t * 7) * 0.5; }
+function spUpdateGeysers(dt, C) {
+  for (let i = geysers.length - 1; i >= 0; i--) {
+    const P = geysers[i], B = P.burst;
+    B.t += dt;
+    const h = spJetHeight(B);
+    B.jet.scale.set(1 + Math.sin(B.t * 13) * 0.08, Math.max(0.01, h), 1 + Math.cos(B.t * 11) * 0.08);
+    B.pud.scale.setScalar(Math.min(4.5, 0.5 + B.t * 0.35) * (B.t > B.dur ? Math.max(0, 1 - (B.t - B.dur) / 20) : 1));
+    const near = Math.hypot(P.x - C.player.x, P.z - C.player.z) < 90;
+    if (h > 0.5 && near) {
+      B.puffT = (B.puffT || 0) - dt;
+      if (B.puffT <= 0) {
+        B.puffT = 0.06;
+        emitPuff(P.x + mr(-0.3, 0.3), SP_BASE + h, P.z + mr(-0.3, 0.3), { life: mr(0.7, 1.2), vx: mr(-3, 3), vy: mr(-1, 2), vz: mr(-3, 3), size0: 0.5, size1: 1.8, alpha: 0.6, color: 0xdff2ff });
+        emitPuff(P.x + mr(-1.2, 1.2), SP_BASE + 0.2, P.z + mr(-1.2, 1.2), { life: 0.6, vy: 0.6, size0: 0.3, size1: 0.9, alpha: 0.4, color: 0xdff2ff });
+      }
+    }
+    if (h > 2) {
+      // the player standing on it gets shot up into the air
+      const Pl = C.player;
+      if (!Pl.car && Pl.alive && Math.hypot(Pl.x - P.x, Pl.z - P.z) < 0.75 && Pl.y < SP_BASE + 1.5 && Pl.vy < 6) {
+        Pl.vy = 9 + h * 0.75; Pl.grounded = false; Pl.mode = 'move';
+        C.showMsg('WHEEEE!', 1); C.sfx.gush();
+      } else if (!Pl.car && Pl.alive && Math.hypot(Pl.x - P.x, Pl.z - P.z) < 2.2 && Pl.y < SP_BASE + 2) { // the spray shoves you about a bit
+        const dx = Pl.x - P.x, dz = Pl.z - P.z, d = Math.hypot(dx, dz) || 1; Pl.kx += (dx / d) * 6 * dt; Pl.kz += (dz / d) * 6 * dt;
+      }
+      for (const hh of C.G.hunters) {
+        if (hh.dead || hh.inside || Math.abs(hh.x - P.x) > 2.4 || Math.abs(hh.z - P.z) > 2.4) continue;
+        const dx = hh.x - P.x, dz = hh.z - P.z, d = Math.hypot(dx, dz);
+        if (d < 0.8) { C.setHitKind('water'); C.G.calmHit = !P.byPlayer; C.launchHunter(hh, dx / (d || 1), dz / (d || 1), true, { x: dx * 2 + mr(-1, 1), y: 9 + h * 0.6, z: dz * 2 + mr(-1, 1) }); C.G.calmHit = false; }
+        else if (d < 2.2 && (hh.state === 'chase' || Math.hypot(hh.vx || 0, hh.vz || 0) > 3) && !(hh.soakT > 0)) { // ran through the spray
+          hh.soakT = 2.5; hh.stun = Math.max(hh.stun, 1.1); hh.kx += (dx / d) * 5; hh.kz += (dz / d) * 5; C.say(hh, mpick(SP_SOAK));
+        }
+      }
+    }
+    if (B.t > B.dur + 20) { scene.remove(B.jet, B.pud); geysers.splice(i, 1); P.spent = true; }
+    else if (B.t > B.dur) B.jet.visible = false;
+  }
+}
+const SP_SOAK = ['I\'M SOAKED!', 'MY HAIR!', 'COLD COLD COLD!', 'THAT\'S MY GOOD SHIRT!', 'BLEURGH!', 'IT\'S IN MY SHOES!'];
+
+// ---- physics for loose bins and flying lids/caps ----
+function spStepBody(o, r, dt, isBody, P, C) {
+  o.vy -= 22 * dt;
+  const ox = o.x, oz = o.z;
+  o.x += o.vx * dt; o.z += o.vz * dt; o.y += o.vy * dt;
+  if (moveBody(o, ox, oz, r, o.y - r, 0.6)) { o.vx *= -0.4; o.vz *= -0.4; o.spin *= 0.6; if (isBody && C && Math.hypot(o.vx, o.vz) > 2) C.sfx.thunk(); }
+  const fl = floorAt(o.x, o.z, o.y + 0.2) + r;
+  const sp = Math.hypot(o.vx, o.vz);
+  if (o.y <= fl) {
+    o.y = fl;
+    if (o.vy < -3) { o.vy *= -0.3; if (isBody && C && Math.hypot(o.x - C.player.x, o.z - C.player.z) < 40) C.sfx.thunk(); } else o.vy = 0;
+    const f = Math.max(0, 1 - dt * 3.2); o.vx *= f; o.vz *= f; o.spin *= Math.max(0, 1 - dt * 4);
+    if (o.vy === 0 && Math.abs(o.spin) < 2.5) { const tg = Math.round((o.rx - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2; o.rx += (tg - o.rx) * Math.min(1, dt * 8); o.spin *= 0.5; } // settle on its side
+    o.grounded = true;
+  } else o.grounded = false;
+  o.rx += o.spin * dt;
+  return sp;
+}
+function updateStreetProps(dt, C) {
+  if (!spBuilt) return;
+  const Pl = C.player;
+  spCull(dt, Pl.x, Pl.z);
+  for (const P of streetPropObjs) {
+    if (P.state === 'up') {
+      if (P.kind === 'hydrant') continue;
+      // sprint into a bin and it goes flying
+      if (!Pl.car && Pl.alive && Math.abs(Pl.x - P.x) < 0.9 && Math.abs(Pl.z - P.z) < 0.9) {
+        const sp = Math.hypot(Pl.vx, Pl.vz), d = Math.hypot(Pl.x - P.x, Pl.z - P.z);
+        if (d < 0.85 && (sp > 8 || Pl.bike && sp > 5) && Math.abs(Pl.y - SP_BASE) < 1) kickProp(P, Pl.vx / sp, Pl.vz / sp, sp * 0.9, C);
+      }
+      continue;
+    }
+    // loose: tumbling down the street, then lying on its side
+    const wasAir = !P.grounded;
+    const sp = spStepBody(P, P.S.rad, dt, true, P, C);
+    if (sp > 5) {
+      for (const h of C.G.hunters) {
+        if (h.dead || Math.abs(h.x - P.x) > 1 || Math.abs(h.z - P.z) > 1 || Math.abs(h.y + 0.6 - P.y) > 1.2) continue;
+        if (Math.hypot(h.x - P.x, h.z - P.z) > 0.8) continue;
+        C.setHitKind('shove');
+        if (sp > 8) { C.G.calmHit = !P.byPlayer; C.launchHunter(h, P.vx / sp, P.vz / sp, true, { x: P.vx * 0.7, y: 5, z: P.vz * 0.7 }); C.G.calmHit = false; }
+        else { h.stun = Math.max(h.stun, 1); h.kx += P.vx * 0.8; h.kz += P.vz * 0.8; }
+        comicWord('STRIKE!', h.x, h.y + 2.2, h.z); P.vx *= 0.5; P.vz *= 0.5;
+        C.binHit && C.binHit(h);
+      }
+    }
+    // walk into a lying bin and it rolls away from your feet
+    if (P.grounded && !Pl.car && Math.abs(Pl.y - P.y) < 1.2) {
+      const dx = P.x - Pl.x, dz = P.z - Pl.z, d = Math.hypot(dx, dz);
+      if (d < 0.75 && d > 1e-3) { const ps = Math.max(2.5, Math.hypot(Pl.vx, Pl.vz) * 0.9); P.vx = (dx / d) * ps; P.vz = (dz / d) * ps; P.spin = ps * 2; P.ry = Math.atan2(dx, dz); }
+    }
+    // cars ploughing through lying bins
+    for (const c of C.G.cars) if (!c.far && Math.abs(c.speed) > 3 && Math.abs(c.x - P.x) < c.hl + 1 && Math.abs(c.z - P.z) < c.hl + 1 && Math.hypot(c.x - P.x, c.z - P.z) < c.hl * 0.8 + 0.6) { const k = Math.abs(c.speed); P.vx = c.fx * k * 1.1 * Math.sign(c.speed) + mr(-1, 1); P.vz = c.fz * k * 1.1 * Math.sign(c.speed) + mr(-1, 1); P.vy = 3 + k * 0.15; P.spin = 8; }
+    P.restT = wasAir ? 0 : (P.restT || 0) + dt;
+    spDraw(P);
+  }
+  for (const P of streetPropObjs) {
+    const L = P.lid;
+    if (L.state !== 'loose') continue;
+    spStepBody(L, P.kind === 'hydrant' ? 0.1 : 0.06, dt, false, P, C);
+    if (L.grounded) L.rx = L.rx * 0.9; // lids end up flat
+    spDraw(P);
+  }
+  // cars smash into upright bins and hydrants
+  for (const c of C.G.cars) {
+    const sp = Math.max(Math.abs(c.speed), Math.abs(c.preSpeed || 0)), sg = Math.sign(c.speed || c.preSpeed || 1);
+    if (c.far || sp < 3.5) continue;
+    for (const P of propsNear(c.x, c.z, c.hl + 1)) {
+      if (P.state !== 'up') continue;
+      const dx = P.x - c.x, dz = P.z - c.z, lf = dx * c.fx + dz * c.fz, lr = dx * c.fz - dz * c.fx;
+      if (Math.abs(lf) > c.hl + 0.6 || Math.abs(lr) > c.hw + 0.4) continue;
+      P.byPlayer = c.driver === 'player';
+      if (P.kind === 'hydrant') { if (sp > 5) hitHydrant(P, 3, C); continue; }
+      kickProp(P, c.fx * sg, c.fz * sg, sp * 1.15, C, 3);
+    }
+  }
+  if (geysers.length) for (const hh of C.G.hunters) if (hh.soakT > 0) hh.soakT -= dt;
+  spUpdateGeysers(dt, C);
+}
+// a tiny spatial index so per-frame checks stay cheap
+const SP_GRID = 24, spGrid = new Map();
+function spKey(x, z) { return Math.floor(x / SP_GRID) * 4096 + Math.floor(z / SP_GRID); }
+function spIndex() { spGrid.clear(); for (const P of streetPropObjs) { const k = spKey(P.ox, P.oz); if (!spGrid.has(k)) spGrid.set(k, []); spGrid.get(k).push(P); } }
+function propsNear(x, z, r) {
+  if (!spGrid.size && streetPropObjs.length) spIndex();
+  const out = [], gx0 = Math.floor((x - r - 30) / SP_GRID), gx1 = Math.floor((x + r + 30) / SP_GRID), gz0 = Math.floor((z - r - 30) / SP_GRID), gz1 = Math.floor((z + r + 30) / SP_GRID);
+  for (let gx = gx0; gx <= gx1; gx++) for (let gz = gz0; gz <= gz1; gz++) { const L = spGrid.get(gx * 4096 + gz); if (L) for (const P of L) if (Math.abs(P.x - x) < r && Math.abs(P.z - z) < r) out.push(P); }
+  return out;
+}
+// the nearest kickable thing in front of you (for shoves and the crowbar)
+function propInFront(x, y, z, fx, fz, range = 2.2) {
+  let best = null, bd = range;
+  for (const P of propsNear(x, z, range + 1)) {
+    if (P.burst && P.kind === 'hydrant') continue;
+    const dx = P.x - x, dz = P.z - z, d = Math.hypot(dx, dz);
+    if (d > bd || Math.abs(P.y - y - 0.5) > 1.6) continue;
+    if (d > 0.5 && (dx * fx + dz * fz) / d < 0.35) continue;
+    best = P; bd = d;
+  }
+  return best;
+}
+// a bullet along (o + d*t): returns {P, t} for the first prop it hits before maxT
+function rayProps(o, d, maxT) {
+  let best = null, bt = maxT;
+  const L = Math.min(maxT, 120), steps = Math.ceil(L / 20);
+  const seen = new Set();
+  for (let s = 0; s <= steps; s++) {
+    const t0 = (s / steps) * L;
+    for (const P of propsNear(o.x + d.x * t0, o.z + d.z * t0, 12)) {
+      if (seen.has(P)) continue; seen.add(P);
+      const r = P.S.rad + 0.05, ox = o.x - P.x, oz = o.z - P.z, a = d.x * d.x + d.z * d.z, b = 2 * (ox * d.x + oz * d.z), c = ox * ox + oz * oz - r * r, disc = b * b - 4 * a * c;
+      if (a < 1e-9 || disc < 0) continue;
+      const t = (-b - Math.sqrt(disc)) / (2 * a);
+      if (t <= 0 || t >= bt) continue;
+      const y = o.y + d.y * t, top = P.state === 'up' ? (P.kind === 'hydrant' ? SP_BASE + 0.8 : P.y + P.S.half) : P.y + P.S.rad, bot = P.state === 'up' ? SP_BASE : P.y - P.S.rad;
+      if (y < bot || y > top) continue;
+      best = P; bt = t;
+    }
+  }
+  return best ? { P: best, t: bt } : null;
+}
+// every bin stood back up and every hydrant fixed (the council comes round overnight), except the ones you can see
+function tidyStreetProps(px, pz, keepR = 80) {
+  for (const P of streetPropObjs) {
+    if (Math.hypot(P.x - px, P.z - pz) < keepR || Math.hypot(P.ox - px, P.oz - pz) < keepR) continue;
+    if (P.state === 'up' && !P.burst && P.lid.state === 'on') continue;
+    spResetProp(P);
+  }
+}
+function spResetProp(P) {
+  if (P.burst) { scene.remove(P.burst.jet, P.burst.pud); const gi = geysers.indexOf(P); if (gi >= 0) geysers.splice(gi, 1); P.burst = null; }
+  Object.assign(P, { x: P.ox, z: P.oz, y: SP_BASE + P.S.half, vx: 0, vy: 0, vz: 0, rx: 0, spin: 0, state: 'up', hits: 0, spent: false });
+  P.col.h = P.colH; P.lid.state = 'on';
+  spDraw(P);
+}
+function resetStreetProps() { for (const P of streetPropObjs) spResetProp(P); if (spLitter) { spLitter.count = 0; spLitterN = 0; } }
+function streetPropDebug() {
+  const by = (k) => streetPropObjs.filter((p) => p.kind === k);
+  return { bins: by('bin').length, wheelies: by('wheelie').length, hydrants: by('hydrant').length, loose: streetPropObjs.filter((p) => p.state === 'loose').length, geysers: geysers.length, spLitter: spLitter ? spLitter.count : 0 };
+}
 
 // Superpower mode's personality: THE PARAGON is all-powerful, adored (officially), and bored out of
 // his mind. He drifts over the city, people freeze when his shadow passes, a long look makes anyone
@@ -6743,6 +7319,8 @@ function mhRivalCaughtByYou(r, ctx) {
 
 
 
+
+
 const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
 
 generateWorld();
@@ -6894,7 +7472,7 @@ class Hunter {
     this.state = 'chase'; this.lastSeen = 0; this.sus = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
     if (player.disg > 0) wearDisguise(0.035);
   }
-  remove() { scene.remove(this.g); this.dead = true; releaseJob(this); lifeInterrupt(this); }
+  remove() { scene.remove(this.g); this.dead = true; this.gone = true; releaseJob(this); lifeInterrupt(this); }
   die(impulse, hitY, byPlayer = false, loot = byPlayer) {
     if (this.dead) return;
     lifeInterrupt(this); releaseJob(this);
@@ -6929,6 +7507,7 @@ class Hunter {
       this.begT = (this.begT ?? 0) - dt; if (this.begT <= 0) { this.begT = mr(1.6, 2.6); say(this, mpick(HELD_LINES)); }
       return;
     }
+    if (this.bike && bikeRide(this, dt, BK)) return; // pedalling along the bike lane (or after you)
     if (G.super && (this.state === 'chase' || this.alertT >= 0)) { this.state = 'search'; this.alertT = -1; this.panicT = mr(4, 7); this.wt = null; this.sus = 0; }
     this.attackCd -= dt; this.fireCd -= dt;
     if (this.alertT >= 0) { this.alertT -= dt; if (this.alertT < 0) this.alert(); }
@@ -7324,6 +7903,7 @@ class Car {
       return;
     }
     let throttle = 0, steer = 0, maxF = 14, brake = false;
+    this.preSpeed = this.speed; // what it hit things at, before a wall slowed it down this frame
     const tp = targetPos();
     if (this.wrecked || !this.driver) {
       brake = true;
@@ -7336,6 +7916,11 @@ class Car {
         if (Math.abs(ax) > 16 || Math.abs(az) > 16) continue;
         const ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx), gap = this.hl + o.hl;
         if (ahead > 0 && ahead < gap + 4.5 && side < 2.2) target = Math.min(target, ahead < gap + 1 ? 0 : o.speed * 0.9);
+      }
+      for (const r of riders) { // cyclists ahead (pulling out round something, or turning)
+        const ax = r.x - this.x, az = r.z - this.z; if (Math.abs(ax) > 14 || Math.abs(az) > 14) continue;
+        const ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx);
+        if (ahead > 0 && ahead < this.hl + 5 && side < this.hw + 0.7) target = Math.min(target, ahead < this.hl + 1.5 ? 0 : (r.bike ? r.bike.speed : 0) * 0.9);
       }
       if (!player.car) {
         const ax = player.x - this.x, az = player.z - this.z, ahead = ax * this.fx + az * this.fz, side = Math.abs(ax * this.fz - az * this.fx);
@@ -7475,6 +8060,7 @@ function nearestCar(maxD) {
 function enterCar() {
   const c = nearestCar(3.6);
   if (!c) return;
+  if (player.bike) playerBikeAction(BK);
   if (c.driver === 'traffic' || c.driver === 'hunter') { ejectHunter(c, false); showMsg('CAR STOLEN'); addHeat(10); }
   c.driver = 'player'; c.lane = null; player.car = c; player.dragT = 0; player.camOff = 0;
   player.yaw = c.heading + Math.PI;
@@ -7487,6 +8073,7 @@ function zipStartNear() {
 }
 function useAction() {
   if (player.car) { exitCar(); return; }
+  if (player.bike) { playerBikeAction(BK); return; }
   if (G.super && !player.car && heroGrab()) return;
   if (player.mode === 'zip') { input.jumpEdge = true; return; }
   const door = player.mode === 'move' ? safeDoorNear(player.x, player.y, player.z) : null;
@@ -7501,6 +8088,7 @@ function useAction() {
   if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
   const Z = zipStartNear();
   if (Z) { player.mode = 'zip'; player.zip = Z; player.zipS = 0; player.zipV = 5; player.slideT = 0; sfx.swoosh(); return; }
+  if (!G.super && !nearestCar(2.6) && playerBikeAction(BK)) return;
   enterCar();
 }
 function exitCar(forced = false) {
@@ -7877,6 +8465,25 @@ function say(h, text) {
   h.g.add(b.s); b.life = 2.4; b.h = h;
 }
 // what the city-life module needs to know about the game
+// kick, whack or swat whatever bin or hydrant is right in front of you. Returns true if something was there
+function kickInFront(fx, fz, power, hydrantHits, range = 2.2) {
+  if (player.car || !player.alive) return false;
+  const P = propInFront(player.x, player.y, player.z, fx, fz, range);
+  if (!P) return false;
+  if (P.kind === 'hydrant') {
+    if (hydrantHits < 1 && !G.super) { showMsg(mpick(['OW. THAT\'S A HYDRANT', 'OW! MY TOE!', 'IT\'S BOLTED DOWN. OW.']), 1.2); sfx.clank(); hurtPlayer(2, P.x, P.z); return true; }
+    P.byPlayer = true; hitHydrant(P, hydrantHits, BK); if (P.burst) addHeat(3); return true;
+  }
+  P.byPlayer = true; kickProp(P, fx, fz, power, BK, 3 + power * 0.15);
+  if (!G.super) { addHeat(0.5); alertAround(player.x, player.z, 6, 1.5); }
+  return true;
+}
+const BK = {
+  G, player, get input() { return input; }, Hunter, launchHunter, setHitKind, sfx, say: (h, t) => say(h, t), showMsg: (t, d) => showMsg(t, d), addHeat: (n) => addHeat(n), alertAround: (x, z, r, d) => alertAround(x, z, r, d),
+  targetPos: () => targetPos(), dayMult: () => dayMult(), crowd: () => WX.crowd, chasers: () => G.hunters.filter((h) => !h.dead && h.state === 'chase').length,
+  binKicked: () => { G.binsKicked = (G.binsKicked || 0) + 1; },
+  hydrantBurst: () => { G.hydrantsBurst = (G.hydrantsBurst || 0) + 1; },
+};
 const LIFE = {
   say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b, HC),
   get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
@@ -7942,6 +8549,7 @@ function heroSwat() {
     }
   }
   for (const V of villainsNear(player.x + fx * 2.5, player.y + 1, player.z + fz * 2.5, 3)) { villainHit(V, 12, HC, fx * 14, fz * 14); any = true; }
+  if (kickInFront(fx, fz, 26, 3, 4)) any = true;
   if (any) { G.hitstopT = 0.08; G.shake = Math.max(G.shake, 0.2); sfx.thud(); showMsg(mpick(HERO_LINES), 1.2); heroFun(0.06, HC); heroMenace(0.5); for (const o of G.hunters) if (!o.dead && Math.hypot(o.x - player.x, o.z - player.z) < 35) o.panicT = mr(4, 7); }
 }
 function heroSlam() {
@@ -7955,6 +8563,7 @@ function heroSlam() {
   }
   for (const c of G.cars) { if (c.far || c.air || c === player.car) continue; const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz); if (d < 8) { if (c.driver === 'traffic' || c.driver === 'hunter') ejectHunter(c, false); c.driver = null; c.lane = null; c.air = { vx: dx / (d || 1) * 10, vz: dz / (d || 1) * 10, vy: 9, y: 0, spin: mr(-3, 3), roll: 0 }; } }
   for (const V of villainsNear(player.x, player.y, player.z, 10)) { const dx = V.x - player.x, dz = V.z - player.z, d = Math.hypot(dx, dz) || 1; villainHit(V, 25, HC, dx / d * 18, dz / d * 18); }
+  for (const P of propsNear(player.x, player.z, 9)) { P.byPlayer = true; const dx = P.x - player.x, dz = P.z - player.z, d = Math.hypot(dx, dz) || 1; if (d < 9) kickProp(P, dx / d, dz / d, 18 - d, BK, 8); }
   showMsg('SUPERHERO LANDING', 1.5); heroFun(0.12, HC, true); heroMenace(1);
 }
 // superpower mode: two red beams straight out of your eyes
@@ -7991,7 +8600,17 @@ function fireRay(dir, range, tracer) {
   }
   for (const c of G.cars) { if (c.far) continue; const t = rayCar(o, dir, c, tHit); if (t > 0 && t < tHit) { tHit = t; carHit = c; target = null; } }
   for (const a of [...G.helis, ...G.drones]) { if (a.dead) continue; const t = raySphere(o, dir, a.x, a.y, a.z, a.radius, tHit); if (t > 0 && t < tHit) { tHit = t; airHit = a; carHit = null; target = null; } }
+  const pr = rayProps(o, dir, tHit + 0.4); let propHit = null; // (+0.4: the world ray stops on the prop's own collision box)
+  if (pr) { tHit = pr.t; propHit = pr.P; target = null; carHit = null; airHit = null; }
   const hitP = o.clone().addScaledVector(dir, tHit);
+  if (propHit) {
+    emitPuff(hitP.x, hitP.y, hitP.z, { life: 0.3, vy: 0.4, size0: 0.15, size1: 0.5, alpha: 0.9, color: 0xfff0c0 });
+    propHit.byPlayer = true;
+    if (propHit.kind === 'hydrant') hitHydrant(propHit, 1, BK);
+    else { const l = Math.hypot(dir.x, dir.z) || 1; kickProp(propHit, dir.x / l, dir.z / l, propHit.state === 'up' ? 4 : 3, BK, 2.5); sfx.clank(); }
+    if (tracer) spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
+    return null;
+  }
   if (tracer) spawnTracer(new THREE.Vector3(0.2, -0.18, -0.6).applyMatrix4(camera.matrixWorld), hitP);
   if (target) {
     const head = hitP.y > target.y + 1.5 * target.T.scale;
@@ -8035,6 +8654,7 @@ function meleeTargets(range, cone) {
 }
 function crowbarImpact(heavy) {
   setHitKind('crowbar');
+  kickInFront(-Math.sin(player.yaw), -Math.cos(player.yaw), heavy ? 16 : 9, heavy ? 3 : 1.5);
   if (!heavy) {
     const t = meleeTargets(2.5, 0.45)[0];
     if (!t) return;
@@ -8072,7 +8692,7 @@ function launchHunter(h, ux, uz, getsUp, imp) {
   { const kx = imp ? imp.x : ux, kz = imp ? imp.z : uz, kl = Math.hypot(kx, kz) || 1; knockFX(rag, hitKindNow(), h.y + 1.2 * h.T.scale, kx / kl, kz / kl); }
   rag.launchFrom = { x: h.x, z: h.z };
   if (h.rival) rivalDown(h);
-  else if (getsUp) G.getUps.push({ rag, type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
+  else if (getsUp) G.getUps.push({ rag, calm: !!G.calmHit && h.state !== 'chase', type: h.type, gunner: h.gunner, hp: h.hp, t: 3.4, contract: h.contract, guard: h.guard, fleer: h.fleer });
   else { G.kills++; addHeat(h.type === 'cop' ? 22 : 14); maybeDropCash(h); if (h.contract) contractTargetDown(h); }
 }
 function updateGetUps(dt) {
@@ -8093,7 +8713,7 @@ function updateGetUps(dt) {
     U.rag.dispose(); ragdolls.splice(idx, 1); G.getUps.splice(i, 1);
     const p = { x: hx, z: hz }; resolveCircle(p, 0.4);
     if (solidAt(p.x, Math.max(0, hy), p.z, 0) || pointBlocked(p.x, p.z, 0.1)) { const q = randomOpenPoint(p.x, p.z, 0, 10, 20); if (q) { p.x = q.x; p.z = q.z; } }
-    const nh = new Hunter(p.x, p.z, U.type, U.gunner, 'chase');
+    const nh = new Hunter(p.x, p.z, U.type, U.gunner, U.calm ? 'search' : 'chase'); // an accident that wasn't your doing: they just dust themselves off
     nh.y = floorAt(p.x, p.z, hy + 0.6); nh.hp = U.hp; nh.stun = 1.4; nh.noticeT = 0;
     if (U.contract) dressTarget(nh, U.contract); nh.guard = U.guard; nh.fleer = U.fleer;
     G.hunters.push(nh);
@@ -8377,6 +8997,7 @@ function playerShove() {
   if (player.car || player.shoveCd > 0 || !player.alive) return;
   player.shoveCd = 0.55; player.shoveAnim = 1; sfx.shove();
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  kickInFront(fx, fz, 7.5, 0.5);
   for (const h of G.hunters) {
     if (h.dead) continue;
     const dx = h.x - player.x, dz = h.z - player.z, d = Math.hypot(dx, dz);
@@ -8712,6 +9333,9 @@ function updateHUD(dt) {
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
   else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
+  else if (player.bike) prompt = isTouch ? 'Tap USE to hop off the bike' : 'Press E to hop off · Shift to pedal hard';
+  else if (!G.super && !nearestCar(2.6) && bikeNear(player.x, player.z)) prompt = isTouch ? 'Tap USE to ride the bike' : 'Press E to ride the bike';
+  else if (!G.super && !nearestCar(2.6) && riderNear(player.x, player.z)) prompt = isTouch ? 'Tap USE to nick their bike' : 'Press E to nick their bike';
   else if (nearestCar(3.6)) prompt = isTouch ? 'Tap USE to steal it' : 'Press E to steal this car';
   hud.prompt.textContent = prompt;
   if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
@@ -8776,7 +9400,7 @@ const targetHunters = () => { const tp = targetPos(); return Math.round(Math.min
 const maxChasers = () => Math.round((5 + G.level * 2 + G.day * 0.35) * (0.5 + MH.bountyMul * 0.5));
 
 function clearWorld() {
-  for (const h of G.hunters) h.remove(); G.hunters.length = 0; clearCityLife();
+  for (const h of G.hunters) h.remove(); G.hunters.length = 0; clearCityLife(); clearBikes(player); resetStreetProps();
   for (const r of ragdolls) r.dispose(); ragdolls.length = 0;
   for (const c of G.cars) scene.remove(c.g); G.cars.length = 0;
   for (const a of [...G.helis, ...G.drones]) a.remove(); G.helis.length = 0; G.drones.length = 0;
@@ -8796,7 +9420,8 @@ function spawnTraffic(count) {
       const x = lane.axis === 'z' ? lane.fixed : along, z = lane.axis === 'z' ? along : lane.fixed;
       if (Math.hypot(x - player.x, z - player.z) < 14) continue;
       if (G.cars.some((c) => Math.abs(c.x - x) < 12 && Math.abs(c.z - z) < 12)) continue;
-      const vr = Math.random(), kind = vr < 0.07 ? 'bus' : vr < 0.15 ? 'truck' : vr < 0.28 ? 'van' : vr < 0.42 ? 'hatch' : 'car';
+      const vr = Math.random(), buses = G.cars.filter((c) => c.kind === 'bus').length;
+      const kind = (vr < 0.07 || (buses < 3 && i >= count - 6)) ? 'bus' : vr < 0.15 ? 'truck' : vr < 0.28 ? 'van' : vr < 0.42 ? 'hatch' : 'car'; // always a few buses about
       if (kind === 'bus' && !cityAt(x, z, 10)) continue;
       G.cars.push(new Car(lane, along, null, kind)); break;
     }
@@ -8929,7 +9554,8 @@ function updatePlayer(dt) {
   else player.stam = Math.min(100, player.stam + (moving ? 10 : 18) * dt);
   if (player.exhausted && player.stam > 30) player.exhausted = false;
   player.sprinting = sprint;
-  const speed = sprint ? 10 : 5.8;
+  const speed = player.bike ? playerBikeSpeed(sprint) : sprint ? 10 : 5.8;
+  if (player.bike) { if (sprint) player.stam += 12 * dt; input.crouch = false; if (player.mode !== 'move' || G.super) playerBikeAction(BK); } // pedalling is easier than sprinting, and no sliding on a bike
   player.kx *= Math.max(0, 1 - dt * 6); player.kz *= Math.max(0, 1 - dt * 6);
   if (G.super && input.jumpEdge && !player.grounded && player.mode === 'move' && !player.flying) { player.flying = true; player.vy = 0; showMsg('FLYING. HOLD SPACE TO RISE, C TO DROP', 2); sfx.swoosh(); }
   if (player.flying) flyMove(dt); else parkourMove(dt, player, input, sprint, speed, parkourCb);
@@ -9182,6 +9808,7 @@ function updateDirector(dt) {
     if (G.day > CFG.days && !G.super) { endGame(true); return; }
     sfx.day();
     showBanner(manhuntNewDay(mhCtx()), 5);
+    tidyStreetProps(player.x, player.z);
   }
   const tp = targetPos();
   // locale
@@ -9326,6 +9953,7 @@ function simulate(dt, t) {
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
+    updateBikes(dt, BK); updateStreetProps(dt, BK);
     for (const a of G.helis) if (!a.dead) a.update(dt);
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
@@ -9349,6 +9977,7 @@ function simulate(dt, t) {
 
 player.x = 0; player.z = 0;
 spawnShopkeepers(scene);
+buildStreetProps();
 // the Galleria's novelty shops sell disguises too, each its own speciality
 {
   const MALL_CATS = { 'SPECS APPEAL': ['eyes'], 'BEARD BARN': ['face'], 'BIG HAT BARN': ['hat'], 'WIGS 4 U': ['wig'], 'SUIT YOURSELF': ['body', 'hat'] };
@@ -9359,7 +9988,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>

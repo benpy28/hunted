@@ -12,6 +12,7 @@ import { solid, ib, floorB, lightB, glassB, lamp, interiorZones } from './interi
 
 export const walkIns = []; // {x, z, name, kind, city, keeper:{x,z,face}, rect}
 // places townsfolk go to do things: sit on a bench, wait for the bus, queue at a food cart
+export const streetProps = []; // kickable bins, wheelie bins and hydrants {kind, x, z, col, color}
 export const lifeSpots = []; // {kind: 'bench'|'bus'|'cart', x, z, face, sx, sz} (sx,sz: where you sit or stand)
 
 // ---------------------------------------------------------------------
@@ -234,12 +235,9 @@ function bench(x, z, alongX, faceSign) {
   const fxs = alongX ? 0 : faceSign, fzs = alongX ? faceSign : 0, face = Math.atan2(fxs, fzs);
   for (const o of [-0.45, 0.45]) lifeSpots.push({ kind: 'bench', x: x + fxs * 0.9 + (alongX ? o : 0), z: z + fzs * 0.9 + (alongX ? 0 : o), face, sx: x + fxs * 0.05 + (alongX ? o : 0), sz: z + fzs * 0.05 + (alongX ? 0 : o) });
 }
-function bin(x, z) { propBuf.cyl(x, z, 0.3, 0.33, 0.15, 1.0, 0x2a4a3a, 10); propBuf.cyl(x, z, 0.36, 0.2, 1.0, 1.15, 0x1a2a22, 10); col(x, z, 0.3, 0.3, 1.1); }
-function hydrant(x, z) {
-  propBuf.cyl(x, z, 0.16, 0.16, 0.15, 0.75, 0xc8281e, 8); propBuf.cyl(x, z, 0.2, 0.06, 0.75, 0.95, 0xc8281e, 8);
-  propBuf.box(x - 0.27, x + 0.27, 0.48, 0.6, z - 0.06, z + 0.06, 0xd8d8d0); propBuf.box(x - 0.06, x + 0.06, 0.48, 0.6, z - 0.22, z + 0.22, 0xc8281e);
-  col(x, z, 0.2, 0.2, 0.9);
-}
+// bins and hydrants aren't baked into the street: streetprops.js draws them so they can be kicked over and burst
+function bin(x, z) { streetProps.push({ kind: 'bin', x, z, col: col(x, z, 0.3, 0.3, 1.1) }); }
+function hydrant(x, z) { streetProps.push({ kind: 'hydrant', x, z, col: col(x, z, 0.2, 0.2, 0.9) }); }
 function newsBoxes(x, z, alongX) {
   const n = 2 + Math.floor(srand() * 2);
   for (let k = 0; k < n; k++) {
@@ -341,7 +339,7 @@ function dumpster(x, z, alongX) {
   if (srand() < 0.5) propBuf.box(x - lx * 0.6, x + lx * 0.4, 1.4, 1.75, z - lz * 0.5, z + lz * 0.6, 0x1a1a1a); // overflowing bin bags
   col(x, z, lx, lz, 1.45);
 }
-function wheelie(x, z) { const c = spick([0x2a6a3a, 0x2a4a8a, 0x5a5a60, 0x7a5a2a]); propBuf.box(x - 0.3, x + 0.3, 0.15, 1.15, z - 0.35, z + 0.35, c); propBuf.box(x - 0.33, x + 0.33, 1.15, 1.22, z - 0.4, z + 0.38, shadeC(c)); col(x, z, 0.3, 0.35, 1.2); }
+function wheelie(x, z) { const c = spick([0x2a6a3a, 0x2a4a8a, 0x5a5a60, 0x7a5a2a]); streetProps.push({ kind: 'wheelie', x, z, color: c, col: col(x, z, 0.3, 0.35, 1.2) }); }
 const shadeC = (c) => new THREE.Color(c).multiplyScalar(0.75).getHex();
 function acUnit(x, z) { propBuf.box(x - 0.45, x + 0.45, 0.15, 0.95, z - 0.4, z + 0.4, 0xc8c8c4); propBuf.cyl(x, z, 0.3, 0.3, 0.95, 0.97, 0x3a3a3a, 10); col(x, z, 0.45, 0.4, 0.95); }
 function laundryLine(a, b, y) {

@@ -54,6 +54,11 @@ sfx.vzap = () => { noise(0.12, 0.3, 3200, 2); tone(1600, 0.1, 'square', 0.06, 0.
 sfx.ice = () => { tone(1900, 0.12, 'sine', 0.08, 1.5); noise(0.1, 0.18, 5000, 3); };
 sfx.cheer = () => { for (let i = 0; i < 4; i++) noise(0.5, 0.08, 900 + i * 300, 0.6, i * 0.05); tone(520, 0.2, 'triangle', 0.05, 1.2, 0.1); };
 sfx.sigh = () => { noise(0.9, 0.05, 500, 0.5); };
+sfx.bell = () => { tone(2350, 0.35, 'sine', 0.07); tone(2350, 0.3, 'sine', 0.06, 1, 0.13); tone(4700, 0.12, 'sine', 0.02, 1, 0.13); };
+sfx.bin = () => { noise(0.3, 0.45, 2200, 1.6); tone(330, 0.25, 'triangle', 0.1, 0.7); noise(0.18, 0.25, 800, 0.8, 0.12); };
+sfx.thunk = () => { tone(180, 0.1, 'triangle', 0.08, 0.7); noise(0.06, 0.15, 1500, 1.2); };
+sfx.clank = () => { tone(1250, 0.18, 'square', 0.05, 0.9); tone(1880, 0.12, 'sine', 0.05); };
+sfx.gush = () => { noise(1.4, 0.35, 1800, 0.4); noise(0.9, 0.25, 600, 0.6, 0.1); };
 sfx.explode = () => { noise(0.9, 0.6, 180, 0.4); tone(60, 0.7, 'sawtooth', 0.2, 0.4); };
 
 // continuous rotor / propeller hum, volume driven by distance to the nearest aircraft
