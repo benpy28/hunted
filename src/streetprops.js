@@ -29,17 +29,28 @@ export const streetPropObjs = [];   // {kind, x, z, y, col, state: 'up'|'loose',
 export const geysers = []; // bursting hydrants
 let spBuilt = false;
 function spSetMat(mesh, i, x, y, z, rx, ry) { _spE.set(rx, ry, 0); _spQ.setFromEuler(_spE); _spP.set(x, y, z); _spM.compose(_spP, _spQ, _spS); mesh.setMatrixAt(i, _spM); mesh.instanceMatrix.needsUpdate = true; }
+// props are drawn in chunks (one pair of instanced meshes per kind per 160 m cell), so the
+// camera only draws the nearby ones and far chunks are hidden altogether
+const SP_CELL = 160, spCells = [];
 export function buildStreetProps() {
   if (spBuilt) return; spBuilt = true;
-  for (const k of Object.keys(SP_SHAPES)) {
-    const list = streetProps.filter((p) => p.kind === k);
-    if (!list.length) continue;
-    const S = SP_SHAPES[k], body = new THREE.InstancedMesh(S.body, spPropMat, list.length), lid = new THREE.InstancedMesh(S.lid, spPropMat, list.length);
-    body.frustumCulled = lid.frustumCulled = false;
+  const groups = new Map();
+  for (const sp of streetProps) {
+    const key = `${sp.kind}:${Math.floor(sp.x / SP_CELL)}:${Math.floor(sp.z / SP_CELL)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sp);
+  }
+  for (const [key, list] of groups) {
+    const k = list[0].kind, S = SP_SHAPES[k];
+    const body = new THREE.InstancedMesh(S.body, spPropMat, list.length), lid = new THREE.InstancedMesh(S.lid, spPropMat, list.length);
+    let cx = 0, cz = 0; for (const sp of list) { cx += sp.x; cz += sp.z; } cx /= list.length; cz /= list.length;
+    let r = 0; for (const sp of list) r = Math.max(r, Math.hypot(sp.x - cx, sp.z - cz));
+    for (const m of [body, lid]) m.boundingSphere = new THREE.Sphere(new THREE.Vector3(cx, 1, cz), r + 30); // room for things knocked a way off
     scene.add(body, lid);
-    spKinds[k] = { body, lid };
+    spKinds[key] = { body, lid };
+    spCells.push({ body, lid, x: cx, z: cz, r });
     list.forEach((sp, i) => {
-      const P = { kind: k, i, S, x: sp.x, z: sp.z, ox: sp.x, oz: sp.z, col: sp.col, colH: sp.col.h, state: 'up', y: SP_BASE + S.half, vx: 0, vy: 0, vz: 0, rx: 0, ry: mr(-0.3, 0.3), spin: 0,
+      const P = { kind: k, mk: key, i, S, x: sp.x, z: sp.z, ox: sp.x, oz: sp.z, col: sp.col, colH: sp.col.h, state: 'up', y: SP_BASE + S.half, vx: 0, vy: 0, vz: 0, rx: 0, ry: mr(-0.3, 0.3), spin: 0,
         lid: { x: sp.x, z: sp.z, y: SP_BASE + S.half + S.lidY, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, spin: 0, state: 'on' }, hits: 0 };
       if (k === 'wheelie') { body.setColorAt(i, _spC.set(sp.color)); lid.setColorAt(i, _spC.set(sp.color)); }
       streetPropObjs.push(P); spDraw(P);
@@ -47,8 +58,13 @@ export function buildStreetProps() {
     if (body.instanceColor) { body.instanceColor.needsUpdate = true; lid.instanceColor.needsUpdate = true; }
   }
 }
+let spCullT = 0;
+function spCull(dt, x, z) {
+  spCullT -= dt; if (spCullT > 0) return; spCullT = 0.5;
+  for (const c of spCells) c.body.visible = c.lid.visible = Math.hypot(c.x - x, c.z - z) - c.r < 320;
+}
 function spDraw(P) {
-  const K = spKinds[P.kind];
+  const K = spKinds[P.mk];
   spSetMat(K.body, P.i, P.x, P.y, P.z, P.rx, P.ry);
   const L = P.lid;
   if (L.state === 'gone') spSetMat(K.lid, P.i, 0, -50, 0, 0, 0);
@@ -176,6 +192,7 @@ function spStepBody(o, r, dt, isBody, P, C) {
 export function updateStreetProps(dt, C) {
   if (!spBuilt) return;
   const Pl = C.player;
+  spCull(dt, Pl.x, Pl.z);
   for (const P of streetPropObjs) {
     if (P.state === 'up') {
       if (P.kind === 'hydrant') continue;

@@ -16,7 +16,8 @@ before(async () => {
       H.player.cash = 500; H.player.outfit = {}; H.player.disg = 0; H.G.day = 1; H.MD_STATE.ticketDay = 0; H.MD_STATE.warnT = 0; H.MD_STATE.celebT = 0;
     };
     H.goTo = (H, x, z) => { H.player.x = x; H.player.z = z; H.player.y = H.floorAt(x, z, 1.5); H.player.vx = H.player.vz = 0; H.navRecenter(x, z, true); };
-    H.stepAt = (H, secs, hour = 10, each) => { for (let i = 0; i < secs * 30; i++) { H.G.hour = hour; H.step(1 / 30); if (each && each()) return true; } return false; };
+    // these tests are about the weekend (day 2+), when hunter drivers come for you even at zero heat: a run-over would end the game mid-test, so they stand down
+    H.stepAt = (H, secs, hour = 10, each) => { for (let i = 0; i < secs * 30; i++) { H.G.hour = hour; H.G.hunterCarT = 99; for (const c of H.G.cars) if (c.driver === 'hunter') c.driver = 'traffic'; H.step(1 / 30); if (each && each()) return true; } return false; };
   });
 });
 after(async () => { await g?.close(); });

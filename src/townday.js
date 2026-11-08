@@ -224,8 +224,9 @@ function updateFete(dt, K, on) {
   if (!K.near(F.x, F.z, 200)) return;
   // the village turns out: keep a crowd on the field
   TD_STATE.feteT = (TD_STATE.feteT || 0) - dt;
-  if (TD_STATE.feteT > 0) return; TD_STATE.feteT = 1.5;
+  if (TD_STATE.feteT > 0) return;
   const folk = K.hunters().filter((h) => h.feteGoer && !h.dead);
+  TD_STATE.feteT = folk.length < 10 ? 0.7 : 1.5; // fills up quickly, then tops up
   TD_STATE.feteFolk = folk.length;
   for (const h of folk) if (!h.act && h.state !== 'chase' && !(h.panicT > 0)) feteActivity(h, K);
   if (folk.length < 16) {
@@ -237,11 +238,11 @@ function feteActivity(h, K) {
   const F = schoolInfo.field;
   if (h.bandsman) { const B = fete.band; return K.lifeGo(h, 'busk', B.x + mr(-1.5, 1.5), B.z + mr(-1, 1), 0, mr(60, 120)); }
   const r = Math.random();
-  if (r < 0.25) return K.lifeGo(h, 'browse', fete.tombola.x + mr(-1, 1), fete.tombola.z + mr(0, 0.6), Math.PI, mr(8, 20), { stall: fete.tombola });
-  if (r < 0.45) return K.lifeGo(h, 'eat', fete.cakes.x + mr(-1, 1), fete.cakes.z + mr(0, 0.8), Math.PI, mr(10, 25));
-  if (r < 0.65) return K.lifeGo(h, 'cheer', fete.band.x + mr(-4, 4), fete.band.z - mr(2.5, 5), 0, mr(10, 30));
+  if (r < 0.25) return K.lifeGo(h, 'browse', fete.tombola.x + mr(-1, 1), fete.tombola.z + mr(0, 0.6), Math.PI, mr(8, 20), { stall: fete.tombola, maxGo: 120 });
+  if (r < 0.45) return K.lifeGo(h, 'eat', fete.cakes.x + mr(-1, 1), fete.cakes.z + mr(0, 0.8), Math.PI, mr(10, 25), { maxGo: 120 });
+  if (r < 0.65) return K.lifeGo(h, 'cheer', fete.band.x + mr(-4, 4), fete.band.z - mr(2.5, 5), 0, mr(10, 30), { maxGo: 120 });
   const s = mpick(fete.spots); if (Math.random() < 0.3 && K.near(h.x, h.z, 30)) K.say(h, mpick(FETE_LINES));
-  return K.lifeGo(h, 'watch', s.x, s.z, Math.random() * 6.28, mr(10, 30));
+  return K.lifeGo(h, 'watch', s.x, s.z, Math.random() * 6.28, mr(10, 30), { maxGo: 120 });
 }
 
 // =====================================================================
@@ -258,12 +259,8 @@ export function tdPlan(h, hr, K) {
   for (const M of markets) {
     if (Math.abs(M.x - h.x) > 140 || Math.abs(M.z - h.z) > 140 || !marketOpen(hr)) continue;
     const big = !!eventOn('market', M.city, day, hr);
-    if (Math.random() < (big ? 0.6 : 0.07)) { // the whole town turns up on a big market day
-      const st = mpick(M.stalls); if (!st || !st.front) continue;
-      const ux = st.front.x - st.back.x, uz = st.front.z - st.back.z, l = Math.hypot(ux, uz) || 1, a = mr(-1, 1);
-      const x = st.front.x + (uz / l) * a + (ux / l) * mr(0, 0.6), z = st.front.z - (ux / l) * a + (uz / l) * mr(0, 0.6);
-      if (blockedAt(x, z)) continue;
-      return K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), big ? mr(15, 35) : mr(8, 22), { stall: st }); // and they take their time about it
+    if (Math.random() < (big ? 0.85 : 0.07)) { // the whole town turns up on a big market day
+      for (let tries = 0; tries < 4; tries++) if (browseStall(h, M, K, big ? mr(15, 35) : mr(8, 22))) return true; // a stall with room in front of it
     }
   }
   // cheering on the runners
@@ -275,6 +272,29 @@ export function tdPlan(h, hr, K) {
   // off to the fete
   if (eventOn('fete', 'ASHFORD', day, hr) && schoolInfo.field && Math.hypot(h.x - schoolInfo.field.x, h.z - schoolInfo.field.z) < 160 && Math.random() < 0.3) { h.feteGoer = true; return feteActivity(h, K); }
   return false;
+}
+function browseStall(h, M, K, dur) {
+  const st = mpick(M.stalls); if (!st || !st.front) return false;
+  const ux = st.front.x - st.back.x, uz = st.front.z - st.back.z, l = Math.hypot(ux, uz) || 1, a = mr(-1, 1);
+  const x = st.front.x + (uz / l) * a + (ux / l) * mr(0, 0.6), z = st.front.z - (ux / l) * a + (uz / l) * mr(0, 0.6);
+  if (blockedAt(x, z)) return false;
+  return K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), dur || mr(8, 22), { stall: st, maxGo: 120 });
+}
+// big market day near you: keep the stalls busy with idle passers-by
+function updateMarketDay(dt, K, day, hr) {
+  TD_STATE.mdayT = (TD_STATE.mdayT || 0) - dt;
+  if (TD_STATE.mdayT > 0) return; TD_STATE.mdayT = 1.2;
+  for (const M of markets) {
+    if (!eventOn('market', M.city, day, hr) || !K.near(M.x, M.z, 160)) continue;
+    const L = K.hunters(); let n = 0, pick = null, pd = 70;
+    for (const h of L) {
+      if (h.dead) continue;
+      if (h.act && h.act.stall && M.stalls.includes(h.act.stall)) { n++; continue; }
+      if (h.act || h.state === 'chase' || h.huntT > 0 || h.panicT > 0 || h.sus > 0.3 || (h.job && h.job !== 'tourist') || h.racer || h.feteGoer || h.lapRoute || h.contract || h.guard || h.rival) continue;
+      const d = Math.hypot(h.x - M.x, h.z - M.z); if (d < pd) { pd = d; pick = h; }
+    }
+    if (n < 7 && pick) browseStall(pick, M, K);
+  }
 }
 export function tdVisit(h, want, K) {
   if (want === 'school') return sendToSchool(h, K);
@@ -331,6 +351,7 @@ export function updateTownDay(dt, K) {
   const day = K.G.day, hr = K.hour;
   updateFunRun(dt, K, !!eventOn('funrun', funRun.city, day, hr));
   updateFete(dt, K, !!eventOn('fete', 'ASHFORD', day, hr));
+  updateMarketDay(dt, K, day, hr);
   // the morning paper: what's on today (shown a moment after the new day comes in)
   if (TD_STATE.lastDay !== day) { TD_STATE.lastDay = day; TD_STATE.lapCorners = 0; TD_STATE.dayMsgT = 6.5; }
   if (TD_STATE.dayMsgT > 0) { TD_STATE.dayMsgT -= dt; if (TD_STATE.dayMsgT <= 0) K.showMsg(todayLine(day), 5); }
