@@ -88,6 +88,8 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #btn-reload { right: calc(210px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }
 #btn-pause { right: calc(140px + env(safe-area-inset-right)); top: calc(16px + env(safe-area-inset-top)); }
 #btn-map { right: calc(140px + env(safe-area-inset-right)); top: calc(70px + env(safe-area-inset-top)); }
+#btn-pose { right: calc(30px + env(safe-area-inset-right)); bottom: calc(306px + env(safe-area-inset-bottom)); width: 64px; height: 64px; font-size: 12px; background: rgba(240,190,40,.55); }
+#btn-pose.cooling { opacity: .45; }
 #btn-wpn { right: calc(200px + env(safe-area-inset-right)); top: calc(70px + env(safe-area-inset-top)); }
 
 /* ---------- Overlays ---------- */
@@ -283,6 +285,7 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
   <button id="btn-pause" class="tbtn small">II</button>
   <button id="btn-map" class="tbtn small">MAP</button>
   <button id="btn-wpn" class="tbtn small">WPN</button>
+  <button id="btn-pose" class="tbtn hidden">POSE</button>
 </div>
 
 <!-- Menus -->
@@ -1288,7 +1291,7 @@ function citySkeleton(city, canalRow = -1) {
 // Perimeter blocks: a ring of attached buildings of different widths, heights and styles around a
 // courtyard, with alleys cutting through. Some ground floors are walk-in shops (lotHooks.walkIn).
 // ---------------------------------------------------------------------
-const lotHooks = { walkIn: null, courtyard: null, house: null };
+const lotHooks = { walkIn: null, courtyard: null, house: null, warehouse: null };
 const courtyards = []; // {x0,x1,z0,z1,city} open yards inside blocks
 function perimeterBlock(I, P) {
   const { ix0, ix1, iz0, iz1 } = I;
@@ -1692,6 +1695,8 @@ function genIndustrial(city) {
       const parts = split ? [[ix0, ix1, iz0, (iz0 + iz1) / 2 - 2], [ix0, ix1, (iz0 + iz1) / 2 + 2, iz1]] : [[ix0, ix1, iz0, iz1]];
       for (const [x0, x1, z0, z1] of parts) {
         const h = Math.round(sr(8, 14));
+        // most warehouses are hollow sheds you can walk into (docks.js); the rest stay solid
+        if (lotHooks.warehouse && srand() < 0.85 && lotHooks.warehouse({ x0, x1, z0, z1 }, h, tint, st(x0, x1, z0, z1), curCity)) continue;
         facadeBox('metal', x0, x1, 0, h, z0, z1, tint);
         propBuf.prism(x0, x1, z0, z1, h, 2, 0x6a6a70, true);
         addRoof(x0, x1, z0, z1, h + 1, { city: curCity, shed: true });
@@ -3552,6 +3557,250 @@ function houseInside(L, side, am, h, col) {
 }
 lotHooks.house = houseInside;
 
+// Docks warehouses: the big metal sheds in SALTMARSH DOCKS are hollow now. Roll-up doors open onto a
+// concrete floor with steel columns, high-bay lamps and a mezzanine office up a flight of stairs. Each
+// shed is one of several kinds: pallet racking with a forklift, a fish market, a boat repair shop,
+// self-storage cages, or a disused shed with fire barrels and an old sofa. All of it is real collision
+// you can hide behind, climb and chase through, and the walls block sight like any building.
+
+
+
+
+
+// {name, kind, rect:{x0,x1,z0,z1}, h, doors:[{x,z,ox,oz}] (inside point + outside point), mezz:{x,z,y},
+//  spots:[{x,z,y,face,what}] places a worker could stand and do something}
+const warehouses = [];
+
+const WH_KINDS = {
+  racking: ['BAYSIDE LOGISTICS', 'GULLWING FREIGHT', 'TIDEMARK STORES', 'NORTH QUAY CARGO'],
+  fish: ['SALTMARSH FISH MARKET', 'MORNING CATCH', 'THE BRINE HALL'],
+  boats: ['GULL MARINE REPAIRS', 'KEEL & CO BOATWORKS', 'DRYDOCK SEVEN'],
+  storage: ['SAFEKEEP STORAGE', 'LOCK-IT-AWAY', 'BOXHAVEN UNITS'],
+  disused: ['DISUSED SHED', 'CONDEMNED UNIT', 'THE OLD SHED'],
+};
+const WH_POOL = ['racking', 'fish', 'boats', 'storage', 'racking', 'disused', 'boats', 'racking', 'fish', 'storage']; // dealt in turn so every kind turns up
+const WH_T = 0.3, WH_DOOR_W = 5, WH_DOOR_H = 4.8, WH_MEZZ = 3.8;
+let whUnit = 0;
+const whNames = {};
+
+function warehouseInside(R, h, tint, streets, city) {
+  const doorSides = SIDES.filter((sd) => streets[sd]);
+  if (!doorSides.length || h < 8) return false;
+  // the main doors go on the street side that gives the deepest shed
+  const depth = (sd) => (sd[1] === 'x' ? R.x1 - R.x0 : R.z1 - R.z0);
+  doorSides.sort((a, b) => depth(b) - depth(a) + (srand() - 0.5) * 0.01);
+  const side = doorSides[0], F = frameOf(R, side), { A0, A1, D } = F, W = A1 - A0;
+  if (D < 14 || W < 12) return false;
+  // a second door on a street side at right angles, through a cross aisle
+  const perp = doorSides.find((sd) => sd[1] !== side[1]);
+  const perpEdge = perp ? (perp[0] === 'p' ? 'hi' : 'lo') : null; // which end of the a axis it's on
+  const holeNear = (a0, a1, b0, b1) => { const [x0, x1, z0, z1] = F.rect(a0, a1, b0, b1); return groundHoles.some((g) => g.x1 > x0 && g.x0 < x1 && g.z1 > z0 && g.z0 < z1); };
+  const unit = ++whUnit, kind = WH_POOL[(unit - 1) % WH_POOL.length], name = WH_KINDS[kind][(whNames[kind] = (whNames[kind] ?? Math.floor(srand() * 4)) + 1) % WH_KINDS[kind].length];
+  const wallC = kind === 'disused' ? 0x6a6660 : 0xb8b4aa;
+
+  // --- shell ---------------------------------------------------------------------------------
+  const wall = (edge, s0, s1, y0, y1) => {
+    if (s1 - s0 < 0.05) return;
+    const r = edge === 'front' ? F.rect(s0, s1, 0, WH_T) : edge === 'back' ? F.rect(s0, s1, D - WH_T, D) : edge === 'lo' ? F.rect(A0, A0 + WH_T, s0, s1) : F.rect(A1 - WH_T, A1, s0, s1);
+    facadeBox('metal', r[0], r[1], y0, y1, r[2], r[3], tint);
+    addCollider(r[0], r[1], r[2], r[3], y1, { y0 });
+  };
+  // front doors: one, or two on a wide shed, kept clear of the stairs on the A0 side
+  const nDoors = W >= 26 ? 2 : 1, doorsA = [];
+  for (let k = 0; k < nDoors; k++) {
+    let m = A0 + 4 + ((W - 6) * (k + 1)) / (nDoors + 1);
+    m = clamp(m, A0 + 4 + WH_DOOR_W / 2, A1 - 1.2 - WH_DOOR_W / 2);
+    for (let t = 0; t < 6 && holeNear(m - WH_DOOR_W / 2 - 0.5, m + WH_DOOR_W / 2 + 0.5, -SW - 0.5, 0); t++) m = clamp(m + 2.5, A0 + 4 + WH_DOOR_W / 2, A1 - 1.2 - WH_DOOR_W / 2);
+    if (holeNear(m - WH_DOOR_W / 2 - 0.5, m + WH_DOOR_W / 2 + 0.5, -SW - 0.5, 0)) continue;
+    if (doorsA.some((o) => Math.abs(o - m) < WH_DOOR_W + 1)) continue;
+    doorsA.push(m);
+  }
+  if (!doorsA.length) return false;
+  doorsA.sort((a, b) => a - b);
+  let a = A0;
+  for (const m of doorsA) { wall('front', a, m - WH_DOOR_W / 2, 0, h); wall('front', m - WH_DOOR_W / 2, m + WH_DOOR_W / 2, WH_DOOR_H, h); a = m + WH_DOOR_W / 2; }
+  wall('front', a, A1, 0, h);
+  wall('back', A0, A1, 0, h);
+  // cross aisle depth for the side door, clear of the mezzanine at the back
+  const bd = clamp(Math.round(D * 0.45), 8, D - 12);
+  for (const edge of ['lo', 'hi']) {
+    if (edge === perpEdge) {
+      const e0 = bd - WH_DOOR_W / 2, e1 = bd + WH_DOOR_W / 2;
+      wall(edge, WH_T, e0, 0, h); wall(edge, e0, e1, WH_DOOR_H, h); wall(edge, e1, D - WH_T, 0, h);
+    } else wall(edge, WH_T, D - WH_T, 0, h);
+  }
+  // roof: the pitched cap outside, a walkable top, and a ceiling with skylight strips inside
+  propBuf.prism(R.x0, R.x1, R.z0, R.z1, h, 2, 0x6a6a70, true);
+  addRoof(R.x0, R.x1, R.z0, R.z1, h + 1, { city, shed: true, y0: h - 0.25 });
+  F.box(ib, A0 + WH_T, A1 - WH_T, WH_T, D - WH_T, h - 0.25, h, 0x4a4a50);
+  for (let b = 3; b < D - 3; b += 7) F.glow(A0 + 2, A1 - 2, b, b + 1.2, h - 0.27, h - 0.25, 0xc8d8e0);
+  // floor: sealed concrete with yellow lane lines
+  F.box(ib, A0 + WH_T, A1 - WH_T, WH_T, D - WH_T, 0.17, 0.2, kind === 'disused' ? 0x6a6862 : 0x9a9890);
+  for (const m of doorsA) for (const e of [m - WH_DOOR_W / 2 + 0.3, m + WH_DOOR_W / 2 - 0.3]) F.box(ib, e - 0.06, e + 0.06, 0.4, Math.min(D - 7, 9), 0.2, 0.21, 0xe0c020);
+  // walls inside: a concrete plinth and a painted band so the shed reads as a room
+  F.box(ib, A0 + WH_T, A1 - WH_T, D - WH_T - 0.05, D - WH_T, 0.2, 1.2, 0x8a8880);
+  F.box(ib, A0 + WH_T, A0 + WH_T + 0.05, WH_T, D - WH_T, 0.2, 1.2, 0x8a8880);
+  F.box(ib, A1 - WH_T - 0.05, A1 - WH_T, WH_T, D - WH_T, 0.2, 1.2, 0x8a8880);
+  F.box(ib, A0 + WH_T, A1 - WH_T, D - WH_T - 0.06, D - WH_T - 0.05, 2.6, 3.0, wallC === 0x6a6660 ? 0x5a4a3a : 0x2a5a9a);
+  // door frames: hazard posts, the rolled-up shutter drum, a lamp and the company name above
+  const doors = [];
+  const doorFrame = (edge, m) => {
+    const posts = edge === 'front' ? [[m - WH_DOOR_W / 2, 0], [m + WH_DOOR_W / 2, 0]] : [[edge === 'lo' ? A0 : A1, m - WH_DOOR_W / 2], [edge === 'lo' ? A0 : A1, m + WH_DOOR_W / 2]];
+    for (const [pa, pb] of posts) for (let y = 0.2; y < 1.4; y += 0.4) {
+      const c = Math.round(y / 0.4) % 2 ? 0x1a1a1a : 0xe0c020;
+      if (edge === 'front') F.box(ib, pa - 0.12, pa + 0.12, -0.05, WH_T + 0.05, y, y + 0.2, c);
+      else { const e0 = edge === 'lo' ? A0 : A1 - WH_T; F.box(ib, e0 - 0.05, e0 + WH_T + 0.05, pb - 0.12, pb + 0.12, y, y + 0.2, c); }
+    }
+    if (edge === 'front') {
+      F.box(ib, m - WH_DOOR_W / 2, m + WH_DOOR_W / 2, WH_T, WH_T + 0.55, WH_DOOR_H - 0.55, WH_DOOR_H, 0x5a5a60); // shutter drum
+      const [lx, lz] = F.toXZ(m, -0.3);
+      glowBuf.box(lx - 0.2, lx + 0.2, WH_DOOR_H + 0.4, WH_DOOR_H + 0.65, lz - 0.2, lz + 0.2, 0xffc070);
+      const [sx, sz] = F.toXZ(m, -0.08), ry = side === 'pz' ? 0 : side === 'nz' ? Math.PI : side === 'px' ? Math.PI / 2 : -Math.PI / 2;
+      if (h > WH_DOOR_H + 2.6) sign(`${name}  ·  UNIT ${unit}`, sx, WH_DOOR_H + 1.4, sz, ry, Math.min(WH_DOOR_W + 3, 9), 0.9, kind === 'disused' ? '#3a3a3a' : spick(['#1a3a6a', '#7a1a1a', '#1a5a3a', '#2a2a2e']), kind === 'disused' ? '#c8c0b0' : '#ffd23a');
+      const [ix, iz] = F.toXZ(m, 1.5), [ox, oz] = F.toXZ(m, -2);
+      doors.push({ x: ix, z: iz, ox, oz, side });
+      { const [kx0, kx1, kz0, kz1] = F.rect(m - WH_DOOR_W / 2 - 0.5, m + WH_DOOR_W / 2 + 0.5, -SW - 0.5, 1); keepClear.push({ x0: kx0, x1: kx1, z0: kz0, z1: kz1 }); }
+      { const [nx0, nx1, nz0, nz1] = F.rect(m - WH_DOOR_W / 2 + 0.5, m + WH_DOOR_W / 2 - 0.5, -2.2, 2.2); navOpen.push({ x0: nx0, x1: nx1, z0: nz0, z1: nz1 }); }
+    } else {
+      const ae = edge === 'lo' ? A0 : A1, inw = edge === 'lo' ? 1 : -1;
+      const [ix, iz] = F.toXZ(ae + inw * 1.5, m), [ox, oz] = F.toXZ(ae - inw * 2, m);
+      doors.push({ x: ix, z: iz, ox, oz, side: perp });
+      { const [kx0, kx1, kz0, kz1] = F.rect(Math.min(ae - inw * (SW + 0.5), ae + inw), Math.max(ae - inw * (SW + 0.5), ae + inw), m - WH_DOOR_W / 2 - 0.5, m + WH_DOOR_W / 2 + 0.5); keepClear.push({ x0: kx0, x1: kx1, z0: kz0, z1: kz1 }); }
+      { const [nx0, nx1, nz0, nz1] = F.rect(ae - 2.2, ae + 2.2, m - WH_DOOR_W / 2 + 0.5, m + WH_DOOR_W / 2 - 0.5); navOpen.push({ x0: nx0, x1: nx1, z0: nz0, z1: nz1 }); }
+    }
+  };
+  for (const m of doorsA) doorFrame('front', m);
+  if (perpEdge) doorFrame(perpEdge, bd);
+
+  // --- columns and lamps -----------------------------------------------------------------------
+  const spots = [];
+  const spot = (sa, sb, y, what) => { const [x, z] = F.toXZ(sa, sb), [ex, ez] = F.toXZ(sa, 4); spots.push({ x, z, y, what, ex, ez }); }; // (ex, ez): the way in from the loading area
+  const colA = [];
+  if (W > 18) for (let ca = A0 + W / 3; ca < A1 - 3; ca += W / 3) colA.push(ca);
+  for (const ca of colA) for (let cb = 9; cb < D - 7; cb += 9) {
+    if (perpEdge && Math.abs(cb - bd) < 3.2) continue;
+    if (doorsA.some((m) => Math.abs(m - ca) < WH_DOOR_W / 2 + 0.6) && cb < 7) continue;
+    F.box(ib, ca - 0.2, ca + 0.2, cb - 0.2, cb + 0.2, 0, h - 0.25, 0x3a5a8a, true);
+  }
+  for (let b = 2.5; b < D - 2; b += 6) for (let la = A0 + 3; la < A1 - 2; la += 7) {
+    F.box(ib, la - 0.02, la + 0.02, b - 0.02, b + 0.02, h - 1.6, h - 0.25, 0x222222); // chain
+    F.box(ib, la - 0.45, la + 0.45, b - 0.45, b + 0.45, h - 1.75, h - 1.6, 0x4a4a50);
+    F.lamp(la - 0.4, la + 0.4, b - 0.4, b + 0.4, h - 1.75, kind === 'disused' ? 0xffb060 : 0xfff2d8);
+  }
+
+  // --- mezzanine office at the back, up a flight of stairs on the A0 side ------------------------
+  const mb = D - 5.5; // the mezzanine's front edge
+  { const [x0, x1, z0, z1] = F.rect(A0 + WH_T, A1 - WH_T, mb, D - WH_T); slab(ib, x0, x1, WH_MEZZ, z0, z1, 0x7a7a7e, 0.3); }
+  for (let pa = A0 + 4; pa < A1 - 1; pa += 5) F.box(ib, pa - 0.15, pa + 0.15, mb + 0.1, mb + 0.4, 0.2, WH_MEZZ - 0.3, 0x3a5a8a, true);
+  { const [sx, sz] = F.toXZ(A0 + 1.25, mb); stairs(sx, sz, side, 1.5, WH_MEZZ, 0.2, 0x5a5a60); }
+  // railing along the edge, leaving the top of the stairs open
+  F.box(ib, A0 + 2.1, A1 - WH_T, mb, mb + 0.08, WH_MEZZ, WH_MEZZ + 1.05, 0xe0c020, true);
+  for (let ra = A0 + 2.3; ra < A1 - 0.4; ra += 1.4) F.box(ib, ra - 0.03, ra + 0.03, mb, mb + 0.08, WH_MEZZ, WH_MEZZ + 1.0, 0xc0a018);
+  // the office: glass front, a desk with a glowing screen, filing cabinets, a kettle, a calendar
+  const oa0 = A1 - Math.min(9, W * 0.45), oa1 = A1 - WH_T;
+  F.box(glassB, oa0, oa1 - 2.2, mb + 0.6, mb + 0.7, WH_MEZZ, WH_MEZZ + 2.6, 0x9ac8e0, true, { glass: true });
+  F.box(ib, oa0 - 0.1, oa0, mb + 0.6, D - WH_T, WH_MEZZ, WH_MEZZ + 2.6, 0xd8d4c8, true);
+  F.box(ib, oa0, oa1, mb + 0.6, D - WH_T, WH_MEZZ + 2.6, WH_MEZZ + 2.7, 0xd8d4c8);
+  { const da = (oa0 + oa1) / 2; F.box(ib, da - 1, da + 1, D - 1.6, D - 0.9, WH_MEZZ, WH_MEZZ + 0.78, 0x6a4a32, true); F.glow(da - 0.3, da + 0.3, D - 1.3, D - 1.25, WH_MEZZ + 0.8, WH_MEZZ + 1.2, 0x8ad0ff); spot(da, D - 2.2, WH_MEZZ, 'desk'); }
+  for (let k = 0; k < 2; k++) F.box(ib, oa0 + 0.3 + k * 0.6, oa0 + 0.8 + k * 0.6, D - 0.9, D - WH_T, WH_MEZZ, WH_MEZZ + 1.3, 0x8a8a90, true);
+  F.box(ib, oa1 - 1.6, oa1 - 0.9, D - WH_T - 0.03, D - WH_T, WH_MEZZ + 1.4, WH_MEZZ + 2.1, 0xf0f0e8); // calendar
+  F.lamp(oa0 + 0.6, oa1 - 0.6, mb + 1.2, D - 0.8, WH_MEZZ + 2.58, 0xfff8e8);
+  // under the mezzanine: lockers, a tool wall and a workbench
+  for (let la = A0 + 3; la < A0 + 3 + Math.min(6, W * 0.3); la += 0.6) F.box(ib, la, la + 0.55, D - 0.8, D - WH_T, 0.2, 2.0, spick([0x3a6a9a, 0x4a7aaa]), true);
+  { const wa = A1 - 5; F.box(ib, wa, wa + 3.4, D - 1.2, D - WH_T, 0.2, 0.95, 0x8a6a4a, true); F.box(ib, wa, wa + 3.4, D - WH_T - 0.04, D - WH_T, 1.2, 2.6, 0x9a8a6a); for (let t = wa + 0.3; t < wa + 3.2; t += 0.35) F.box(ib, t, t + 0.06, D - WH_T - 0.1, D - WH_T - 0.04, 1.5 + (t * 13 % 7) * 0.1, 2.3, spick([0xc83a2a, 0x2a2a2e, 0xe0c020])); spot(wa + 1.7, D - 2, 0.2, 'bench'); }
+  const mezz = (() => { const [x, z] = F.toXZ((A0 + oa0) / 2 + 1, mb + 2.5); return { x, z, y: WH_MEZZ }; })();
+
+  // --- the floor: what this shed is for -------------------------------------------------------
+  const fa0 = A0 + 3.4, fa1 = A1 - 1.2, fb0 = 6.5, fb1 = mb - 8.2; // a clear cross aisle in front of the stairs, which run down to b = mb - 5.5
+  const bands = perpEdge ? [[fb0, bd - WH_DOOR_W / 2 - 0.6], [bd + WH_DOOR_W / 2 + 0.6, fb1]] : [[fb0, fb1]];
+  const rows = (pitch, width, fn) => { for (let ra = fa0; ra + width <= fa1; ra += pitch) for (const [b0, b1] of bands) if (b1 - b0 > 2.5) fn(ra, ra + width, b0, b1); };
+  const pallet = (pa, pb, y, solidOne) => {
+    F.box(ib, pa - 0.6, pa + 0.6, pb - 0.5, pb + 0.5, y, y + 0.14, 0xa88a5a, !!solidOne);
+    const top = y + 0.14 + sr(0.4, 1.1);
+    F.box(ib, pa - 0.55, pa + 0.55, pb - 0.45, pb + 0.45, y + 0.14, top, spick([0xb89060, 0xc8a070, 0x9a7a4a, 0xd8d0c0, 0x5a7aa0]), !!solidOne);
+    if (srand() < 0.5) F.box(ib, pa - 0.56, pa + 0.56, pb - 0.05, pb + 0.05, y + 0.14, top + 0.01, 0xd8c8a0); // strapping
+  };
+  const forklift = (pa, pb) => {
+    F.box(ib, pa - 0.7, pa + 0.7, pb - 1.1, pb + 1.1, 0.2, 1.3, 0xe0a020, true);
+    F.box(ib, pa - 0.65, pa + 0.65, pb - 0.5, pb + 0.7, 1.3, 2.3, 0x2a2a2e); // cage
+    F.box(ib, pa - 0.6, pa + 0.6, pb - 1.25, pb - 1.15, 0.2, 3.0, 0x3a3a3e); // mast
+    for (const s of [-0.35, 0.35]) F.box(ib, pa + s - 0.07, pa + s + 0.07, pb - 2.3, pb - 1.25, 0.2, 0.28, 0x3a3a3e);
+    F.box(ib, pa - 0.75, pa + 0.75, pb + 0.7, pb + 1.25, 0.2, 1.1, 0x3a3a3e); // counterweight
+    spot(pa + 1.4, pb, 0.2, 'forklift');
+  };
+  if (kind === 'racking') {
+    rows(4.6, 1.4, (r0, r1, b0, b1) => {
+      const rh = Math.min(5.6, h - 2.2);
+      { const [x0, x1, z0, z1] = F.rect(r0, r1, b0, b1); addCollider(x0, x1, z0, z1, rh, { y0: 0, rack: true }); }
+      F.box(ib, (r0 + r1) / 2 - 0.03, (r0 + r1) / 2 + 0.03, b0, b1, 0.2, rh, 0x5a5a60); // mesh back panel
+      for (const y of [0.2, 1.85, 3.55, rh - 0.1]) if (y < rh) F.box(ib, r0, r1, b0, b1, y, y + 0.1, 0x2a4a8a); // shelf decks
+      for (const y of [0.3, 1.95, 3.65]) if (y < rh - 1.2) for (let pb = b0 + 0.7; pb < b1 - 0.6; pb += 1.25) if (srand() < 0.82) { const pa = (r0 + r1) / 2; F.box(ib, pa - 0.62, pa + 0.62, pb - 0.52, pb + 0.52, y, y + 0.12, 0xa88a5a); F.box(ib, pa - 0.58, pa + 0.58, pb - 0.48, pb + 0.48, y + 0.12, y + sr(0.6, 1.5), spick([0xb89060, 0xc8a070, 0x9a7a4a, 0xd8d0c0, 0x5a7aa0, 0xc84a2a])); }
+      for (let pb = b0; pb <= b1 + 0.01; pb += Math.max(1.2, (b1 - b0) / Math.ceil((b1 - b0) / 2.6))) for (const e of [r0, r1 - 0.1]) F.box(ib, e, e + 0.1, pb - 0.06, pb + 0.06, 0.2, rh + 0.05, 0xd06a1a); // orange uprights
+      spot(r1 + 1.5, (b0 + b1) / 2, 0.2, 'pick');
+    });
+    forklift(A1 - 3, 3.6);
+    for (let k = 0; k < 3; k++) pallet(A0 + 2.4, 2.2 + k * 1.3, 0.2, true);
+  } else if (kind === 'fish') {
+    rows(4.4, 1.3, (r0, r1, b0, b1) => {
+      for (let pb = b0; pb < b1 - 1.5; pb += 4.2) {
+        const e = Math.min(pb + 3, b1);
+        F.box(ib, r0, r1, pb, e, 0.2, 0.92, 0xc8ccd0, true);
+        F.box(ib, r0 + 0.08, r1 - 0.08, pb + 0.08, e - 0.08, 0.92, 1.0, 0xe8f4fa); // ice
+        for (let fb = pb + 0.35; fb < e - 0.3; fb += 0.42) F.box(ib, r0 + 0.25, r1 - 0.25, fb - 0.12, fb + 0.12, 1.0, 1.08, spick([0xb0b8c0, 0xd08a60, 0x8a9aa8, 0xe0a080, 0x6a7a8a]));
+        F.box(ib, (r0 + r1) / 2 - 0.03, (r0 + r1) / 2 + 0.03, (pb + e) / 2 - 0.03, (pb + e) / 2 + 0.03, 1.0, 2.4, 0x3a3a3e);
+        F.box(ib, r0 - 0.3, r1 + 0.3, (pb + e) / 2 - 0.25, (pb + e) / 2 + 0.25, 2.4, 2.5, 0xf0f0f0); // price board
+        spot(r1 + 0.9, (pb + e) / 2, 0.2, 'stall');
+      }
+    });
+    // crate stacks, a cold room in the corner
+    for (let k = 0; k < 5; k++) { const ca = A0 + 2.2, cb = 2.2 + k * 1.1, n = 1 + Math.floor(srand() * 4); F.box(ib, ca - 0.45, ca + 0.45, cb - 0.4, cb + 0.4, 0.2, 0.2 + n * 0.38, spick([0x2a6aa0, 0xd0d0d0, 0x2a8a6a]), true); }
+    F.box(ib, A1 - 4.6, A1 - WH_T, WH_T, 4.2, 0.2, 3.2, 0xe8eef0, true);
+    F.box(ib, A1 - 3.4, A1 - 2.0, 4.2, 4.25, 0.2, 2.4, 0x9aa8b0); // cold room door
+  } else if (kind === 'boats') {
+    // one or two hulls up on cradles, ladders against them, benches and drums down the sides
+    const hulls = W >= 22 && fb1 - fb0 > 12 ? 2 : 1;
+    for (let k = 0; k < hulls; k++) {
+      const ha = hulls === 1 ? (fa0 + fa1) / 2 : fa0 + 3 + k * ((fa1 - fa0 - 6) / 1), hb0 = fb0 + 0.5, hb1 = Math.min(fb1, hb0 + 14), col = spick([0xf0f0f0, 0x2a5a9a, 0xc83a2a, 0x2a7a5a]);
+      for (const cb of [hb0 + 2, hb1 - 2]) F.box(ib, ha - 1.4, ha + 1.4, cb - 0.25, cb + 0.25, 0.2, 1.0, 0x6a4a32, true);
+      F.box(ib, ha - 0.7, ha + 0.7, hb0 + 0.6, hb1 - 0.6, 1.0, 1.6, col, true);
+      F.box(ib, ha - 1.3, ha + 1.3, hb0 + 1.2, hb1, 1.6, 2.9, col, true);
+      F.box(ib, ha - 1.35, ha + 1.35, hb0 + 1.2, hb1, 2.9, 3.05, 0x8a6a4a, true); // deck
+      F.box(ib, ha - 0.9, ha + 0.9, hb1 - 4.5, hb1 - 1.2, 3.05, 4.6, 0xe8e8e8, true); // wheelhouse
+      F.glow(ha - 0.92, ha + 0.92, hb1 - 4.2, hb1 - 1.5, 3.9, 4.3, 0x9ac8e0);
+      F.box(ib, ha - 0.8, ha + 0.8, hb0 + 0.2, hb0 + 1.2, 1.6, 2.9, col, true); // bow
+      F.box(ib, ha + 1.35, ha + 1.75, hb0 + 4, hb0 + 4.5, 0.2, 3.05, 0x9a9aa0); // ladder up the side
+      spot(ha + 2.3, (hb0 + hb1) / 2, 0.2, 'hull');
+      spot(ha, (hb0 + hb1) / 2, 3.05, 'deck');
+    }
+    for (let k = 0; k < 4; k++) { const da = A0 + 2.2, db = 2 + k * 0.9; F.cyl(ib, da, db, 0.3, 0.3, 0.2, 1.1, spick([0x2a4a8a, 0xc83a2a, 0x3a3a3e]), 10); }
+    forklift(A1 - 3, 3.6);
+  } else if (kind === 'storage') {
+    rows(5.2, 2.2, (r0, r1, b0, b1) => {
+      F.box(ib, r0, r1, b0, b1, 0.2, 2.7, 0x9aa0a8, true);
+      F.box(ib, r0 - 0.03, r1 + 0.03, b0, b1, 2.7, 2.78, 0x6a6a70);
+      for (let pb = b0 + 0.2; pb < b1 - 1.4; pb += 1.8) for (const e of [r0 - 0.02, r1]) F.box(ib, e, e + 0.02, pb, pb + 1.4, 0.3, 2.4, spick([0xe07a1a, 0xe07a1a, 0x2a6aa0]));
+      spot(r1 + 1.4, (b0 + b1) / 2, 0.2, 'unit');
+    });
+    F.box(ib, A1 - 3.2, A1 - 1.2, 2, 3.2, 0.2, 1.05, 0x3a3a44, true); // front desk
+    spot(A1 - 2.2, 3.8, 0.2, 'desk');
+  } else { // disused: a few old containers, fire barrels, a sofa, graffiti on the walls
+    const ca = (fa0 + fa1) / 2;
+    for (let k = 0; k < 2; k++) { const cb = fb0 + 1.5 + k * 7; if (cb + 6 > fb1 + 4) break; const c = spick(CONTAINER_COLORS); F.box(ib, ca - 1.22, ca + 1.22, cb, cb + 6, 0.2, 2.75, c, true); if (srand() < 0.5) F.box(ib, ca - 1.22, ca + 1.22, cb, cb + 6, 2.75, 5.3, spick(CONTAINER_COLORS), true); }
+    for (const [ba, bb] of [[A0 + 3, 4], [A1 - 3, fb0 + 3], [ca + 3, fb1 - 1]]) { F.cyl(ib, ba, bb, 0.3, 0.3, 0.2, 1.0, 0x5a3a2a, 10); F.cyl(lightB, ba, bb, 0.24, 0.12, 1.0, 1.4, 0xff9a3a, 8); spot(ba + 0.9, bb, 0.2, 'barrel'); }
+    F.box(ib, A0 + 3.6, A0 + 5.6, 7, 7.9, 0.2, 0.7, 0x6a3a4a, true); F.box(ib, A0 + 3.6, A0 + 5.6, 7.7, 7.9, 0.7, 1.2, 0x6a3a4a); spot(A0 + 4.6, 7.2, 0.2, 'sofa');
+    for (let k = 0; k < 6; k++) { const ga = A0 + 1 + srand() * (W - 3), gw = sr(1.2, 3); F.box(ib, ga, Math.min(A1 - 0.4, ga + gw), D - WH_T - 0.08, D - WH_T - 0.06, sr(0.5, 1.4), sr(1.8, 2.6), spick([0xe03a8a, 0x3ae0c0, 0xf0e030, 0x8a3ae0, 0xf07a2a])); }
+  }
+  // a few loose pallets by the doors, a bin and a fire extinguisher for every shed
+  F.box(ib, A0 + WH_T, A0 + WH_T + 0.3, 2.6, 2.9, 1.0, 1.6, 0xd02a2a);
+  if (kind !== 'fish' && kind !== 'disused') spot(A0 + 2.5, 4, 0.2, 'clipboard');
+
+  const [rx0, rx1, rz0, rz1] = F.rect(A0, A1, 0, D);
+  interiorZones.push({ x0: rx0, x1: rx1, z0: rz0, z1: rz1, y0: -0.5, y1: h - 0.3, name: name + ' · UNIT ' + unit, warehouse: true });
+  warehouses.push({ name, kind, unit, rect: { x0: rx0, x1: rx1, z0: rz0, z1: rz1 }, h, doors, mezz, spots, side, city: city.name });
+  return true;
+}
+lotHooks.warehouse = warehouseInside;
+
 // Audio: a tiny synth, no sound files.
 
 
@@ -4224,6 +4473,7 @@ function climbStep(dt, P, inp, cb, fx, fz) {
 
 
 
+
 const JOBS = ['vendor', 'sweeper', 'busker', 'courier', 'jogger', 'tourist', 'dogwalker'];
 const LIFE_JOB_LINES = {
   vendor: ['HOT PRETZELS!', 'GET YOUR CHURROS!', 'TWO FOR ONE!', 'FRESH LEMONADE!', 'HOT DOGS! HOT!', 'BEST IN TOWN!'],
@@ -4318,7 +4568,7 @@ function updateLifeDogs(dt, C) {
     if (D.barkT <= 0) { D.barkT = mr(8, 25); if (!O.dead && C.near(D.x, D.z, 25)) C.say(O, mpick(['WOOF!', 'WOOF WOOF!', 'ARF!'])); }
   }
 }
-function clearCityLife() { for (const D of lifeDogs) scene.remove(D.g); lifeDogs.length = 0; for (const s of lifeSpots) s.taken = null; lifeVendorCarts.clear(); }
+function clearCityLife() { for (const D of lifeDogs) scene.remove(D.g); lifeDogs.length = 0; for (const s of lifeSpots) s.taken = null; lifeVendorCarts.clear(); for (const W of walkIns) W.busy = 0; for (const Wh of warehouses) for (const q of Wh.spots) q.taken = null; }
 
 // ---------------------------------------------------------------------
 // jobs and activities
@@ -4359,6 +4609,78 @@ function lifeBegin(h, kind, tx, tz, face, dur, extra) {
   h.act = Object.assign({ kind, tx, tz, face, dur, phase: 'go', t: 0, goT: 0, lineT: mr(0.5, 3) }, extra);
   return true;
 }
+// ---------------------------------------------------------------------
+// daily routines: what people want to do depends on the hour. Coffee and work in the morning, lunch
+// at noon, shopping in the afternoon, food and drinks in the evening, home at night. They walk in
+// through the door and do it inside where you can see them (except at home: curtains drawn).
+// ---------------------------------------------------------------------
+const VISIT_OF = { cafe: 'eat', diner: 'eat', pizza: 'eat', bar: 'drink', mart: 'browse', pharmacy: 'browse', books: 'browse', clothes: 'browse', florist: 'browse', laundry: 'wait', barber: 'wait', arcade: 'play', home: 'home' };
+const VISIT_LINES = {
+  eat: ['MMM!', 'BEST COFFEE IN TOWN', 'IS THIS DECAF?', 'COMPLIMENTS TO THE CHEF', 'TOO HOT! TOO HOT!'],
+  drink: ['CHEERS!', 'ONE MORE, THEN HOME', 'MY ROUND', 'TO FRIDAY!', 'WHO ORDERED THIS?'],
+  browse: ['DO YOU HAVE THIS IN BLUE?', 'JUST LOOKING', 'HOW MUCH?!', 'ON SALE? NICE', 'WHERE ARE THE BATTERIES?'],
+  wait: ['HOW MUCH LONGER?', 'JUST A TRIM, PLEASE', '...', 'IS IT ALWAYS THIS SLOW?'],
+  play: ['HIGH SCORE!', 'COME ON, COME ON!', 'ONE MORE GO', 'THIS MACHINE CHEATS'],
+  work: ['LIFT WITH THE KNEES', 'WHO MOVED MY PALLET?', 'NEARLY HOME TIME', 'BREAK TIME YET?', 'SIGN HERE, PLEASE', 'FORKLIFT COMING THROUGH'],
+};
+// how much each kind of outing appeals at a given hour
+function routineWants(hr) {
+  if (hr < 6) return { home: 0.8, drink: hr < 2 ? 0.2 : 0 };
+  if (hr < 9) return { eat: 0.35, work: 0.35, browse: 0.05, home: 0.05 };
+  if (hr < 12) return { browse: 0.35, work: 0.3, wait: 0.15, play: 0.1, eat: 0.1 };
+  if (hr < 14.5) return { eat: 0.6, browse: 0.2, work: 0.15, drink: 0.05 };
+  if (hr < 17.5) return { browse: 0.3, work: 0.3, play: 0.15, wait: 0.1, eat: 0.1 };
+  if (hr < 21) return { eat: 0.3, drink: 0.35, home: 0.25, play: 0.1 };
+  return { drink: 0.45, home: 0.45, eat: 0.1 };
+}
+function pickWant(w) { let t = 0; for (const k in w) t += w[k]; let r = Math.random() * t; for (const k in w) { r -= w[k]; if (r <= 0) return k; } return null; }
+// a straight walk with nothing solid in the way
+function lifeSegClear(ax, az, bx, bz) {
+  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / 0.35));
+  for (let i = 0; i <= n; i++) { const t = i / n; if (pointBlocked(ax + (bx - ax) * t, az + (bz - az) * t, 0.42)) return false; }
+  return true;
+}
+// somewhere to stand inside a walk-in that you can walk to straight from the door
+function insidePoint(W) {
+  const r = W.rect, [ex, ez] = W.path[W.path.length - 1];
+  for (let t = 0; t < 14; t++) {
+    const x = r.x0 + 1 + Math.random() * (r.x1 - r.x0 - 2), z = r.z0 + 1 + Math.random() * (r.z1 - r.z0 - 2);
+    if (pointBlocked(x, z, 0.45) || Math.hypot(x - ex, z - ez) < 1.2) continue;
+    if (lifeSegClear(ex, ez, x, z)) return { x, z };
+  }
+  return null;
+}
+function routineVisit(h, want, C) {
+  const hr = C.hour;
+  if (want === 'work') { // a shift at a docks warehouse
+    let best = null, bd = 160;
+    for (const Wh of warehouses) { const d = Math.abs(Wh.rect.x0 + Wh.rect.x1 - 2 * h.x) / 2 + Math.abs(Wh.rect.z0 + Wh.rect.z1 - 2 * h.z) / 2; if (d < bd) { bd = d; best = Wh; } }
+    if (!best) return false;
+    let door = best.doors[0]; for (const o of best.doors) if (Math.hypot(o.ox - h.x, o.oz - h.z) < Math.hypot(door.ox - h.x, door.oz - h.z)) door = o;
+    const spots = best.spots.filter((q) => q.y < 1 && !q.taken);
+    for (let t = 0; t < 8 && spots.length; t++) {
+      const q = spots[Math.floor(Math.random() * spots.length)];
+      if (!lifeSegClear(door.x, door.z, q.ex, q.ez) || !lifeSegClear(q.ex, q.ez, q.x, q.z)) continue;
+      q.taken = h;
+      return lifeBegin(h, 'work', q.x, q.z, null, mr(40, 120), { route: [[door.ox, door.oz], [door.x, door.z], [q.ex, q.ez], [q.x, q.z]], ri: 0, wh: best, wspot: q, look: Math.atan2(q.x - q.ex, q.z - q.ez) });
+    }
+    return false;
+  }
+  let best = null, bd = want === 'home' ? 120 : 80;
+  for (const W of walkIns) {
+    if (VISIT_OF[W.kind] !== want || (W.busy || 0) >= (want === 'home' ? 2 : 4)) continue;
+    const d = Math.abs(W.x - h.x) + Math.abs(W.z - h.z); if (d < bd && d > 3) { bd = d; best = W; }
+  }
+  if (!best) return false;
+  const route = best.path.map(([x, z]) => [x, z]);
+  let face = null;
+  if (want !== 'home') { const q = insidePoint(best); if (!q) return false; route.push([q.x, q.z]); face = Math.atan2(best.keeper.x - q.x, best.keeper.z - q.z); }
+  const [tx, tz] = route[route.length - 1];
+  const dur = want === 'home' ? (hr > 20 || hr < 6 ? mr(120, 300) : mr(30, 80)) : want === 'drink' ? mr(30, 70) : want === 'eat' ? mr(20, 45) : mr(12, 30);
+  best.busy = (best.busy || 0) + 1;
+  return lifeBegin(h, want, tx, tz, face, dur, { route, ri: 0, W: best, visit: true });
+}
+
 // someone has finished what they were doing: what next?
 function lifeStart(h, C) {
   if (h.act || h.state === 'chase' || h.huntT > 0 || Math.abs(h.y) > 1 || h.contract || h.rival || h.guard) return false;
@@ -4370,6 +4692,10 @@ function lifeStart(h, C) {
   if (J === 'sweeper' && Math.random() < 0.5) return lifeBegin(h, 'sweep', h.x, h.z, h.face + mr(-1, 1), mr(4, 9));
   if (J === 'dogwalker' && Math.random() < 0.4) return lifeBegin(h, 'sniff', h.x, h.z, h.face, mr(3, 7));
   if (J === 'jogger') return Math.random() < 0.15 ? lifeBegin(h, 'stretch', h.x, h.z, h.face, mr(4, 8)) : false;
+  if (!J || J === 'tourist' || J === 'courier') { // everyday routines by the hour
+    const late = hr >= 21 || hr < 6, p = late ? 0.6 : 0.4;
+    if (Math.random() < p) { const want = pickWant(routineWants(hr)); if (want && routineVisit(h, want, C)) return true; }
+  }
   const r = Math.random() * (night ? 2.5 : 1);
   const lunch = hr > 11 && hr < 14.5, commute = (hr > 7 && hr < 9.5) || (hr > 16.5 && hr < 19);
   if (r < (commute ? 0.3 : 0.12)) { const s = nearestLifeSpot(h, 'bus', 60); if (s) { s.taken = h; return lifeBegin(h, 'bus', s.x, s.z, s.face, mr(15, 40), { spot: s }); } }
@@ -4407,6 +4733,10 @@ function endLife(h) {
   if (A.spot && A.spot.taken === h) A.spot.taken = null;
   if (A.cart) A.cart.queue = Math.max(0, (A.cart.queue || 1) - 1);
   if (A.kind === 'errand' && h.inside) { h.inside = false; h.g.visible = true; }
+  if (A.W && A.visit) A.W.busy = Math.max(0, (A.W.busy || 1) - 1);
+  if (A.wspot && A.wspot.taken === h) A.wspot.taken = null;
+  if (h.inside && (A.kind === 'home')) { h.inside = false; h.g.visible = true; }
+  if (h.cup) h.cup.visible = false; if (h.crate) h.crate.visible = false;
   if (h.phone) h.phone.visible = false;
   if (A.conv) { const o = A.conv.a === h ? A.conv.b : A.conv.a; if (o.act && o.act.conv === A.conv) { o.act.conv = null; o.act.dur = Math.min(o.act.dur, o.act.t + 0.5); } }
   h.wt = null; h.waitT = mr(0, 1);
@@ -4415,6 +4745,17 @@ function endLife(h) {
 // each frame while someone has an activity: 'walk' (heading to h.wt), 'hold' (standing still), or null (done)
 function lifeStep(h, dt, C) {
   const A = h.act;
+  if (A.route && (A.phase === 'go' || A.phase === 'out')) { // in through the door along a route, and back out the same way
+    A.goT += dt;
+    if (A.goT > 45) { endLife(h); return null; }
+    const [px, pz] = A.route[A.ri];
+    if (Math.hypot(px - h.x, pz - h.z) < 0.7) {
+      if (A.phase === 'go') { if (A.ri < A.route.length - 1) A.ri++; else { A.phase = 'do'; A.t = 0; if (A.kind === 'home') { h.inside = true; h.g.visible = false; } } }
+      else { if (A.ri > 0) A.ri--; else { endLife(h); return null; } }
+    }
+    A.straight = A.phase === 'go' ? A.ri > 0 : A.ri < A.route.length - 1; // past the front door: straight lines, already checked clear
+    if (A.phase !== 'do') { const [qx, qz] = A.route[A.ri]; if (!h.wt || h.wt.x !== qx || h.wt.z !== qz) h.wt = { x: qx, z: qz }; return 'walk'; }
+  }
   if (A.phase === 'go') {
     A.goT += dt;
     if (A.goT > 25) { endLife(h); return null; }
@@ -4424,8 +4765,15 @@ function lifeStep(h, dt, C) {
   }
   A.t += dt;
   if (A.kind === 'chat' && !A.conv && A.t > A.dur) { endLife(h); return null; }
-  if (A.t > A.dur) { endLife(h); return null; }
-  const want = A.face ?? (A.W ? Math.atan2(A.W.x - h.x, A.W.z - h.z) : h.face);
+  if (A.t > A.dur) {
+    if (A.route) { // walk back out the way they came in
+      if (A.kind === 'home' && h.inside) { h.inside = false; h.g.visible = true; }
+      if (h.cup) h.cup.visible = false; if (h.crate) h.crate.visible = false;
+      A.phase = 'out'; A.goT = 0; A.ri = Math.max(0, A.route.length - 2); h.wt = null; return 'walk';
+    }
+    endLife(h); return null;
+  }
+  const want = A.face ?? A.look ?? (A.W ? Math.atan2(A.W.x - h.x, A.W.z - h.z) : h.face);
   h.face += angDiff(h.face, want) * Math.min(1, dt * 5);
   A.lineT -= dt;
   const heard = C.near(h.x, h.z, 30);
@@ -4440,7 +4788,7 @@ function lifeStep(h, dt, C) {
     }
   } else if (A.lineT <= 0) {
     A.lineT = mr(5, 11);
-    const lines = A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
+    const lines = VISIT_LINES[A.kind] && A.kind !== 'home' ? VISIT_LINES[A.kind] : A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
     if (lines && heard && Math.random() < 0.6) C.say(h, mpick(lines));
   }
   if (A.kind === 'photo' && A.phase === 'do' && !A.flashed && A.t > 1.2) { A.flashed = true; const fx = Math.sin(h.face), fz = Math.cos(h.face); emitPuff(h.x + fx * 0.5, h.y + 1.6, h.z + fz * 0.5, { life: 0.15, size0: 0.5, size1: 1.2, alpha: 0.9, color: 0xffffff }); }
@@ -4480,10 +4828,23 @@ function lifePose(h, dt, C) {
   else if (A.kind === 'stretch') { p.armL.rotation.x = p.armR.rotation.x = -3.0; p.legL.rotation.x = Math.sin(C.time * 2) * 0.5; }
   else if (A.kind === 'window') { p.armL.rotation.x = p.armR.rotation.x = 0.4; }
   else if (A.kind === 'sniff') p.armR.rotation.x = -0.6;
+  else if (A.kind === 'eat' || A.kind === 'drink') { // cup or plate in hand, up to the mouth now and then
+    if (!h.cup) h.cup = jobProp(p.armR, LIFE_PROPG.food, 0xf0f0f0);
+    h.cup.visible = true; h.cup.material.color.setHex(A.kind === 'drink' ? 0xd8a030 : 0xf0f0f0);
+    const sip = Math.sin(C.time * 1.3 + h.phase) > 0.75; p.armR.rotation.x = sip ? -2.3 : -0.9; p.armL.rotation.x = -0.2;
+  } else if (A.kind === 'browse') { p.armR.rotation.x = -1.2 + Math.sin(C.time * 1.7 + h.phase) * 0.25; p.armL.rotation.x = -0.4; h.face += Math.sin(C.time * 0.5 + h.phase) * dt * 0.6; }
+  else if (A.kind === 'wait') { p.armL.rotation.x = p.armR.rotation.x = -0.7; p.armL.rotation.z = -0.5; p.armR.rotation.z = 0.5; }
+  else if (A.kind === 'play') { p.armL.rotation.x = p.armR.rotation.x = -1.15 + Math.sin(C.time * 16 + h.phase) * 0.08; }
+  else if (A.kind === 'work') { // lugging boxes, or tapping at a clipboard
+    if (!h.crate) h.crate = jobProp(p.torso, LIFE_PROPG.parcel, 0xb89060, 0, -0.05, 0.42);
+    const lift = A.wspot && (A.wspot.what === 'pick' || A.wspot.what === 'stall' || A.wspot.what === 'unit' || A.wspot.what === 'hull');
+    h.crate.visible = lift && Math.sin(C.time * 0.6 + h.phase) > 0;
+    p.armL.rotation.x = p.armR.rotation.x = lift ? -1.25 + Math.sin(C.time * 2 + h.phase) * 0.15 : -1.0 + Math.sin(C.time * 9) * 0.06;
+  }
   else if (A.kind === 'deliver') { p.armL.rotation.x = p.armR.rotation.x = -1.25; }
 }
 function updateCityLife(dt, C) { updateLifeDogs(dt, C); }
-const cityLifeDebug = { dogs: lifeDogs, vendorCarts: lifeVendorCarts };
+const cityLifeDebug = { dogs: lifeDogs, vendorCarts: lifeVendorCarts, routineWants, routineVisit };
 
 // Cartoon knockdowns: every weapon floors people in its own silly, bloodless way. Laser eyes turn
 // the bit they hit into black cartoon ash that crumbles away as they go flying, the crowbar sends
@@ -4639,6 +5000,7 @@ function heroMenace(n) { HERO.real = clamp(HERO.real - n, 3, 99); }
 function heroPoseCmd(C) {
   if (HERO.poseCd > 0) return;
   HERO.poseCd = 6; HERO.poseT = 3.5; sfx.cheer();
+  if (C.onPose) C.onPose();
   let n = 0, slack = 0;
   for (const h of C.G.hunters) {
     if (h.dead || h.held || h.inside) continue;
@@ -4832,14 +5194,153 @@ function spawnVillain(def, lair) {
   V.tag = villainNameTag(V); g.add(V.tag);
   villains.push(V); return V;
 }
+// ---------------------------------------------------------------------
+// HENCHMEN: every villain keeps a crew in matching outfits. They loaf about the lair doing odd jobs,
+// pile in when their boss starts a fight, go down after a few hits, and scarper when the boss is beaten.
+// ---------------------------------------------------------------------
+const HENCH_DEFS = {
+  COLDSNAP: { name: 'FROSTBITE', crew: 'FROSTBITES', n: 5, color: 0xd8f0ff, css: '#d8f0ff', attack: 'throw', hat: 'bobble',
+    look: { shirt: 0x6ab0e8, pants: 0xe8f4ff, hairStyle: 'short' },
+    lines: ['SNOWBALL FIGHT!', 'FOR THE BOSS!', 'BRRR, GET HIM!', 'COLD SHOULDER, INCOMING'], hurt: ['MY TOES!', 'NOT THE FACE!', 'OOF!'], flee: 'THE BOSS IS MELTING! RUN!', clap: '...WHY ARE WE CLAPPING?',
+    jobs: ['SHOVELLING SNOW', 'ICING THE BENCHES', 'PAINTING ICICLES'] },
+  SLAGHEAP: { name: 'CINDER', crew: 'CINDERS', n: 4, color: 0xff9a3a, css: '#ff9a3a', attack: 'punch', hat: 'hardhat',
+    look: { shirt: 0x3a2a24, pants: 0x2a2220, hairStyle: 'buzz' },
+    lines: ['HOT HANDS COMING THROUGH', 'STAND STILL, SHINY', 'BOSS SAYS HIT YOU', 'FOR SLAGHEAP!'], hurt: ['OW, HOT!', 'MY HARD HAT!', 'OOF!'], flee: 'BOSS IS DOWN! LEG IT!', clap: 'NICE POSE. I HATE IT.',
+    jobs: ['STOKING THE FIRE', 'CARRYING ROCKS', 'ON A TEA BREAK'] },
+  HEXWIRE: { name: 'GLITCH', crew: 'GLITCHES', n: 5, color: 0xd09aff, css: '#d09aff', attack: 'zap', hat: 'visor',
+    look: { shirt: 0x5a2a8a, pants: 0x2a2a3a, hairStyle: 'bob' },
+    lines: ['RUNNING HERO.EXE... DELETE', 'ZAP ZAP!', 'TURN IT OFF AND ON AGAIN', 'FOR THE QUEEN!'], hurt: ['ERROR!', 'CTRL-ALT-OW!', 'OOF!'], flee: 'QUEEN OFFLINE! LOG OUT!', clap: 'APPLAUSE.WAV PLAYING...',
+    jobs: ['SKIMMING CASHPOINTS', 'TYPING VERY FAST', 'UNPLUGGING THINGS'] },
+  'THE UNDERTOW': { name: 'BILGE RAT', crew: 'BILGE RATS', n: 5, color: 0xf0d030, css: '#f0d030', attack: 'splash', hat: 'souwester',
+    look: { shirt: 0xf0d030, pants: 0x1a3a4a, hairStyle: 'long' },
+    lines: ['MAN THE BUCKETS!', 'YOU SMELL OF SOAP', 'SWAB HIM!', 'FOR THE UNDERTOW!'], hurt: ['GLUG!', 'ME KNEES!', 'OOF!'], flee: 'ABANDON SHIP! THE BOSS IS SUNK!', clap: 'CLAP... CLAP... ARR.',
+    jobs: ['BAILING WATER', 'MOPPING UP', 'TYING KNOTS'] },
+};
+const henchmen = [];
+function spawnHench(V, k) {
+  const HD = HENCH_DEFS[V.def.name]; if (!HD) return;
+  const p = buildPerson(Object.assign({ skin: mpick(SKINS), hair: mpick(HAIRS) }, HD.look));
+  const g = p.group; scene.add(g);
+  const part = (w, h, d, x, y, z, col, parent) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color: col })); m.position.set(x, y, z); parent.add(m); return m; };
+  if (HD.hat === 'bobble') { part(0.42, 0.16, 0.42, 0, 0.24, 0, 0xffffff, p.head); part(0.14, 0.14, 0.14, 0, 0.38, 0, 0x6ab0e8, p.head); }
+  else if (HD.hat === 'hardhat') { part(0.44, 0.14, 0.44, 0, 0.24, 0, 0xff8a1a, p.head); part(0.5, 0.03, 0.5, 0, 0.18, 0.02, 0xff8a1a, p.head); }
+  else if (HD.hat === 'visor') part(0.42, 0.09, 0.08, 0, 0.04, 0.2, 0x1a1a1a, p.head);
+  else { part(0.46, 0.12, 0.46, 0, 0.24, 0, 0xf0d030, p.head); part(0.56, 0.03, 0.62, 0, 0.17, -0.04, 0xf0d030, p.head); }
+  part(0.5, 0.18, 0.02, 0, 1.25, 0.16, V.def.color, g); // the boss's colour on their chest
+  const a = (k / HD.n) * Math.PI * 2;
+  const H = { hench: true, boss: V, k, def: { name: HD.name, scale: 1, hp: 24, speed: 5.6 + Math.random(), color: HD.color, css: HD.css, hurt: HD.hurt }, HD, p, g,
+    x: V.lair.x + Math.sin(a) * 7, z: V.lair.z + Math.cos(a) * 7, y: 0, hp: 24, state: 'lair', face: a, atkT: mr(0.5, 2), vx: 0, vz: 0, phase: Math.random() * 9, flashT: 0, downT: 0, hurtLineT: 0, clapT: 0, sayT: mr(3, 9), job: mpick(HD.jobs), strafe: Math.random() < 0.5 ? -1 : 1 };
+  H.y = floorAt(H.x, H.z, 0.5);
+  henchmen.push(H); return H;
+}
+function resetHench(H) {
+  const a = (H.k / H.HD.n) * Math.PI * 2;
+  H.state = 'lair'; H.hp = H.def.hp; H.downT = 0; H.clapT = 0; H.g.visible = true; H.g.rotation.set(0, 0, 0);
+  H.x = H.boss.lair.x + Math.sin(a) * 7; H.z = H.boss.lair.z + Math.cos(a) * 7; H.y = floorAt(H.x, H.z, 0.5);
+}
+function henchHit(H, dmg, C, kx, kz) {
+  if (H.state === 'down' || H.state === 'gone') return;
+  if (H.state === 'lair') villainEngage(H.boss, C); // poke the crew and the boss comes too
+  H.hp -= dmg; H.flashT = 0.12; H.vx += kx; H.vz += kz;
+  H.hurtLineT -= dmg; if (H.hurtLineT <= 0) { H.hurtLineT = 12; C.sayAt(H, mpick(H.HD.hurt)); }
+  if (H.hp <= 0) {
+    H.state = 'down'; H.downT = 0; H.hp = 0; sfx.thud(); C.shake(0.1);
+    for (let i = 0; i < 8; i++) emitPuff(H.x, H.y + 1, H.z, { life: 0.8, vx: mr(-3, 3), vy: mr(1, 4), vz: mr(-3, 3), size0: 0.3, size1: 1.2, alpha: 0.6, color: H.def.color });
+    const left = henchmen.filter((o) => o.boss === H.boss && (o.state === 'fight' || o.state === 'lair')).length;
+    C.showMsg(left ? `${H.def.name} DOWN · ${left} ${H.HD.crew} LEFT` : `ALL THE ${H.HD.crew} ARE DOWN`, 1.4);
+    if (C.onHenchDown) C.onHenchDown(H);
+  }
+}
+// the hero strikes a pose: henchmen can't help themselves either
+function henchClap(x, z, C) {
+  let n = 0;
+  for (const H of henchmen) if ((H.state === 'fight' || H.state === 'lair') && Math.hypot(H.x - x, H.z - z) < 32) { H.clapT = mr(2, 3); n++; if (n === 1) C.sayAt(H, H.HD.clap); }
+  return n;
+}
+const henchmenNear = (x, z, r) => henchmen.filter((H) => (H.state === 'fight' || H.state === 'lair') && Math.hypot(H.x - x, H.z - z) < r);
+function henchFire(H, C) {
+  const P = C.player, ex = P.x - H.x, ez = P.z - H.z, d = Math.hypot(ex, ez) || 1;
+  const kind = H.HD.attack;
+  if (kind === 'throw' || kind === 'splash') { // a lobbed snowball or bucket of bilge water
+    const T = clamp(d / 14, 0.5, 1.2), tx = P.x + P.vx * T * 0.6, tz = P.z + P.vz * T * 0.6;
+    const m = new THREE.Mesh(vProjGeo, new THREE.MeshBasicMaterial({ color: kind === 'throw' ? 0xf4fbff : 0x4a9ab0 })); m.scale.setScalar(kind === 'throw' ? 0.6 : 0.9);
+    m.position.set(H.x, H.y + 1.7, H.z); scene.add(m);
+    vProj.push({ m, V: H, vx: (tx - H.x) / T, vz: (tz - H.z) / T, vy: (P.y + 1 - (H.y + 1.7)) / T + 6 * T, life: 3, dmg: kind === 'throw' ? 2 : 3, grav: 12, aoe: kind === 'splash' ? 2.2 : 0, small: true });
+    sfx.swoosh();
+  } else if (d < 2.2 && Math.abs(P.y - H.y) < 1.8) { // a punch or a little zap, up close
+    C.hurt(kind === 'zap' ? 3 : 4, H, kind === 'zap' ? 3 : 5);
+    if (kind === 'zap') { sfx.vzap(); for (let i = 0; i < 5; i++) emitPuff(P.x, P.y + 1.2, P.z, { life: 0.4, vx: mr(-3, 3), vy: mr(0, 3), vz: mr(-3, 3), size0: 0.2, size1: 0.7, alpha: 0.9, color: H.def.color }); }
+    else sfx.thud();
+  }
+}
+function updateHench(H, dt, C) {
+  const P = C.player, V = H.boss;
+  H.phase += dt;
+  if (H.state === 'gone') { H.g.visible = false; return; }
+  if (H.state === 'down') {
+    H.downT += dt; H.g.rotation.x = Math.min(1.45, H.downT * 3); H.g.position.set(H.x, H.y, H.z); setMood(H.p, 'scared');
+    if (H.downT > 10) { H.state = 'gone'; H.g.visible = false; }
+    return;
+  }
+  const dx = P.x - H.x, dz = P.z - H.z, d = Math.hypot(dx, dz);
+  const near = d < 400; H.g.visible = near; if (!near && H.state !== 'flee') return;
+  // follow the boss's lead
+  if (H.state === 'lair' && V.state === 'fight') { H.state = 'fight'; H.atkT = mr(0.6, 2); if (Math.random() < 0.5) C.sayAt(H, mpick(H.HD.lines)); }
+  if (H.state === 'fight' && V.state === 'lair') H.state = 'lair';
+  if ((H.state === 'fight' || H.state === 'lair') && (V.state === 'down' || V.state === 'gone')) { H.state = 'flee'; H.downT = 0; if (H.k === 0) C.sayAt(H, H.HD.flee); }
+  let tvx = 0, tvz = 0, spd = H.def.speed;
+  H.clapT -= dt;
+  if (H.clapT > 0) { // caught up in the applause
+    setMood(H.p, 'happy'); H.face += angDiff(H.face, Math.atan2(dx, dz)) * Math.min(1, dt * 6);
+    const c = Math.sin(H.phase * 18) * 0.35; H.p.armL.rotation.set(-1.3, 0, 0.5 + c); H.p.armR.rotation.set(-1.3, 0, -0.5 - c);
+  } else if (H.state === 'lair') { // odd jobs round the lair
+    setMood(H.p, 'neutral');
+    const a = (H.k / H.HD.n) * Math.PI * 2 + Math.sin(H.phase * 0.2) * 0.6, r = 6 + Math.sin(H.phase * 0.33 + H.k) * 3;
+    const lx = V.x + Math.sin(a) * r, lz = V.z + Math.cos(a) * r;
+    tvx = clamp((lx - H.x) * 0.6, -2, 2); tvz = clamp((lz - H.z) * 0.6, -2, 2);
+    H.face += angDiff(H.face, Math.atan2(tvx || 0.001, tvz)) * Math.min(1, dt * 3);
+    H.sayT -= dt; if (H.sayT <= 0) { H.sayT = mr(10, 22); if (d < 60) C.sayAt(H, H.job); }
+  } else if (H.state === 'fight') {
+    setMood(H.p, 'angry');
+    const ranged = H.HD.attack === 'throw' || H.HD.attack === 'splash';
+    const want = ranged ? (d > 14 ? 1 : d < 7 ? -1 : 0) : (d > 1.4 ? 1 : 0), px = -dz / (d || 1), pz = dx / (d || 1);
+    if (Math.random() < dt * 0.4) H.strafe *= -1;
+    const st = ranged || d < 4 ? 0.45 : 0.15;
+    tvx = (dx / (d || 1)) * want * spd + px * H.strafe * spd * st; tvz = (dz / (d || 1)) * want * spd + pz * H.strafe * spd * st;
+    H.face += angDiff(H.face, Math.atan2(dx, dz)) * Math.min(1, dt * 8);
+    H.atkT -= dt;
+    if (H.atkT <= 0 && (ranged ? d < 26 : d < 2.2)) { H.atkT = ranged ? mr(2, 3.4) : mr(1.3, 2.1); henchFire(H, C); }
+    H.sayT -= dt; if (H.sayT <= 0) { H.sayT = mr(6, 14); C.sayAt(H, P.y - H.y > 4 ? 'COME DOWN AND FIGHT FAIR!' : mpick(H.HD.lines)); }
+    if (d > 160) H.state = 'lair';
+  } else if (H.state === 'flee') { // scarper, then vanish
+    setMood(H.p, 'scared'); H.downT += dt;
+    tvx = (-dx / (d || 1)) * spd * 1.2; tvz = (-dz / (d || 1)) * spd * 1.2;
+    H.face += angDiff(H.face, Math.atan2(tvx, tvz)) * Math.min(1, dt * 8);
+    if (H.downT > 8) { H.state = 'gone'; H.g.visible = false; return; }
+  }
+  H.vx = lerp(H.vx, tvx, Math.min(1, dt * 4)); H.vz = lerp(H.vz, tvz, Math.min(1, dt * 4));
+  const ox = H.x, oz = H.z; H.x += H.vx * dt; H.z += H.vz * dt;
+  moveBody(H, ox, oz, 0.35, H.y, 1.8);
+  H.y = lerp(H.y, floorAt(H.x, H.z, H.y + 1), Math.min(1, dt * 10));
+  if (H.clapT <= 0) {
+    const sp = Math.hypot(H.vx, H.vz), sw = Math.sin(H.phase * 9) * Math.min(1, sp / 3) * 0.8, p = H.p;
+    p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
+    const swing = H.state === 'fight' && H.atkT > (H.HD.attack === 'throw' || H.HD.attack === 'splash' ? 1.7 : 1.0);
+    p.armL.rotation.set(-sw * 0.7, 0, 0); p.armR.rotation.set(swing ? -2.4 : sw * 0.7, 0, 0);
+  }
+  H.flashT -= dt;
+  H.g.position.set(H.x, H.y, H.z); H.g.rotation.y = H.face;
+}
+
 // one villain per town, plus one who roams the countryside
 function resetVillains(C) {
   for (const V of villains) scene.remove(V.g); villains.length = 0;
+  for (const H of henchmen) scene.remove(H.g); henchmen.length = 0;
   for (const P of vProj) scene.remove(P.m); vProj.length = 0; for (const R of vRings) scene.remove(R.m); vRings.length = 0; for (const B of vBeams) scene.remove(B.m); vBeams.length = 0;
   if (!C.G.super) return;
   const spots = CITIES.map((c) => randomOpenPoint(c.cx, c.cz, 90, 150, 60)); // never right where you start
   spots.push(randomOpenPoint(350, 350, 0, 80, 40));
-  VILLAIN_DEFS.forEach((def, i) => { const s = spots[i] || spots[0]; if (s) spawnVillain(def, s); });
+  VILLAIN_DEFS.forEach((def, i) => { const s = spots[i] || spots[0]; if (s) { const V = spawnVillain(def, s); for (let k = 0; k < (HENCH_DEFS[def.name]?.n || 0); k++) spawnHench(V, k); } });
 }
 function villainMapMarks() { return villains.filter((V) => V.state !== 'gone').map((V) => ({ x: V.x, z: V.z, color: V.def.css, name: V.def.name, villain: true, fighting: V.state === 'fight' })); }
 
@@ -4875,18 +5376,19 @@ function villainFire(V, C, kind) {
 }
 // the player hits a villain: lasers, swats, slams and flying cars
 function villainHit(V, dmg, C, kx = 0, kz = 0) {
+  if (V.hench) { henchHit(V, dmg, C, kx, kz); return; }
   if (V.state === 'down' || V.state === 'gone') return;
   if (V.state === 'lair') villainEngage(V, C);
   V.hp -= dmg; V.flashT = 0.12; V.vx += kx; V.vz += kz;
   V.hurtLineT -= dmg; if (V.hurtLineT <= 0) { V.hurtLineT = 30; C.sayAt(V, mpick(V.def.hurt)); }
   if (V.hp <= 0) villainBeaten(V, C);
 }
-function villainsNear(x, y, z, r) { return villains.filter((V) => (V.state === 'fight' || V.state === 'lair') && Math.hypot(V.x - x, V.z - z) < r + V.def.scale * 0.5 && y > V.y - 2 && y < V.y + 2 * V.def.scale + 2); }
+function villainsNear(x, y, z, r) { return [...villains, ...henchmen].filter((V) => (V.state === 'fight' || V.state === 'lair') && Math.hypot(V.x - x, V.z - z) < r + V.def.scale * 0.5 && y > V.y - 2 && y < V.y + 2 * V.def.scale + 2); }
 // first villain hit by a ray from o along unit d (for laser eyes)
 function villainRay(o, d, maxT) {
   let best = null, bt = maxT;
-  for (const V of villains) {
-    if (V.state === 'down' || V.state === 'gone') continue;
+  for (const V of villains.concat(henchmen)) {
+    if (V.state === 'down' || V.state === 'gone' || V.state === 'flee') continue;
     const cx = V.x, cy = V.y + V.def.scale, cz = V.z, r = V.def.scale * 0.65;
     const ox = o.x - cx, oy = o.y - cy, oz = o.z - cz, b = ox * d.x + oy * d.y + oz * d.z, c = ox * ox + oy * oy + oz * oz - r * r, disc = b * b - c;
     if (disc < 0) continue; const t = -b - Math.sqrt(disc);
@@ -4897,7 +5399,8 @@ function villainRay(o, d, maxT) {
 function villainEngage(V, C) {
   if (V.state === 'fight') return;
   V.state = 'fight'; V.atkT = 1.5; C.G.villainFight = V; sfx.sting();
-  C.showBanner(`<small>SUPER VILLAIN</small>${V.def.name}`, 2.5); C.sayAt(V, mpick(V.def.taunts));
+  const crew = HENCH_DEFS[V.def.name], nCrew = henchmen.filter((H) => H.boss === V && H.state === 'lair').length;
+  C.showBanner(`<small>SUPER VILLAIN</small>${V.def.name}${crew && nCrew ? `<small>AND ${nCrew} ${crew.crew}</small>` : ''}`, 2.5); C.sayAt(V, mpick(V.def.taunts));
   for (const h of C.G.hunters) if (!h.dead && Math.hypot(h.x - V.x, h.z - V.z) < 50) h.panicT = mr(6, 10);
 }
 function villainBeaten(V, C) {
@@ -4913,7 +5416,7 @@ function updateVillains(dt, C) {
   for (const V of villains) {
     const dx = P.x - V.x, dz = P.z - V.z, d = Math.hypot(dx, dz), dy = P.y - V.y;
     V.phase += dt;
-    if (V.state === 'gone') { V.downT += dt; if (V.downT > 180) { V.state = 'lair'; V.hp = V.def.hp; V.x = V.lair.x; V.z = V.lair.z; V.y = floorAt(V.x, V.z, 0.5); V.g.visible = true; } continue; }
+    if (V.state === 'gone') { V.downT += dt; if (V.downT > 180) { V.state = 'lair'; V.hp = V.def.hp; V.x = V.lair.x; V.z = V.lair.z; V.y = floorAt(V.x, V.z, 0.5); V.g.visible = true; for (const H of henchmen) if (H.boss === V) resetHench(H); } continue; }
     if (V.state === 'down') { // slumped, then carted off
       V.downT += dt; V.g.rotation.x = Math.min(1.4, V.downT * 2); V.g.position.set(V.x, V.y, V.z);
       setMood(V.p, 'scared');
@@ -4955,6 +5458,7 @@ function updateVillains(dt, C) {
     const cp = V_capes.get(V.g); if (cp) cp.rotation.x = 0.12 + Math.min(0.9, sp * 0.12) + Math.sin(V.phase * 7) * 0.05;
     V.g.position.set(V.x, V.y + (V.def.name === 'HEXWIRE' ? 0.4 + Math.sin(V.phase * 2) * 0.2 : 0), V.z); V.g.rotation.y = V.face;
   }
+  for (const H of henchmen) updateHench(H, dt, C);
   // shards and boulders
   for (let i = vProj.length - 1; i >= 0; i--) {
     const Q = vProj[i]; Q.life -= dt; Q.vy -= Q.grav * dt;
@@ -6238,6 +6742,7 @@ function mhRivalCaughtByYou(r, ctx) {
 
 
 
+
 const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
 
 generateWorld();
@@ -6490,7 +6995,7 @@ class Hunter {
       }
       const ex0 = tx - this.x, ez0 = tz - this.z;
       if (this.y > 1 || this.y < -1) { /* on a roof or underground: straight at it */ }
-      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && los(this.x, this.z, tx, tz))) { tx = n.x; tz = n.z; } }
+      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && (los(this.x, this.z, tx, tz)))) { tx = n.x; tz = n.z; } }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
       const spd = T.speed * dayMult() * this.spdMul * spdK;
       if (this.noticeT > 0) { this.noticeT -= dt; tvx = 0; tvz = 0; }
@@ -6526,6 +7031,7 @@ class Hunter {
           if (this.begT <= 0) { this.begT = mr(2.5, 5); const line = mpick(BEG_LINES); say(this, line); if (line === 'TAKE MY WALLET!') maybeDropCash(this); if (Math.random() < 0.4) sfx.scream(); }
         }
       }
+      if ((this.cowerT > 0 || this.panicT > 0) && (this.act || this.inside)) lifeInterrupt(this); // scared: drop whatever they were doing, right now
       if (this.cowerT > 0) { this.waitT = 0; this.face += angDiff(this.face, Math.atan2(dx, dz)) * Math.min(1, dt * 6); }
       else if (this.panicT > 0) { // run for it, arms flailing
         this.panicT -= dt;
@@ -6546,7 +7052,7 @@ class Hunter {
       if (!this.wt) this.wt = { x: this.x, z: this.z };
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
-      if (!los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
+      if (!(lifeMode === 'walk' && this.act && this.act.straight) && !los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } } // a checked-clear route leg indoors walks straight: the coarse grid can't see the gaps between shelves
       if (!(this.panicT > 0) && !(this.cowerT > 0)) {
       const w = this.waitT > 0 || lifeMode === 'hold' ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1) * (this.walkK || 1);
       tvx = ox * w; tvz = oz * w;
@@ -7382,6 +7888,8 @@ const HC = {
   dropCash: (h) => maybeDropCash(h), shake: (k) => { G.shake = Math.max(G.shake, k); },
   spawnAt: (x, z, type, o = {}) => { const p = randomOpenPoint(x, z, 0, 6, 10); if (!p) return null; const h = new Hunter(p.x, p.z, type, false); Object.assign(h, o); G.hunters.push(h); return h; },
   hurt: (dmg, V, knock = 4) => villainHurtPlayer(dmg, V, knock),
+  onHenchDown: () => heroFun(0.08, HC, true),
+  onPose: () => henchClap(player.x, player.z, HC),
   onBeaten: (V) => { HERO.saves++; HERO.approval = 99; heroFun(1, HC, true); G.villainsBeaten = (G.villainsBeaten || 0) + 1; },
 };
 // villains can actually hurt the hero (nothing else in town can)
@@ -7391,6 +7899,7 @@ function villainHurtPlayer(dmg, V, knock) {
   if (!player.car) { const dx = player.x - V.x, dz = player.z - V.z, d = Math.hypot(dx, dz) || 1; player.kx += (dx / d) * knock; player.kz += (dz / d) * knock; }
   if (player.hp > 0) return;
   // the unthinkable: the hero goes down. Nobody saw anything.
+  if (V.hench) V = V.boss; // knocked out by the crew: the boss takes the credit
   player.hp = 100; G.villainFight = null; V.state = 'lair'; V.hp = V.def.hp;
   const p = randomOpenPoint(player.x, player.z, 70, 120, 30) || { x: 0, z: 0 };
   player.x = p.x; player.z = p.z; player.y = floorAt(p.x, p.z, 1); player.flying = false; player.vx = player.vz = player.vy = 0;
@@ -8015,6 +8524,7 @@ applyTouchMode();
   btn('btn-reload', startReload);
   btn('btn-pause', pauseGame);
   btn('btn-map', () => (G.bigMap = !G.bigMap));
+  btn('btn-pose', () => { if (G.super && G.mode === 'playing') heroPoseCmd(HC); });
 }
 
 // =====================================================================
@@ -8024,7 +8534,7 @@ const hud = {
   city: $('hud-city'), day: $('hud-day'), clock: $('hud-clock'), stars: $('hud-stars'), pname: $('hud-pname'), heat: $('hud-heatfill'), air: $('hud-air'), wx: $('hud-wx'),
   time: $('hud-time'), kills: $('hud-kills'), alert: $('hud-alert'), msg: $('hud-msg'), banner: $('hud-banner'),
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
-  carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
+  pose: $('btn-pose'), carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
 };
 function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
 let bannerT = 0;
@@ -8140,6 +8650,7 @@ function drawMapTarget(T, tp, range, yaw, W, big, sc) {
 
 let hudT = 0;
 function updateHUD(dt) {
+  if (G.super) hud.pose.classList.toggle('cooling', HERO.poseCd > 0);
   hudT -= dt;
   if (G.msgT > 0) { G.msgT -= dt; if (G.msgT <= 0) hud.msg.classList.remove('show'); }
   if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) hud.banner.classList.remove('show'); }
@@ -8316,6 +8827,7 @@ function startGame(sup = G.super) {
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
   updateSlots();
+  $('btn-pose').classList.toggle('hidden', !G.super); // strike a pose by touch, same as G on a keyboard
   player.flying = false; player.slamming = false;
   G.mode = 'playing';
   for (const id of ['menu', 'over', 'pause']) $(id).classList.add('hidden');
@@ -8847,7 +9359,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>

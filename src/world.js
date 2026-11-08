@@ -716,7 +716,7 @@ function citySkeleton(city, canalRow = -1) {
 // Perimeter blocks: a ring of attached buildings of different widths, heights and styles around a
 // courtyard, with alleys cutting through. Some ground floors are walk-in shops (lotHooks.walkIn).
 // ---------------------------------------------------------------------
-export const lotHooks = { walkIn: null, courtyard: null, house: null };
+export const lotHooks = { walkIn: null, courtyard: null, house: null, warehouse: null };
 export const courtyards = []; // {x0,x1,z0,z1,city} open yards inside blocks
 export function perimeterBlock(I, P) {
   const { ix0, ix1, iz0, iz1 } = I;
@@ -1120,6 +1120,8 @@ function genIndustrial(city) {
       const parts = split ? [[ix0, ix1, iz0, (iz0 + iz1) / 2 - 2], [ix0, ix1, (iz0 + iz1) / 2 + 2, iz1]] : [[ix0, ix1, iz0, iz1]];
       for (const [x0, x1, z0, z1] of parts) {
         const h = Math.round(sr(8, 14));
+        // most warehouses are hollow sheds you can walk into (docks.js); the rest stay solid
+        if (lotHooks.warehouse && srand() < 0.85 && lotHooks.warehouse({ x0, x1, z0, z1 }, h, tint, st(x0, x1, z0, z1), curCity)) continue;
         facadeBox('metal', x0, x1, 0, h, z0, z1, tint);
         propBuf.prism(x0, x1, z0, z1, h, 2, 0x6a6a70, true);
         addRoof(x0, x1, z0, z1, h + 1, { city: curCity, shed: true });

@@ -3,8 +3,9 @@
 // the carts, street sweepers, buskers, couriers, joggers, tourists with cameras and dog walkers.
 import * as THREE from '../vendor/three.module.min.js';
 import { mr, mpick, angDiff, lerp, scene } from './core.js';
-import { blockedAt, floorAt } from './world.js';
+import { blockedAt, floorAt, pointBlocked } from './world.js';
 import { lifeSpots, walkIns } from './streets.js';
+import { warehouses } from './docks.js';
 import { lam } from './people.js';
 import { emitPuff } from './fx.js';
 
@@ -102,7 +103,7 @@ function updateLifeDogs(dt, C) {
     if (D.barkT <= 0) { D.barkT = mr(8, 25); if (!O.dead && C.near(D.x, D.z, 25)) C.say(O, mpick(['WOOF!', 'WOOF WOOF!', 'ARF!'])); }
   }
 }
-export function clearCityLife() { for (const D of lifeDogs) scene.remove(D.g); lifeDogs.length = 0; for (const s of lifeSpots) s.taken = null; lifeVendorCarts.clear(); }
+export function clearCityLife() { for (const D of lifeDogs) scene.remove(D.g); lifeDogs.length = 0; for (const s of lifeSpots) s.taken = null; lifeVendorCarts.clear(); for (const W of walkIns) W.busy = 0; for (const Wh of warehouses) for (const q of Wh.spots) q.taken = null; }
 
 // ---------------------------------------------------------------------
 // jobs and activities
@@ -143,6 +144,78 @@ function lifeBegin(h, kind, tx, tz, face, dur, extra) {
   h.act = Object.assign({ kind, tx, tz, face, dur, phase: 'go', t: 0, goT: 0, lineT: mr(0.5, 3) }, extra);
   return true;
 }
+// ---------------------------------------------------------------------
+// daily routines: what people want to do depends on the hour. Coffee and work in the morning, lunch
+// at noon, shopping in the afternoon, food and drinks in the evening, home at night. They walk in
+// through the door and do it inside where you can see them (except at home: curtains drawn).
+// ---------------------------------------------------------------------
+const VISIT_OF = { cafe: 'eat', diner: 'eat', pizza: 'eat', bar: 'drink', mart: 'browse', pharmacy: 'browse', books: 'browse', clothes: 'browse', florist: 'browse', laundry: 'wait', barber: 'wait', arcade: 'play', home: 'home' };
+const VISIT_LINES = {
+  eat: ['MMM!', 'BEST COFFEE IN TOWN', 'IS THIS DECAF?', 'COMPLIMENTS TO THE CHEF', 'TOO HOT! TOO HOT!'],
+  drink: ['CHEERS!', 'ONE MORE, THEN HOME', 'MY ROUND', 'TO FRIDAY!', 'WHO ORDERED THIS?'],
+  browse: ['DO YOU HAVE THIS IN BLUE?', 'JUST LOOKING', 'HOW MUCH?!', 'ON SALE? NICE', 'WHERE ARE THE BATTERIES?'],
+  wait: ['HOW MUCH LONGER?', 'JUST A TRIM, PLEASE', '...', 'IS IT ALWAYS THIS SLOW?'],
+  play: ['HIGH SCORE!', 'COME ON, COME ON!', 'ONE MORE GO', 'THIS MACHINE CHEATS'],
+  work: ['LIFT WITH THE KNEES', 'WHO MOVED MY PALLET?', 'NEARLY HOME TIME', 'BREAK TIME YET?', 'SIGN HERE, PLEASE', 'FORKLIFT COMING THROUGH'],
+};
+// how much each kind of outing appeals at a given hour
+export function routineWants(hr) {
+  if (hr < 6) return { home: 0.8, drink: hr < 2 ? 0.2 : 0 };
+  if (hr < 9) return { eat: 0.35, work: 0.35, browse: 0.05, home: 0.05 };
+  if (hr < 12) return { browse: 0.35, work: 0.3, wait: 0.15, play: 0.1, eat: 0.1 };
+  if (hr < 14.5) return { eat: 0.6, browse: 0.2, work: 0.15, drink: 0.05 };
+  if (hr < 17.5) return { browse: 0.3, work: 0.3, play: 0.15, wait: 0.1, eat: 0.1 };
+  if (hr < 21) return { eat: 0.3, drink: 0.35, home: 0.25, play: 0.1 };
+  return { drink: 0.45, home: 0.45, eat: 0.1 };
+}
+function pickWant(w) { let t = 0; for (const k in w) t += w[k]; let r = Math.random() * t; for (const k in w) { r -= w[k]; if (r <= 0) return k; } return null; }
+// a straight walk with nothing solid in the way
+function lifeSegClear(ax, az, bx, bz) {
+  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / 0.35));
+  for (let i = 0; i <= n; i++) { const t = i / n; if (pointBlocked(ax + (bx - ax) * t, az + (bz - az) * t, 0.42)) return false; }
+  return true;
+}
+// somewhere to stand inside a walk-in that you can walk to straight from the door
+function insidePoint(W) {
+  const r = W.rect, [ex, ez] = W.path[W.path.length - 1];
+  for (let t = 0; t < 14; t++) {
+    const x = r.x0 + 1 + Math.random() * (r.x1 - r.x0 - 2), z = r.z0 + 1 + Math.random() * (r.z1 - r.z0 - 2);
+    if (pointBlocked(x, z, 0.45) || Math.hypot(x - ex, z - ez) < 1.2) continue;
+    if (lifeSegClear(ex, ez, x, z)) return { x, z };
+  }
+  return null;
+}
+export function routineVisit(h, want, C) {
+  const hr = C.hour;
+  if (want === 'work') { // a shift at a docks warehouse
+    let best = null, bd = 160;
+    for (const Wh of warehouses) { const d = Math.abs(Wh.rect.x0 + Wh.rect.x1 - 2 * h.x) / 2 + Math.abs(Wh.rect.z0 + Wh.rect.z1 - 2 * h.z) / 2; if (d < bd) { bd = d; best = Wh; } }
+    if (!best) return false;
+    let door = best.doors[0]; for (const o of best.doors) if (Math.hypot(o.ox - h.x, o.oz - h.z) < Math.hypot(door.ox - h.x, door.oz - h.z)) door = o;
+    const spots = best.spots.filter((q) => q.y < 1 && !q.taken);
+    for (let t = 0; t < 8 && spots.length; t++) {
+      const q = spots[Math.floor(Math.random() * spots.length)];
+      if (!lifeSegClear(door.x, door.z, q.ex, q.ez) || !lifeSegClear(q.ex, q.ez, q.x, q.z)) continue;
+      q.taken = h;
+      return lifeBegin(h, 'work', q.x, q.z, null, mr(40, 120), { route: [[door.ox, door.oz], [door.x, door.z], [q.ex, q.ez], [q.x, q.z]], ri: 0, wh: best, wspot: q, look: Math.atan2(q.x - q.ex, q.z - q.ez) });
+    }
+    return false;
+  }
+  let best = null, bd = want === 'home' ? 120 : 80;
+  for (const W of walkIns) {
+    if (VISIT_OF[W.kind] !== want || (W.busy || 0) >= (want === 'home' ? 2 : 4)) continue;
+    const d = Math.abs(W.x - h.x) + Math.abs(W.z - h.z); if (d < bd && d > 3) { bd = d; best = W; }
+  }
+  if (!best) return false;
+  const route = best.path.map(([x, z]) => [x, z]);
+  let face = null;
+  if (want !== 'home') { const q = insidePoint(best); if (!q) return false; route.push([q.x, q.z]); face = Math.atan2(best.keeper.x - q.x, best.keeper.z - q.z); }
+  const [tx, tz] = route[route.length - 1];
+  const dur = want === 'home' ? (hr > 20 || hr < 6 ? mr(120, 300) : mr(30, 80)) : want === 'drink' ? mr(30, 70) : want === 'eat' ? mr(20, 45) : mr(12, 30);
+  best.busy = (best.busy || 0) + 1;
+  return lifeBegin(h, want, tx, tz, face, dur, { route, ri: 0, W: best, visit: true });
+}
+
 // someone has finished what they were doing: what next?
 export function lifeStart(h, C) {
   if (h.act || h.state === 'chase' || h.huntT > 0 || Math.abs(h.y) > 1 || h.contract || h.rival || h.guard) return false;
@@ -154,6 +227,10 @@ export function lifeStart(h, C) {
   if (J === 'sweeper' && Math.random() < 0.5) return lifeBegin(h, 'sweep', h.x, h.z, h.face + mr(-1, 1), mr(4, 9));
   if (J === 'dogwalker' && Math.random() < 0.4) return lifeBegin(h, 'sniff', h.x, h.z, h.face, mr(3, 7));
   if (J === 'jogger') return Math.random() < 0.15 ? lifeBegin(h, 'stretch', h.x, h.z, h.face, mr(4, 8)) : false;
+  if (!J || J === 'tourist' || J === 'courier') { // everyday routines by the hour
+    const late = hr >= 21 || hr < 6, p = late ? 0.6 : 0.4;
+    if (Math.random() < p) { const want = pickWant(routineWants(hr)); if (want && routineVisit(h, want, C)) return true; }
+  }
   const r = Math.random() * (night ? 2.5 : 1);
   const lunch = hr > 11 && hr < 14.5, commute = (hr > 7 && hr < 9.5) || (hr > 16.5 && hr < 19);
   if (r < (commute ? 0.3 : 0.12)) { const s = nearestLifeSpot(h, 'bus', 60); if (s) { s.taken = h; return lifeBegin(h, 'bus', s.x, s.z, s.face, mr(15, 40), { spot: s }); } }
@@ -191,6 +268,10 @@ export function endLife(h) {
   if (A.spot && A.spot.taken === h) A.spot.taken = null;
   if (A.cart) A.cart.queue = Math.max(0, (A.cart.queue || 1) - 1);
   if (A.kind === 'errand' && h.inside) { h.inside = false; h.g.visible = true; }
+  if (A.W && A.visit) A.W.busy = Math.max(0, (A.W.busy || 1) - 1);
+  if (A.wspot && A.wspot.taken === h) A.wspot.taken = null;
+  if (h.inside && (A.kind === 'home')) { h.inside = false; h.g.visible = true; }
+  if (h.cup) h.cup.visible = false; if (h.crate) h.crate.visible = false;
   if (h.phone) h.phone.visible = false;
   if (A.conv) { const o = A.conv.a === h ? A.conv.b : A.conv.a; if (o.act && o.act.conv === A.conv) { o.act.conv = null; o.act.dur = Math.min(o.act.dur, o.act.t + 0.5); } }
   h.wt = null; h.waitT = mr(0, 1);
@@ -199,6 +280,17 @@ export function endLife(h) {
 // each frame while someone has an activity: 'walk' (heading to h.wt), 'hold' (standing still), or null (done)
 export function lifeStep(h, dt, C) {
   const A = h.act;
+  if (A.route && (A.phase === 'go' || A.phase === 'out')) { // in through the door along a route, and back out the same way
+    A.goT += dt;
+    if (A.goT > 45) { endLife(h); return null; }
+    const [px, pz] = A.route[A.ri];
+    if (Math.hypot(px - h.x, pz - h.z) < 0.7) {
+      if (A.phase === 'go') { if (A.ri < A.route.length - 1) A.ri++; else { A.phase = 'do'; A.t = 0; if (A.kind === 'home') { h.inside = true; h.g.visible = false; } } }
+      else { if (A.ri > 0) A.ri--; else { endLife(h); return null; } }
+    }
+    A.straight = A.phase === 'go' ? A.ri > 0 : A.ri < A.route.length - 1; // past the front door: straight lines, already checked clear
+    if (A.phase !== 'do') { const [qx, qz] = A.route[A.ri]; if (!h.wt || h.wt.x !== qx || h.wt.z !== qz) h.wt = { x: qx, z: qz }; return 'walk'; }
+  }
   if (A.phase === 'go') {
     A.goT += dt;
     if (A.goT > 25) { endLife(h); return null; }
@@ -208,8 +300,15 @@ export function lifeStep(h, dt, C) {
   }
   A.t += dt;
   if (A.kind === 'chat' && !A.conv && A.t > A.dur) { endLife(h); return null; }
-  if (A.t > A.dur) { endLife(h); return null; }
-  const want = A.face ?? (A.W ? Math.atan2(A.W.x - h.x, A.W.z - h.z) : h.face);
+  if (A.t > A.dur) {
+    if (A.route) { // walk back out the way they came in
+      if (A.kind === 'home' && h.inside) { h.inside = false; h.g.visible = true; }
+      if (h.cup) h.cup.visible = false; if (h.crate) h.crate.visible = false;
+      A.phase = 'out'; A.goT = 0; A.ri = Math.max(0, A.route.length - 2); h.wt = null; return 'walk';
+    }
+    endLife(h); return null;
+  }
+  const want = A.face ?? A.look ?? (A.W ? Math.atan2(A.W.x - h.x, A.W.z - h.z) : h.face);
   h.face += angDiff(h.face, want) * Math.min(1, dt * 5);
   A.lineT -= dt;
   const heard = C.near(h.x, h.z, 30);
@@ -224,7 +323,7 @@ export function lifeStep(h, dt, C) {
     }
   } else if (A.lineT <= 0) {
     A.lineT = mr(5, 11);
-    const lines = A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
+    const lines = VISIT_LINES[A.kind] && A.kind !== 'home' ? VISIT_LINES[A.kind] : A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
     if (lines && heard && Math.random() < 0.6) C.say(h, mpick(lines));
   }
   if (A.kind === 'photo' && A.phase === 'do' && !A.flashed && A.t > 1.2) { A.flashed = true; const fx = Math.sin(h.face), fz = Math.cos(h.face); emitPuff(h.x + fx * 0.5, h.y + 1.6, h.z + fz * 0.5, { life: 0.15, size0: 0.5, size1: 1.2, alpha: 0.9, color: 0xffffff }); }
@@ -264,7 +363,20 @@ export function lifePose(h, dt, C) {
   else if (A.kind === 'stretch') { p.armL.rotation.x = p.armR.rotation.x = -3.0; p.legL.rotation.x = Math.sin(C.time * 2) * 0.5; }
   else if (A.kind === 'window') { p.armL.rotation.x = p.armR.rotation.x = 0.4; }
   else if (A.kind === 'sniff') p.armR.rotation.x = -0.6;
+  else if (A.kind === 'eat' || A.kind === 'drink') { // cup or plate in hand, up to the mouth now and then
+    if (!h.cup) h.cup = jobProp(p.armR, LIFE_PROPG.food, 0xf0f0f0);
+    h.cup.visible = true; h.cup.material.color.setHex(A.kind === 'drink' ? 0xd8a030 : 0xf0f0f0);
+    const sip = Math.sin(C.time * 1.3 + h.phase) > 0.75; p.armR.rotation.x = sip ? -2.3 : -0.9; p.armL.rotation.x = -0.2;
+  } else if (A.kind === 'browse') { p.armR.rotation.x = -1.2 + Math.sin(C.time * 1.7 + h.phase) * 0.25; p.armL.rotation.x = -0.4; h.face += Math.sin(C.time * 0.5 + h.phase) * dt * 0.6; }
+  else if (A.kind === 'wait') { p.armL.rotation.x = p.armR.rotation.x = -0.7; p.armL.rotation.z = -0.5; p.armR.rotation.z = 0.5; }
+  else if (A.kind === 'play') { p.armL.rotation.x = p.armR.rotation.x = -1.15 + Math.sin(C.time * 16 + h.phase) * 0.08; }
+  else if (A.kind === 'work') { // lugging boxes, or tapping at a clipboard
+    if (!h.crate) h.crate = jobProp(p.torso, LIFE_PROPG.parcel, 0xb89060, 0, -0.05, 0.42);
+    const lift = A.wspot && (A.wspot.what === 'pick' || A.wspot.what === 'stall' || A.wspot.what === 'unit' || A.wspot.what === 'hull');
+    h.crate.visible = lift && Math.sin(C.time * 0.6 + h.phase) > 0;
+    p.armL.rotation.x = p.armR.rotation.x = lift ? -1.25 + Math.sin(C.time * 2 + h.phase) * 0.15 : -1.0 + Math.sin(C.time * 9) * 0.06;
+  }
   else if (A.kind === 'deliver') { p.armL.rotation.x = p.armR.rotation.x = -1.25; }
 }
 export function updateCityLife(dt, C) { updateLifeDogs(dt, C); }
-export const cityLifeDebug = { dogs: lifeDogs, vendorCarts: lifeVendorCarts };
+export const cityLifeDebug = { dogs: lifeDogs, vendorCarts: lifeVendorCarts, routineWants, routineVisit };

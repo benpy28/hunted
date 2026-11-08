@@ -46,3 +46,24 @@ test('a phone gets touch controls straight away', async () => {
     assert.deepEqual(await state(g), { touchUi: true, bodyTouch: true });
   } finally { await g.close(); }
 });
+
+test('touch: a POSE button shows up in Superpower mode and strikes the hero pose', async () => {
+  const g = await openGame({ hasTouch: true, isMobile: true });
+  try {
+    await g.run((H) => { H.startGame(false); });
+    const cdp = await g.page.context().newCDPSession(g.page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 700, y: 300 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const hidden = () => g.run(() => document.getElementById('btn-pose').classList.contains('hidden'));
+    assert.equal(await hidden(), true, 'no pose button for a normal runner');
+    await g.run((H) => { H.startGame(true); });
+    assert.equal(await hidden(), false, 'the hero gets a pose button');
+    assert.equal(await g.run((H) => H.HERO.poseT), 0);
+    await g.page.tap('#btn-pose');
+    const s = await g.run((H) => ({ poseT: H.HERO.poseT, cd: H.HERO.poseCd }));
+    assert.ok(s.poseT > 0 && s.cd > 0, `tapping POSE poses (${JSON.stringify(s)})`);
+    await g.run((H) => H.step(0.2));
+    assert.equal(await g.run(() => document.getElementById('btn-pose').classList.contains('cooling')), true, 'dimmed while it recharges');
+    assert.deepEqual(g.errors, []);
+  } finally { await g.close(); }
+});

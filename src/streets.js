@@ -17,7 +17,7 @@ export const lifeSpots = []; // {kind: 'bench'|'bus'|'cart', x, z, face, sx, sz}
 // ---------------------------------------------------------------------
 // local frame for a lot: a runs along the street front, b goes in from the front (0) to the back (D)
 // ---------------------------------------------------------------------
-function frameOf(L, side) {
+export function frameOf(L, side) {
   const I = sideInfo(side, L.x0, L.x1, L.z0, L.z1), D = side[1] === 'x' ? L.x1 - L.x0 : L.z1 - L.z0;
   const toXZ = (a, b) => (side[1] === 'x' ? [I.fixed - I.out * b, a] : [a, I.fixed - I.out * b]);
   const rect = (a0, a1, b0, b1) => { const [xa, za] = toXZ(a0, b0), [xb, zb] = toXZ(a1, b1); return [Math.min(xa, xb), Math.max(xa, xb), Math.min(za, zb), Math.max(za, zb)]; };
