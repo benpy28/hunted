@@ -5433,17 +5433,28 @@ const streetPropObjs = [];   // {kind, x, z, y, col, state: 'up'|'loose', vx, vy
 const geysers = []; // bursting hydrants
 let spBuilt = false;
 function spSetMat(mesh, i, x, y, z, rx, ry) { _spE.set(rx, ry, 0); _spQ.setFromEuler(_spE); _spP.set(x, y, z); _spM.compose(_spP, _spQ, _spS); mesh.setMatrixAt(i, _spM); mesh.instanceMatrix.needsUpdate = true; }
+// props are drawn in chunks (one pair of instanced meshes per kind per 160 m cell), so the
+// camera only draws the nearby ones and far chunks are hidden altogether
+const SP_CELL = 160, spCells = [];
 function buildStreetProps() {
   if (spBuilt) return; spBuilt = true;
-  for (const k of Object.keys(SP_SHAPES)) {
-    const list = streetProps.filter((p) => p.kind === k);
-    if (!list.length) continue;
-    const S = SP_SHAPES[k], body = new THREE.InstancedMesh(S.body, spPropMat, list.length), lid = new THREE.InstancedMesh(S.lid, spPropMat, list.length);
-    body.frustumCulled = lid.frustumCulled = false;
+  const groups = new Map();
+  for (const sp of streetProps) {
+    const key = `${sp.kind}:${Math.floor(sp.x / SP_CELL)}:${Math.floor(sp.z / SP_CELL)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(sp);
+  }
+  for (const [key, list] of groups) {
+    const k = list[0].kind, S = SP_SHAPES[k];
+    const body = new THREE.InstancedMesh(S.body, spPropMat, list.length), lid = new THREE.InstancedMesh(S.lid, spPropMat, list.length);
+    let cx = 0, cz = 0; for (const sp of list) { cx += sp.x; cz += sp.z; } cx /= list.length; cz /= list.length;
+    let r = 0; for (const sp of list) r = Math.max(r, Math.hypot(sp.x - cx, sp.z - cz));
+    for (const m of [body, lid]) m.boundingSphere = new THREE.Sphere(new THREE.Vector3(cx, 1, cz), r + 30); // room for things knocked a way off
     scene.add(body, lid);
-    spKinds[k] = { body, lid };
+    spKinds[key] = { body, lid };
+    spCells.push({ body, lid, x: cx, z: cz, r });
     list.forEach((sp, i) => {
-      const P = { kind: k, i, S, x: sp.x, z: sp.z, ox: sp.x, oz: sp.z, col: sp.col, colH: sp.col.h, state: 'up', y: SP_BASE + S.half, vx: 0, vy: 0, vz: 0, rx: 0, ry: mr(-0.3, 0.3), spin: 0,
+      const P = { kind: k, mk: key, i, S, x: sp.x, z: sp.z, ox: sp.x, oz: sp.z, col: sp.col, colH: sp.col.h, state: 'up', y: SP_BASE + S.half, vx: 0, vy: 0, vz: 0, rx: 0, ry: mr(-0.3, 0.3), spin: 0,
         lid: { x: sp.x, z: sp.z, y: SP_BASE + S.half + S.lidY, vx: 0, vy: 0, vz: 0, rx: 0, ry: 0, spin: 0, state: 'on' }, hits: 0 };
       if (k === 'wheelie') { body.setColorAt(i, _spC.set(sp.color)); lid.setColorAt(i, _spC.set(sp.color)); }
       streetPropObjs.push(P); spDraw(P);
@@ -5451,8 +5462,13 @@ function buildStreetProps() {
     if (body.instanceColor) { body.instanceColor.needsUpdate = true; lid.instanceColor.needsUpdate = true; }
   }
 }
+let spCullT = 0;
+function spCull(dt, x, z) {
+  spCullT -= dt; if (spCullT > 0) return; spCullT = 0.5;
+  for (const c of spCells) c.body.visible = c.lid.visible = Math.hypot(c.x - x, c.z - z) - c.r < 320;
+}
 function spDraw(P) {
-  const K = spKinds[P.kind];
+  const K = spKinds[P.mk];
   spSetMat(K.body, P.i, P.x, P.y, P.z, P.rx, P.ry);
   const L = P.lid;
   if (L.state === 'gone') spSetMat(K.lid, P.i, 0, -50, 0, 0, 0);
@@ -5580,6 +5596,7 @@ function spStepBody(o, r, dt, isBody, P, C) {
 function updateStreetProps(dt, C) {
   if (!spBuilt) return;
   const Pl = C.player;
+  spCull(dt, Pl.x, Pl.z);
   for (const P of streetPropObjs) {
     if (P.state === 'up') {
       if (P.kind === 'hydrant') continue;
@@ -6637,7 +6654,7 @@ function junkDraw(J) {
 }
 function placeJunk() {
   const spots = [];
-  const add = (x, z, kind) => { const p = randomOpenPoint(x, z, 0.3, 1.6, 6); if (p) spots.push({ kind: kind || (Math.random() < 0.5 ? 'bottle' : 'can'), x: p.x, z: p.z }); };
+  const add = (x, z, kind) => { const p = randomOpenPoint(x, z, 0.3, 1.6, 6); if (p && !hideSpots.some((S) => S.stand && Math.hypot(S.stand.x - p.x, S.stand.z - p.z) < 1.6)) spots.push({ kind: kind || (Math.random() < 0.5 ? 'bottle' : 'can'), x: p.x, z: p.z }); };
   lifeSpots.forEach((L, i) => { if (i % 2 === 0) add(L.x, L.z); });
   hideSpots.forEach((S) => { if (S.stand && S.kind === 'dumpster') { const x = S.stand.x + S.stand.ux * 1.5, z = S.stand.z + S.stand.uz * 1.5; add(x, z); if (Math.random() < 0.6) add(x, z, 'bottle'); } });
   walkIns.forEach((W, i) => { if (i % 3 === 0) add(W.x, W.z); });
@@ -8357,6 +8374,9 @@ function updateKid(k, dt, K) {
     // wedged on something: pop back onto the grown-up's path
     if (spd > 0.5 && Math.hypot(k.x - bx, k.z - bz) < spd * dt * 0.25) k.stuckT = (k.stuckT || 0) + dt; else k.stuckT = 0;
     if (k.stuckT > 1.2) { const q = k.trail.length ? k.trail[Math.max(0, k.trail.length - 3)] : { x: O.x - Math.sin(O.face) * 0.7, z: O.z - Math.cos(O.face) * 0.7 }; k.x = q.x; k.z = q.z; k.stuckT = 0; k.trail.length = 0; }
+    // lost them altogether (the grown-up hopped a wall, or we slid along one): a kid always finds their way back
+    k.lostT = dO > 9 ? (k.lostT || 0) + dt : 0;
+    if (k.lostT > 2) { k.x = O.x - _kfx(O.face) * 0.7; k.z = O.z - _kfz(O.face) * 0.7; k.lostT = 0; k.stuckT = 0; k.trail.length = 0; }
     if (spd < 0.2 && dO < 1.4) k.face += angDiff(k.face, O.face) * Math.min(1, dt * 4);
     kidPose(k, spd, dt);
     if (dO < 1.0 && !O.pram) { k.p.armL.rotation.x = k.p.armR.rotation.x = 0; (k.side > 0 ? k.p.armR : k.p.armL).rotation.z = 0; (k.side > 0 ? k.p.armL : k.p.armR).rotation.x = -0.5; (k.side > 0 ? O.p.armR : O.p.armL).rotation.x = -0.35; } // holding hands
@@ -8832,8 +8852,9 @@ function updateFete(dt, K, on) {
   if (!K.near(F.x, F.z, 200)) return;
   // the village turns out: keep a crowd on the field
   TD_STATE.feteT = (TD_STATE.feteT || 0) - dt;
-  if (TD_STATE.feteT > 0) return; TD_STATE.feteT = 1.5;
+  if (TD_STATE.feteT > 0) return;
   const folk = K.hunters().filter((h) => h.feteGoer && !h.dead);
+  TD_STATE.feteT = folk.length < 10 ? 0.7 : 1.5; // fills up quickly, then tops up
   TD_STATE.feteFolk = folk.length;
   for (const h of folk) if (!h.act && h.state !== 'chase' && !(h.panicT > 0)) feteActivity(h, K);
   if (folk.length < 16) {
@@ -8845,11 +8866,11 @@ function feteActivity(h, K) {
   const F = schoolInfo.field;
   if (h.bandsman) { const B = fete.band; return K.lifeGo(h, 'busk', B.x + mr(-1.5, 1.5), B.z + mr(-1, 1), 0, mr(60, 120)); }
   const r = Math.random();
-  if (r < 0.25) return K.lifeGo(h, 'browse', fete.tombola.x + mr(-1, 1), fete.tombola.z + mr(0, 0.6), Math.PI, mr(8, 20), { stall: fete.tombola });
-  if (r < 0.45) return K.lifeGo(h, 'eat', fete.cakes.x + mr(-1, 1), fete.cakes.z + mr(0, 0.8), Math.PI, mr(10, 25));
-  if (r < 0.65) return K.lifeGo(h, 'cheer', fete.band.x + mr(-4, 4), fete.band.z - mr(2.5, 5), 0, mr(10, 30));
+  if (r < 0.25) return K.lifeGo(h, 'browse', fete.tombola.x + mr(-1, 1), fete.tombola.z + mr(0, 0.6), Math.PI, mr(8, 20), { stall: fete.tombola, maxGo: 120 });
+  if (r < 0.45) return K.lifeGo(h, 'eat', fete.cakes.x + mr(-1, 1), fete.cakes.z + mr(0, 0.8), Math.PI, mr(10, 25), { maxGo: 120 });
+  if (r < 0.65) return K.lifeGo(h, 'cheer', fete.band.x + mr(-4, 4), fete.band.z - mr(2.5, 5), 0, mr(10, 30), { maxGo: 120 });
   const s = mpick(fete.spots); if (Math.random() < 0.3 && K.near(h.x, h.z, 30)) K.say(h, mpick(FETE_LINES));
-  return K.lifeGo(h, 'watch', s.x, s.z, Math.random() * 6.28, mr(10, 30));
+  return K.lifeGo(h, 'watch', s.x, s.z, Math.random() * 6.28, mr(10, 30), { maxGo: 120 });
 }
 
 // =====================================================================
@@ -8867,13 +8888,7 @@ function tdPlan(h, hr, K) {
     if (Math.abs(M.x - h.x) > 140 || Math.abs(M.z - h.z) > 140 || !marketOpen(hr)) continue;
     const big = !!eventOn('market', M.city, day, hr);
     if (Math.random() < (big ? 0.85 : 0.07)) { // the whole town turns up on a big market day
-      for (let tries = 0; tries < 4; tries++) { // a stall with room in front of it
-      const st = mpick(M.stalls); if (!st || !st.front) continue;
-      const ux = st.front.x - st.back.x, uz = st.front.z - st.back.z, l = Math.hypot(ux, uz) || 1, a = mr(-1, 1);
-      const x = st.front.x + (uz / l) * a + (ux / l) * mr(0, 0.6), z = st.front.z - (ux / l) * a + (uz / l) * mr(0, 0.6);
-      if (blockedAt(x, z)) continue;
-      if (K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), big ? mr(15, 35) : mr(8, 22), { stall: st })) return true; // and they take their time about it
-      }
+      for (let tries = 0; tries < 4; tries++) if (browseStall(h, M, K, big ? mr(15, 35) : mr(8, 22))) return true; // a stall with room in front of it
     }
   }
   // cheering on the runners
@@ -8885,6 +8900,29 @@ function tdPlan(h, hr, K) {
   // off to the fete
   if (eventOn('fete', 'ASHFORD', day, hr) && schoolInfo.field && Math.hypot(h.x - schoolInfo.field.x, h.z - schoolInfo.field.z) < 160 && Math.random() < 0.3) { h.feteGoer = true; return feteActivity(h, K); }
   return false;
+}
+function browseStall(h, M, K, dur) {
+  const st = mpick(M.stalls); if (!st || !st.front) return false;
+  const ux = st.front.x - st.back.x, uz = st.front.z - st.back.z, l = Math.hypot(ux, uz) || 1, a = mr(-1, 1);
+  const x = st.front.x + (uz / l) * a + (ux / l) * mr(0, 0.6), z = st.front.z - (ux / l) * a + (uz / l) * mr(0, 0.6);
+  if (blockedAt(x, z)) return false;
+  return K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), dur || mr(8, 22), { stall: st, maxGo: 120 });
+}
+// big market day near you: keep the stalls busy with idle passers-by
+function updateMarketDay(dt, K, day, hr) {
+  TD_STATE.mdayT = (TD_STATE.mdayT || 0) - dt;
+  if (TD_STATE.mdayT > 0) return; TD_STATE.mdayT = 1.2;
+  for (const M of markets) {
+    if (!eventOn('market', M.city, day, hr) || !K.near(M.x, M.z, 160)) continue;
+    const L = K.hunters(); let n = 0, pick = null, pd = 70;
+    for (const h of L) {
+      if (h.dead) continue;
+      if (h.act && h.act.stall && M.stalls.includes(h.act.stall)) { n++; continue; }
+      if (h.act || h.state === 'chase' || h.huntT > 0 || h.panicT > 0 || h.sus > 0.3 || (h.job && h.job !== 'tourist') || h.racer || h.feteGoer || h.lapRoute || h.contract || h.guard || h.rival) continue;
+      const d = Math.hypot(h.x - M.x, h.z - M.z); if (d < pd) { pd = d; pick = h; }
+    }
+    if (n < 7 && pick) browseStall(pick, M, K);
+  }
 }
 function tdVisit(h, want, K) {
   if (want === 'school') return sendToSchool(h, K);
@@ -8941,6 +8979,7 @@ function updateTownDay(dt, K) {
   const day = K.G.day, hr = K.hour;
   updateFunRun(dt, K, !!eventOn('funrun', funRun.city, day, hr));
   updateFete(dt, K, !!eventOn('fete', 'ASHFORD', day, hr));
+  updateMarketDay(dt, K, day, hr);
   // the morning paper: what's on today (shown a moment after the new day comes in)
   if (TD_STATE.lastDay !== day) { TD_STATE.lastDay = day; TD_STATE.lapCorners = 0; TD_STATE.dayMsgT = 6.5; }
   if (TD_STATE.dayMsgT > 0) { TD_STATE.dayMsgT -= dt; if (TD_STATE.dayMsgT <= 0) K.showMsg(todayLine(day), 5); }
@@ -10789,7 +10828,8 @@ const mhCityHere = (x, z) => cityAt(x, z, 20);
 function resetManhunt(days) {
   // when each other runner gets caught: spread across the month, and the last rival lasts until the final day
   const n = MH_RUNNER_NAMES.length;
-  const times = Array.from({ length: n - 1 }, () => mr(0.6, days - 2.2)).sort((a, b) => a - b);
+  const span = (days - 2.8) / (n - 1); // one catch per slot so they really are spread across the month
+  const times = Array.from({ length: n - 1 }, (_, i) => 0.6 + span * (i + mr(0.1, 0.9)));
   times.push(days - 1 + mr(0.3, 0.75));
   MH.runners = MH_RUNNER_NAMES.map((name, i) => ({ name, num: i + 2, at: times[i], caught: false }));
   Object.assign(MH, { lifelines: 1, usedLifelines: 0, objective: null, done: 0, streak: 0, closeCalls: 0, spotted: 0, sweeps: [], recapT: 0, closeArm: 0, closeT: 0, wasSeen: false, newsBits: [], invulnT: 0, bountyMul: 1, extract: null, escaped: false, lastCaught: null, rival: null, rivalT: mr(50, 90), yourCatches: 0 });
