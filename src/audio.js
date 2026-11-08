@@ -140,3 +140,9 @@ export function setRain(v) {
 sfx.thunder = (near) => { const d = near ? 0 : 0.6 + Math.random() * 1.2; if (near) noise(0.25, 0.6, 1800, 0.4); noise(2.6, near ? 0.75 : 0.45, 90, 0.5, d); tone(42, 2.2, 'sine', near ? 0.25 : 0.14, 0.7, d); };
 sfx.firework = () => { const d = 0.5 + Math.random() * 0.4; tone(900, 0.5, 'sine', 0.03, 2.5); noise(0.5, 0.45, 260, 0.5, d); noise(0.9, 0.12, 3200, 1, d + 0.05); };
 sfx.powerDown = () => { tone(220, 1.2, 'sawtooth', 0.08, 0.2); noise(0.3, 0.2, 400, 0.6); };
+// the leisure park and the buses
+sfx.splash = (big = false) => { noise(big ? 0.8 : 0.4, big ? 0.4 : 0.22, 1400, 0.5); noise(0.3, 0.15, 3200, 1.2, 0.05); tone(160, 0.15, 'sine', 0.05, 0.6); };
+sfx.strike = () => { for (let i = 0; i < 7; i++) { tone(900 + Math.random() * 900, 0.06, 'triangle', 0.06, 0.8, i * 0.03 + Math.random() * 0.02); noise(0.05, 0.2, 2400, 1.6, i * 0.03); } };
+sfx.rumble = () => { noise(1.2, 0.12, 160, 0.4); tone(70, 1.2, 'sine', 0.05, 0.9); };
+sfx.ding = () => { tone(1568, 0.25, 'sine', 0.07); tone(1175, 0.35, 'sine', 0.06, 1, 0.18); };
+sfx.pfft = () => { noise(0.45, 0.22, 2600, 0.6); }; // bus doors

@@ -119,6 +119,8 @@ export function updateDeliveries(dt, K) {
   if (!DL_STATE.r9) {
     DL_STATE.r9 = true;
     for (const dir of [1, -1]) { const lane = K.lanes().find((l) => l.axis === 'x' && l.dir === dir && Math.abs(Math.abs(l.fixed) - 3.4) < 0.5 && l.a1 - l.a0 > 600); if (lane) { const c = K.addCar(lane, dir > 0 ? 120 : 640, 'truck'); c.dlName = dir > 0 ? 'ROUTE 9 FREIGHT' : 'ASHFORD BREWERY'; c.r9 = true; } }
+    // and two more on the Route 4 run, down to SALTMARSH DOCKS and back (the docks run)
+    for (const dir of [1, -1]) { const lane = K.lanes().find((l) => l.axis === 'z' && l.dir === dir && Math.abs(Math.abs(l.fixed) - 3.4) < 0.5 && l.a1 - l.a0 > 600); if (lane) { const c = K.addCar(lane, dir > 0 ? 160 : 640, 'truck'); c.dlName = dir > 0 ? 'SALTMARSH SHIPPING' : 'DOCKSIDE FISH CO.'; c.r4 = true; } }
   }
   for (const L of dlTrucks(K)) { if (L.dl && L.dl.phase && (L.dl.phase !== 'close' || (L.dlDriver && L.dlDriver.g.visible)) && K.near(L.x, L.z, 70)) { dlShowDriver(L, true); dlAnimDriver(L, K); } else if (L.dlDriver && L.dlDriver.g.visible) dlShowDriver(L, false); }
   const R = DL_STATE.ride; if (!R) return;

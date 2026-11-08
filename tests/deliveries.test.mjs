@@ -23,11 +23,12 @@ after(async () => { await g?.close(); });
 test('lorries do their rounds: pulling up outside shops in the daytime, and two on the Route 9 run between the towns', async () => {
   const s = await g.run((H) => {
     H.fresh(H); H.player.x = 0; H.player.z = 0; H.navRecenter(0, 0, true);
-    const r9 = H.G.cars.filter((c) => c.r9).length;
+    const r9 = H.G.cars.filter((c) => c.r9).length; const r4 = H.G.cars.filter((c) => c.r4).length;
     const dropped = H.stepAt(H, 90, 10, () => H.DL_STATE.drops > 0);
-    return { r9, dropped, drops: H.DL_STATE.drops };
+    return { r9, r4, dropped, drops: H.DL_STATE.drops };
   });
   assert.equal(s.r9, 2, 'a lorry each way on Route 9');
+  assert.equal(s.r4, 2, 'and each way on Route 4, the docks run');
   assert.ok(s.dropped, 'a lorry made a delivery');
 });
 
