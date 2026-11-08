@@ -171,12 +171,19 @@ export class GeoBuf {
   }
   build(material) {
     if (!this.n) return null;
-    const m = new THREE.Mesh(this.geometry(), material);
+    const geo = this.geometry(); geo.computeBoundingBox();
+    // the baked world never changes once it's on the GPU: drop the JS copies of every vertex so a long
+    // night's ride isn't carrying the whole town twice (phones and tablets kill the tab when memory runs out)
+    for (const a of [...Object.values(geo.attributes), geo.index]) if (a) a.onUpload(freeAttrArray);
+    this.pos = []; this.nor = []; this.uv = []; this.col = []; this.idx = []; this.built = true;
+    const m = new THREE.Mesh(geo, material);
     m.matrixAutoUpdate = false; m.updateMatrix();
     scene.add(m);
     return m;
   }
 }
+
+function freeAttrArray() { this.array = new this.array.constructor(1); }
 
 // GeoBuf split into square chunks by position, so each chunk is its own mesh and the renderer can skip
 // whatever is off screen (or, with farCull, too far away to matter)

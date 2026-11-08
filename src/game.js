@@ -7,7 +7,7 @@ import {
 import {
   CITIES, HIGHWAYS, WORLD, RIVER, colliders, blockRects, parkedSpots, beacons, animated, waterRects, lanes, emissiveFacades,
   generateWorld, cityAt, localeName, resolveCircle, pointBlocked, maxHeightNear, groundY,
-  navRecenter, computeFlow, navTarget, los, los3D, blockedAt, randomOpenPoint, raycastWorld,
+  navRecenter, computeFlow, navTarget, navCutOff, navDebugMap, los, los3D, blockedAt, randomOpenPoint, raycastWorld,
   floorAt, resolveBody, stackTop, ladders, ziplines, zipNear, ladderNear, roofs, solidAt, unbucketedColliders, moveBody, losSolid, headroom,
 } from './world.js';
 import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
@@ -48,6 +48,7 @@ import { buildPerson, dressCivilian, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls,
 import { shopRooms, atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers, showShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
+import { SWT, swatReset, swatBlocks, swatSteer, updateSwat, kitOutSwat, swatDebug } from './swat.js';
 import { updateNews, newsTex } from './news.js';
 import { PFX, renderFrame, initPostFX } from './postfx.js';
 import { MH, resetManhunt, manhuntNewDay, updateManhunt, trySecondChance, mhTarget, mhRivalTarget, mhRivalCaughtByYou, mhRivalGone, manhuntNews, manhuntSweepCity, runnersLeft } from './manhunt.js';
@@ -168,6 +169,7 @@ const HTYPES = {
   runner: { speed: 6.6, walk: 2.0, dmg: 5, scale: 0.95, hp: 2, knock: 1.2, stun: 1.5 },
   brute: { speed: 4.0, walk: 1.3, dmg: 14, scale: 1.28, hp: 5, knock: 0.45, stun: 0.9 },
   cop: { speed: 5.6, walk: 1.8, dmg: 6, scale: 1.04, hp: 3, knock: 0.8, stun: 1.2 },
+  swat: { speed: 4.7, walk: 1.6, dmg: 10, scale: 1.08, hp: 12, knock: 0.25, stun: 0.4 }, // riot squad: slow, heavy, shielded
 };
 const qMarkerMat = new THREE.SpriteMaterial({
   map: canvasTex(64, 64, (ctx) => { ctx.fillStyle = '#ffc23a'; ctx.beginPath(); ctx.arc(32, 32, 26, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#222'; ctx.font = 'bold 44px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', 32, 34); }),
@@ -183,12 +185,12 @@ const markerMat = new THREE.SpriteMaterial({
 class Hunter {
   constructor(x, z, type, gunner, state = 'search') {
     this.type = type; this.T = HTYPES[type]; this.gunner = gunner || type === 'cop';
-    const cop = type === 'cop';
+    const cop = type === 'cop' || type === 'swat', swat = type === 'swat';
     const look = {
       skin: mpick(SKINS), hair: mpick(HAIRS), gun: this.gunner,
-      pants: cop ? 0x1a2238 : mpick(PANTS),
-      shirt: cop ? 0x2a3f78 : type === 'runner' ? mpick([0xd6763a, 0xc93030, 0xe0c030]) : type === 'brute' ? mpick([0x333333, 0x4a3a2a, 0x2c3e66]) : mpick(SHIRTS),
-      cap: cop ? 0x1a2238 : null, vest: cop ? 0x222222 : null,
+      pants: swat ? 0x1a1d24 : cop ? 0x1a2238 : mpick(PANTS),
+      shirt: swat ? 0x232a36 : cop ? 0x2a3f78 : type === 'runner' ? mpick([0xd6763a, 0xc93030, 0xe0c030]) : type === 'brute' ? mpick([0x333333, 0x4a3a2a, 0x2c3e66]) : mpick(SHIRTS),
+      cap: swat ? 0x111317 : cop ? 0x1a2238 : null, vest: swat ? 0x0f1115 : cop ? 0x222222 : null,
     };
     // townsfolk dress for who they are: office types, pensioners, dock workers in hi-vis...
     let folkSlow = 1; this.folk = null;
@@ -204,6 +206,7 @@ class Hunter {
     this.stun = 0; this.kx = 0; this.kz = 0; this.phase = Math.random() * 10; this.hasLOS = false; this.lastSeen = 0;
     this.wt = null; this.progT = 0; this.lx = x; this.lz = z; this.alertT = -1; this.strafe = Math.random() < 0.5 ? 1 : -1;
     this.dead = false;
+    this.swat = swat; if (swat) kitOutSwat(this);
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
     this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
     this.sus = 0; this.huntT = 0; this.panicT = 0; this.thinkAt = G.elapsed; this.home = { x, z };
@@ -211,6 +214,7 @@ class Hunter {
   }
   alert(delay = 0) {
     if (this.state === 'chase') return;
+    if (navCutOff(this.x, this.z)) { this.huntT = Math.max(this.huntT, 6); return; } // no way through to you from here: they shout, but can't join in
     if (delay > 0) { if (this.alertT < 0) this.alertT = delay; return; }
     this.state = 'chase'; this.lastSeen = 0; this.sus = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
     if (player.disg > 0) wearDisguise(0.035);
@@ -229,6 +233,7 @@ class Hunter {
     if (this.rival) rivalDown(this);
   }
   damage(n, dirX, dirZ, hitY, byPlayer = true) {
+    if (this.swat && swatBlocks(this, dirX, dirZ, SWK)) { this.alert(); return; } // TINK: straight off the riot shield
     this.hp -= n; this.alert();
     if (this.hp > 0) hitFX(this.x, this.y + 1.8 * this.T.scale, this.z, hitKindNow());
     if (this.hp <= 0) this.die({ x: dirX * 7, y: 2.5, z: dirZ * 7 }, hitY, byPlayer, true);
@@ -282,6 +287,7 @@ class Hunter {
     let tvx = 0, tvz = 0, lifeMode = null;
     if (this.stun > 0) {
       this.stun -= dt;
+    } else if (this.swat && this.state === 'chase') { const v = swatSteer(this, dt, d, dx, dz, tp, SWK); tvx = v.x; tvz = v.z;
     } else if (this.state === 'chase') {
       this.lastSeen += dt;
       if (player.hide) { if (hideHunterThink(this, d, SK)) return; if (this.checkSpot !== player.hide && this.lastSeen > 1.5) { this.state = 'search'; this.wt = randomOpenPoint(G.lkp.x, G.lkp.z, 2, 12) || null; this.huntT = 20; this.sus = 0.5; return; } }
@@ -319,7 +325,15 @@ class Hunter {
       }
       const ex0 = tx - this.x, ez0 = tz - this.z;
       if (this.y > 1 || this.y < -1) { /* on a roof or underground: straight at it */ }
-      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && (los(this.x, this.z, tx, tz)))) { tx = n.x; tz = n.z; } }
+      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) {
+        const n = navTarget(this.x, this.z, 2);
+        if (n && !(goLadder && (los(this.x, this.z, tx, tz)))) { tx = n.x; tz = n.z; this.cutOffT = 0; }
+        else if (!n && !goLadder && d < 170) { // shut off from you (a sealed yard, the far side of a wall with no way round): don't walk into the wall forever
+          this.cutOffT = (this.cutOffT || 0) + dt;
+          if (this.cutOffT > 2.5) { this.state = 'search'; this.huntT = 0; this.wt = null; this.cutOffT = 0; return; }
+          tx = this.x; tz = this.z;
+        }
+      }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
       const spd = T.speed * dayMult() * this.spdMul * spdK;
       if (this.noticeT > 0) { this.noticeT -= dt; tvx = 0; tvz = 0; }
@@ -370,6 +384,7 @@ class Hunter {
         if (this.wt && this.huntT <= 0 && Math.random() < 0.5 && lifeStart(this, LIFE)) { /* off to do something */ }
         else if (this.wt && Math.random() < 0.6) this.waitT = mr(1, 3.5); // stop and look around
         if (this.peek && this.wt) hunterPeekArrive(this, SK); // lift the lid and have a look
+        if (this.huntT > 0 && navCutOff(this.x, this.z)) this.huntT = 0; // shut in a yard with no way out to you: forget it
         const hunting = this.huntT > 0 && Math.random() < 0.8;
         const guess = hunting ? G.lkp : this.home;
         if (!(hunting && !this.waitT && hunterPickPeek(this, G.lkp))) this.wt = randomOpenPoint(guess.x, guess.z, hunting ? 2 : 5, hunting ? 25 : 40) || { x: this.x, z: this.z };
@@ -377,11 +392,18 @@ class Hunter {
       if (!this.wt) this.wt = { x: this.x, z: this.z };
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
-      if (!(lifeMode === 'walk' && this.act && this.act.straight) && !los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } } // a checked-clear route leg indoors walks straight: the coarse grid can't see the gaps between shelves
+      if (!(lifeMode === 'walk' && this.act && this.act.straight) && !los(this.x, this.z, this.wt.x, this.wt.z)) {
+        // searching near you: the flow field knows the way round (through the door, not into the wall)
+        const fn = this.huntT > 0 && Math.hypot(this.wt.x - tp.x, this.wt.z - tp.z) < 30 && (!this.peek || Math.hypot(this.wt.x - tp.x, this.wt.z - tp.z) < 3) ? navTarget(this.x, this.z, 2) : null;
+        if (fn) { const fl = Math.hypot(fn.x - this.x, fn.z - this.z) || 1; ox = (fn.x - this.x) / fl; oz = (fn.z - this.z) / fl; }
+        else { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
+      } // a checked-clear route leg indoors walks straight: the coarse grid can't see the gaps between shelves
       if (!(this.panicT > 0) && !(this.cowerT > 0)) {
       const w = this.waitT > 0 || lifeMode === 'hold' ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1) * (this.walkK || 1);
       tvx = ox * w; tvz = oz * w;
       this.progT += dt;
+      this.pressT = this.pressing ? (this.pressT || 0) + dt : Math.max(0, (this.pressT || 0) - dt);
+      if (this.pressT > 1.5 && !this.act) { this.wt = null; this.peek = null; this.pressT = 0; } // up against a wall with no way through: pick somewhere else
       if (this.progT > 2) { if (Math.hypot(this.x - this.lx, this.z - this.lz) < 0.6) this.wt = null; this.progT = 0; this.lx = this.x; this.lz = this.z; }
       }
     }
@@ -392,6 +414,7 @@ class Hunter {
     const ox = this.x, oz = this.z;
     this.x += (this.vx + this.kx) * dt; this.z += (this.vz + this.kz) * dt;
     const wall = moveBody(this, ox, oz, 0.35 * T.scale, this.y, 1.8);
+    this.pressing = wall && Math.hypot(tvx, tvz) > 0.8 && Math.hypot(this.x - ox, this.z - oz) < Math.hypot(tvx, tvz) * dt * 0.25; // walking into a wall, getting nowhere
     if (this.y < 0.5) { const cx0 = this.x, cz0 = this.z; for (const c of G.cars) if (Math.abs(c.x - this.x) < c.hl + 2 && Math.abs(c.z - this.z) < c.hl + 2) resolveCircleCar(this, 0.35, c); if (this.x !== cx0 || this.z !== cz0) moveBody(this, cx0, cz0, 0.35 * T.scale, this.y, 1.8); }
     keepOutOfSolids(this);
     // scramble up walls to get at you (runners are good at it, brutes hopeless)
@@ -1307,6 +1330,19 @@ const SK = {
     if (h.hasLOS || Math.hypot(h.x - player.x, h.z - player.z) < 14) { h.alert(0.5); addHeat(1.5); } else { h.huntT = Math.max(h.huntT, 10); h.sus = Math.max(h.sus, 0.5); }
   },
 };
+// the SWAT team's hooks into the game (src/swat.js)
+const SWK = {
+  G, player, sfx, hunters: () => G.hunters, targetPos: () => targetPos(), dayMult: () => dayMult(),
+  say: (h, t) => say(h, t), showMsg: (t, d) => showMsg(t, d), showBanner: (h, d) => showBanner(h, d), reportSighting: (x, z) => reportSighting(x, z),
+  hurt: (n) => hurtPlayer(n, player.x, player.z, 0),
+  forceOutOfHiding: (h) => { if (player.hide) leaveHide(SK, h || null); },
+  makeSwat: (x, z) => { const h = new Hunter(x, z, 'swat', true, 'chase'); h.noticeT = 0.4; h.role = 'rusher'; G.hunters.push(h); return h; },
+  swatShot: (h, d) => { // rifle round from behind the shield: much better aim than a townie with a pistol
+    const s = h.T.scale; _from.set(h.x + Math.sin(h.face) * 0.7, h.y + 1.45 * s, h.z + Math.cos(h.face) * 0.7);
+    shootAtPlayer(_from, clamp(0.62 - d / 110, 0.25, 0.6) * (player.disg > 0 ? 0.9 : 1), 6, 0xffd070, d);
+  },
+  bash: (h) => { setHitKind('crowbar'); if (player.car) player.car.damage(6); else hurtPlayer(h.T.dmg, h.x, h.z, 7); sfx.thud(); },
+};
 // what the odd jobs and bin lorries need from the game
 const GJ = {
   G, player, sfx, get input() { return input; }, isTouch: () => isTouch, showMsg: (t, d) => showMsg(t, d), addCash: (n) => { player.cash += n; },
@@ -1574,6 +1610,7 @@ function setHitKind(k) { G.hitKind = k; G.hitKindAt = G.elapsed; }
 function hitKindNow() { return G.elapsed - (G.hitKindAt ?? -9) < 0.2 ? G.hitKind : 'oof'; }
 function launchHunter(h, ux, uz, getsUp, imp) {
   if (h.dead) return;
+  if (h.swat && swatBlocks(h, ux, uz, SWK)) { h.stun = Math.max(h.stun, 0.3); h.kx += ux * 3; h.kz += uz * 3; return; } // they brace behind the shield
   const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
   if (h.held) { h.held = false; if (G.held === h) G.held = null; }
   lifeInterrupt(h); releaseJob(h);
@@ -2323,7 +2360,7 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   let p = null;
   for (let t = 0; t < 12 && !p; t++) {
     const c = randomOpenPoint(tp.x, tp.z, minD, maxD, 4);
-    if (c && !safeAt(c.x, 0, c.z) && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
+    if (c && !safeAt(c.x, 0, c.z) && !navCutOff(c.x, c.z) && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
   }
   if (!p) return;
   const r = Math.random(), copChance = G.level >= 2 ? (G.level - 1) * 0.08 : 0;
@@ -2386,7 +2423,7 @@ function resetGame() {
 }
 function startGame(sup = G.super) {
   G.super = !!sup;
-  initAudio(); resetGame(); resetWeather(); G.newsLook = {};
+  initAudio(); resetGame(); resetWeather(); swatReset(); G.newsLook = {};
   resetHero(); G.villainFight = null; G.villainsBeaten = 0; resetVillains(HC);
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
@@ -2812,10 +2849,10 @@ function updateDirector(dt) {
   if (G.spawnT <= 0) {
     G.spawnT = 0.6;
     if (alive.length < targetHunters()) spawnHunter();
-    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && !h.rival && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
-    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && !h.rival && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
+    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && !h.rival && !h.swat && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
+    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && !h.rival && !h.swat && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
     // not everyone joins in: past the cap, the furthest ones who can't see you go back to searching
-    const ch = alive.filter((h) => h.state === 'chase' && !h.contract && !h.rival);
+    const ch = alive.filter((h) => h.state === 'chase' && !h.contract && !h.rival && !h.swat);
     if (ch.length > maxChasers()) {
       ch.sort((a, b) => Math.hypot(b.x - tp.x, b.z - tp.z) - Math.hypot(a.x - tp.x, a.z - tp.z));
       for (let i = 0; i < ch.length - maxChasers(); i++) if (!ch[i].hasLOS || Math.hypot(ch[i].x - tp.x, ch[i].z - tp.z) > 30) { ch[i].state = 'search'; ch[i].wt = null; ch[i].alertT = -1; }
@@ -2921,7 +2958,7 @@ function simulate(dt, t) {
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
-    updateSafehouse(dt);
+    updateSafehouse(dt); updateSwat(dt, SWK);
     updateGetUps(dt); updateDrops(dt, t); updateLaser(dt); updateBubbles(dt); updateContract(dt); updateRival(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
@@ -2953,4 +2990,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { XV, pubTV, pubGames, dockWork, quay, bowling, baths, buses, railway, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { XV, pubTV, pubGames, dockWork, quay, bowling, baths, buses, railway, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, navDebugMap, computeFlow, renderOnce: (dt = 1 / 30) => { const t = performance.now() / 1000; updateLighting(t); updateCamera(dt, t); cullChunks(camera.position.x, camera.position.z); renderFrame({ drawVM: vm.visible && G.mode !== 'menu', indoor: false, floorY: G.floorY ?? 0, speed: 0, danger: 0, kick: 0 }); }, SWT, swatDebug, swatReset, updateSwat: (dt) => updateSwat(dt, SWK), SWK: () => SWK, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

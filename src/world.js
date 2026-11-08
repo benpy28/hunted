@@ -1703,7 +1703,8 @@ export function groundY(x, z) {
 // ---------------------------------------------------------------------
 // Local navigation grid around the player: BFS flow field + line of sight
 // ---------------------------------------------------------------------
-export const CELL = 2, GN = 180;
+export const CELL = 1, GN = 360; // 1m cells: a 2m grid couldn't tell a doorway from the wall either side of it
+const CK = 2 / CELL; // distances below were tuned for 2m cells
 const blocked = new Uint8Array(GN * GN), flow = new Int32Array(GN * GN).fill(-1), bfsQueue = new Int32Array(GN * GN);
 let gox = 0, goz = 0; // grid origin (world coords of cell 0,0 corner)
 let gcx = 1e9, gcz = 1e9;
@@ -1761,7 +1762,7 @@ export function computeFlow(tx, tz) {
   if (start < 0) return;
   if (blocked[start]) {
     const cx = start % GN, cz = Math.floor(start / GN);
-    outer: for (let r = 1; r < 4; r++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+    outer: for (let r = 1; r < 4 * CK; r++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
       const x = cx + dx, z = cz + dz;
       if (x >= 0 && z >= 0 && x < GN && z < GN && !blocked[z * GN + x]) { start = z * GN + x; break outer; }
     }
@@ -1791,22 +1792,38 @@ function flowStep(i) {
   }
   return best;
 }
+// is the straight walk from a to b blocked by anything solid (fine check, not the grid)?
+function segBlocked(ax, az, bx, bz) {
+  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / 0.25));
+  for (let s = 1; s <= n; s++) { const t = s / n; if (pointBlocked(ax + (bx - ax) * t, az + (bz - az) * t, 0.3)) return true; }
+  return false;
+}
 export function navTarget(x, z, look = 2) {
   let i = cellIdx(x, z);
   if (i < 0) return null;
   if (flow[i] < 0) {
     const cx = i % GN, cz = Math.floor(i / GN); let bd = 1e9, bi = -1;
-    for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2 * CK; dz <= 2 * CK; dz++) for (let dx = -2 * CK; dx <= 2 * CK; dx++) {
       const nx = cx + dx, nz = cz + dz; if (nx < 0 || nz < 0 || nx >= GN || nz >= GN) continue;
-      const j = nz * GN + nx; if (flow[j] >= 0 && flow[j] < bd) { bd = flow[j]; bi = j; }
+      const j = nz * GN + nx; if (flow[j] < 0) continue;
+      const c = cellCenter(j), k = flow[j] + Math.hypot(c.x - x, c.z - z) * 2; // nearest reachable cell you can actually walk straight to
+      if (k < bd && !segBlocked(x, z, c.x, c.z)) { bd = k; bi = j; }
     }
     return bi < 0 ? null : cellCenter(bi);
   }
-  for (let s = 0; s < look; s++) { const n = flowStep(i); if (n < 0) break; i = n; }
+  // walk down the flow, but only as far as you can see in a straight line: aiming several cells
+  // ahead round a corner is what had people walking into the end of a wall instead of the door
+  for (let s = 0; s < look * CK; s++) {
+    const n = flowStep(i); if (n < 0) break;
+    if (s > 0) { const c = cellCenter(n); if (segBlocked(x, z, c.x, c.z)) break; }
+    i = n;
+  }
   return cellCenter(i);
 }
+// inside the nav grid but with no walkable way to the player (a sealed yard, a locked-off room)
+export function navCutOff(x, z) { const i = cellIdx(x, z); return i >= 0 && flow[i] < 0 && navTarget(x, z) === null; }
 export function los(ax, az, bx, bz) {
-  const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz), n = Math.ceil(d / 1.2);
+  const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz), n = Math.ceil(d / (0.6 * CELL));
   for (let s = 1; s < n; s++) { const t = s / n; if (blockedAt(ax + dx * t, az + dz * t)) return false; }
   return true;
 }
@@ -1882,4 +1899,14 @@ export function losSolid(ax, ay, az, bx, by, bz) {
     }
   }
   return true;
+}
+// tests/debugging: a picture of the nav grid round a point ('#' blocked, '.' open, digits = flow distance mod 10)
+export function navDebugMap(x, z, r = 8) {
+  const rows = [];
+  for (let gz = -r; gz <= r; gz++) {
+    let row = '';
+    for (let gx = -r; gx <= r; gx++) { const i = cellIdx(x + gx * CELL, z + gz * CELL); row += i < 0 ? '?' : blocked[i] ? '#' : flow[i] < 0 ? '.' : String(flow[i] % 10); }
+    rows.push(row);
+  }
+  return rows;
 }

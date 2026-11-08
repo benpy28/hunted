@@ -108,3 +108,29 @@ test('most buildings can be entered, and every enterable place is furnished', as
   assert.ok(s.by['SALTMARSH DOCKS'] >= 40, `Docks enterable: ${s.by['SALTMARSH DOCKS']}`);
   assert.deepEqual(s.empty, [], `${s.nEmpty} empty interiors`);
 });
+
+test('chasers find the doorway instead of walking into the shop wall', async () => {
+  const r = await g.run((H) => {
+    const P = H.player, G = H.G; let press = 0, reached = 0, total = 0;
+    for (const w of H.walkIns.filter((w, i) => i % 9 === 0).slice(0, 6)) {
+      const [x, z] = w.path[3];
+      Object.assign(P, { x, z, y: H.floorAt(x, z, 0.5), vx: 0, vz: 0, hp: 100 });
+      for (const h of G.hunters) h.remove(); G.hunters.length = 0;
+      H.navRecenter(x, z, true); H.computeFlow(x, z); G.heat = 200;
+      for (let i = 0; i < 8; i++) H.spawnHunter(8, 30, 'chase');
+      const mine = [...G.hunters], last = new Map(); let t = 0;
+      H.stepDt(14, 1 / 30, () => {
+        P.hp = 100; P.x = x; P.z = z; P.vx = P.vz = 0; t += 1 / 30;
+        if (t % 1 < 1 / 30) for (const h of mine) {
+          const lp = last.get(h); last.set(h, [h.x, h.z]);
+          if (lp && !h.dead && h.state === 'chase' && h.pressing && Math.hypot(h.x - lp[0], h.z - lp[1]) < 0.3 && Math.hypot(h.x - x, h.z - z) > 3) press++;
+        }
+      });
+      for (const h of mine) if (!h.dead) { total++; if (Math.hypot(h.x - x, h.z - z) < 3 || (h.x > w.rect.x0 && h.x < w.rect.x1 && h.z > w.rect.z0 && h.z < w.rect.z1)) reached++; }
+    }
+    for (const h of G.hunters) h.remove(); G.hunters.length = 0;
+    return { press, reached, total };
+  });
+  assert.ok(r.press < 20, `seconds spent pushing into walls: ${r.press}`);
+  assert.ok(r.reached >= r.total * 0.6, `got to you: ${r.reached}/${r.total}`);
+});
