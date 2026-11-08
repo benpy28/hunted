@@ -225,6 +225,9 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
 /* hiding in a dumpster: black, with a strip of street visible under the lid */
 #hidecrack { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 1; }
 #hidecrack.show { display: block; }
+#hidecrack.slats .lid, #hidecrack.slats .tin, #hidecrack.crate .lid, #hidecrack.crate .tin { display: none; }
+#hidecrack.slats { background: repeating-linear-gradient(180deg, rgba(8,6,4,.96) 0 34px, rgba(8,6,4,.35) 34px 44px); }
+#hidecrack.crate { background: linear-gradient(90deg, rgba(10,8,4,.97) 0 22%, transparent 22% 26%, rgba(10,8,4,.97) 26% 48%, transparent 48% 53%, rgba(10,8,4,.97) 53% 76%, transparent 76% 80%, rgba(10,8,4,.97) 80%); }
 #hidecrack .lid { position: absolute; left: 0; right: 0; top: 0; height: 41%; background: linear-gradient(#050505 85%, #1a1a14); }
 #hidecrack .tin { position: absolute; left: 0; right: 0; bottom: 0; height: 47%; background: linear-gradient(#1c1c16, #050505 20%); }
 #hud-junk { position: absolute; right: calc(20px + env(safe-area-inset-right)); bottom: calc(118px + env(safe-area-inset-bottom)); font: bold 13px Arial, sans-serif; color: #d8f0d0; text-shadow: 0 1px 2px #000; letter-spacing: 1px; }

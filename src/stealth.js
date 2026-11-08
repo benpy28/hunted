@@ -46,7 +46,8 @@ export function hideSpotNear(x, y, z, r = 1.0) {
   let best = null, bd = 1e9;
   for (const S of hideSpots) {
     if (!S.stand) continue;
-    const dx = Math.max(0, Math.abs(x - S.x) - S.lx), dz = Math.max(0, Math.abs(z - S.z) - S.lz), d = Math.hypot(dx, dz);
+    const dx = Math.max(0, Math.abs(x - S.x) - S.lx), dz = Math.max(0, Math.abs(z - S.z) - S.lz);
+    const d = S.indoor ? Math.max(0, Math.hypot(x - S.stand.x, z - S.stand.z) - 0.35) : Math.hypot(dx, dz); // indoor ones: from the room side only, never through a wall
     if (d < r && d < bd) { bd = d; best = S; }
   }
   return best;
@@ -61,6 +62,7 @@ export function enterHide(S, K) {
   const P = K.player;
   SK_STATE.hide = S; SK_STATE.hideT = 0;
   P.hide = S; P.x = S.stand.x; P.z = S.stand.z; P.vx = P.vz = 0; P.crouch = 0;
+  if (S.eye) { P.yaw = Math.atan2(-S.stand.ux, -S.stand.uz); P.pitch = 0; } // indoors: you face out through the slats
   S.lift = 1;
   K.sfx.lid();
   // anyone who watched you climb in knows exactly which bin you're in
@@ -70,18 +72,19 @@ export function enterHide(S, K) {
     const d = Math.hypot(h.x - P.x, h.z - P.z);
     if (d < 30 && h.hasLOS && (h.state === 'chase' || h.sus > 0.35)) { h.checkSpot = S; seen++; if (h.state !== 'chase') h.alert(mr(0.3, 0.8)); }
   }
-  K.showMsg(seen ? 'THEY SAW YOU GET IN. NOT GREAT' : 'IN THE BIN. LIE STILL. E TO CLIMB OUT', 2.5);
+  if (S.kind !== 'lorry') K.showMsg(seen ? 'THEY SAW YOU GET IN. NOT GREAT' : `IN THE ${hideName(S)}. KEEP STILL. E TO GET OUT`, 2.5);
 }
+export const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY' })[S.kind] || 'BIN';
 export function leaveHide(K, found = null) {
   const S = SK_STATE.hide; if (!S) return;
   SK_STATE.hide = null; K.player.hide = null; S.lift = 1;
   K.sfx.lid();
   K.player.x = S.stand.x; K.player.z = S.stand.z; K.player.y = Math.max(K.player.y, floorAt(S.stand.x, S.stand.z, 0.5));
-  if (SK_STATE.hideT > 40) { SK_STATE.smellT = 70; K.showMsg('YOU SMELL OF BINS. PEOPLE WILL NOTICE', 2.5); }
+  if (SK_STATE.hideT > 40 && S.kind === 'dumpster') { SK_STATE.smellT = 70; K.showMsg('YOU SMELL OF BINS. PEOPLE WILL NOTICE', 2.5); }
   for (const h of K.hunters()) if (h.checkSpot === S) h.checkSpot = null;
   if (found) {
-    K.say(found, mpick(['GOT YOU!', 'OUT YOU COME', 'FOUND THEM! IN THE BIN!', 'YOU STINK. AND YOU\'RE NICKED']));
-    found.alert(); K.shout(found); K.showMsg('THEY HAULED YOU OUT OF THE BIN', 2.5);
+    K.say(found, mpick(S.kind === 'dumpster' ? ['GOT YOU!', 'OUT YOU COME', 'FOUND THEM! IN THE BIN!', 'YOU STINK. AND YOU\'RE NICKED'] : ['GOT YOU!', 'OUT YOU COME', `FOUND THEM! IN THE ${hideName(S)}!`, 'HIDE AND SEEK\'S OVER']));
+    found.alert(); K.shout(found); K.showMsg(`THEY HAULED YOU OUT OF THE ${hideName(S)}`, 2.5);
     K.hurt(4, found.x, found.z, 4); K.addHeat(3);
   }
 }
@@ -107,7 +110,9 @@ export function hunterPeekArrive(h, K) {
   S.lift = 0.8; if (Math.abs(S.x - K.player.x) + Math.abs(S.z - K.player.z) < 25) K.sfx.lid();
   h.waitT = 1.2; h.face = Math.atan2(S.x - h.x, S.z - h.z);
   if (SK_STATE.hide === S) { leaveHide(K, h); return; }
-  if (Math.random() < 0.35) K.say(h, mpick(['JUST RUBBISH', 'NOTHING. UGH, THE SMELL', 'NOT IN THIS ONE', 'EMPTY. WELL, NOT EMPTY. BUT NO ONE']));
+  if (Math.random() > 0.35) return;
+  if (S.kind !== 'dumpster') K.say(h, mpick(['NOBODY IN HERE', 'JUST COATS', 'EMPTY', 'HELLO? NO. NOBODY']));
+  else K.say(h, mpick(['JUST RUBBISH', 'NOTHING. UGH, THE SMELL', 'NOT IN THIS ONE', 'EMPTY. WELL, NOT EMPTY. BUT NO ONE']));
 }
 
 // =====================================================================
@@ -131,7 +136,7 @@ function placeJunk() {
   const spots = [];
   const add = (x, z, kind) => { const p = randomOpenPoint(x, z, 0.3, 1.6, 6); if (p && !hideSpots.some((S) => S.stand && Math.hypot(S.stand.x - p.x, S.stand.z - p.z) < 1.6)) spots.push({ kind: kind || (Math.random() < 0.5 ? 'bottle' : 'can'), x: p.x, z: p.z }); };
   lifeSpots.forEach((L, i) => { if (i % 2 === 0) add(L.x, L.z); });
-  hideSpots.forEach((S) => { if (S.stand) { const x = S.stand.x + S.stand.ux * 1.5, z = S.stand.z + S.stand.uz * 1.5; add(x, z); if (Math.random() < 0.6) add(x, z, 'bottle'); } });
+  hideSpots.forEach((S) => { if (S.stand && S.kind === 'dumpster') { const x = S.stand.x + S.stand.ux * 1.5, z = S.stand.z + S.stand.uz * 1.5; add(x, z); if (Math.random() < 0.6) add(x, z, 'bottle'); } });
   walkIns.forEach((W, i) => { if (i % 3 === 0) add(W.x, W.z); });
   for (const k of ['bottle', 'can']) {
     const list = spots.filter((s) => s.kind === k);
@@ -475,7 +480,7 @@ export function pickPocket(h, K) {
 // =====================================================================
 export function buildStealth() {
   if (stBuilt) return; stBuilt = true;
-  for (const S of hideSpots) S.stand = standPoint(S);
+  for (const S of hideSpots) if (!S.stand) S.stand = standPoint(S);
   placeJunk(); placeCams(); placePigeons();
 }
 export function resetStealth(K) {
