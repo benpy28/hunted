@@ -718,6 +718,7 @@ function citySkeleton(city, canalRow = -1) {
 // ---------------------------------------------------------------------
 export const lotHooks = { walkIn: null, courtyard: null, house: null, warehouse: null };
 export const courtyards = []; // {x0,x1,z0,z1,city} open yards inside blocks
+export const gardenSheds = []; // {x, z} sheds in the shared back gardens of suburban blocks (door on the +z side)
 export function perimeterBlock(I, P) {
   const { ix0, ix1, iz0, iz1 } = I;
   const st = (x0, x1, z0, z1) => streetFaces(x0, x1, z0, z1, ix0, ix1, iz0, iz1);
@@ -969,7 +970,8 @@ function gardenThing(x, z) {
     for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) propBuf.box(x + dx - 0.04, x + dx + 0.04, 0.2, 0.8, z + dz - 0.04, z + dz + 0.04, 0x5a5a60);
     propBuf.cyl(x, z, 1.6, 1.6, 0.75, 0.85, 0x2a6ab0, 14); propBuf.cyl(x, z, 1.4, 1.4, 0.851, 0.86, 0x1a1a1a, 14);
     addCollider(x - 1.4, x + 1.4, z - 1.4, z + 1.4, 0.85, { bouncy: true });
-  } else if (k < 0.6) { // garden shed
+  } else if (k < 0.6) { // garden shed (gardenSheds: the market module makes them somewhere to hide)
+    gardenSheds.push({ x, z });
     propBuf.box(x - 1.2, x + 1.2, 0.2, 2.2, z - 1, z + 1, spick([0x8a6a4a, 0x5a7a5a, 0x8a8a7a]));
     propBuf.prism(x - 1.35, x + 1.35, z - 1.15, z + 1.15, 2.2, 0.6, 0x3a3a40, true);
     propBuf.face('pz', z + 1.02, x - 0.4, x + 0.4, 0.2, 1.9, 0x5a3a28);

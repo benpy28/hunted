@@ -1310,6 +1310,7 @@ function citySkeleton(city, canalRow = -1) {
 // ---------------------------------------------------------------------
 const lotHooks = { walkIn: null, courtyard: null, house: null, warehouse: null };
 const courtyards = []; // {x0,x1,z0,z1,city} open yards inside blocks
+const gardenSheds = []; // {x, z} sheds in the shared back gardens of suburban blocks (door on the +z side)
 function perimeterBlock(I, P) {
   const { ix0, ix1, iz0, iz1 } = I;
   const st = (x0, x1, z0, z1) => streetFaces(x0, x1, z0, z1, ix0, ix1, iz0, iz1);
@@ -1561,7 +1562,8 @@ function gardenThing(x, z) {
     for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) propBuf.box(x + dx - 0.04, x + dx + 0.04, 0.2, 0.8, z + dz - 0.04, z + dz + 0.04, 0x5a5a60);
     propBuf.cyl(x, z, 1.6, 1.6, 0.75, 0.85, 0x2a6ab0, 14); propBuf.cyl(x, z, 1.4, 1.4, 0.851, 0.86, 0x1a1a1a, 14);
     addCollider(x - 1.4, x + 1.4, z - 1.4, z + 1.4, 0.85, { bouncy: true });
-  } else if (k < 0.6) { // garden shed
+  } else if (k < 0.6) { // garden shed (gardenSheds: the market module makes them somewhere to hide)
+    gardenSheds.push({ x, z });
     propBuf.box(x - 1.2, x + 1.2, 0.2, 2.2, z - 1, z + 1, spick([0x8a6a4a, 0x5a7a5a, 0x8a8a7a]));
     propBuf.prism(x - 1.35, x + 1.35, z - 1.15, z + 1.15, 2.2, 0.6, 0x3a3a40, true);
     propBuf.face('pz', z + 1.02, x - 0.4, x + 0.4, 0.2, 1.9, 0x5a3a28);
@@ -4151,7 +4153,7 @@ const pickR = (arr) => arr[Math.floor(Math.random() * arr.length)];
 // fill in whatever the caller didn't choose: hairstyle, face, glasses, beard...
 function randomizeLook(look) {
   if (look.hairStyle === undefined) look.hairStyle = pickR(HAIR_STYLES);
-  if (look.cap && ['afro', 'bun', 'mohawk', 'spiky', 'curly'].includes(look.hairStyle)) look.hairStyle = 'short';
+  if ((look.cap || look.hat) && ['afro', 'bun', 'mohawk', 'spiky', 'curly', 'long', 'ponytail'].includes(look.hairStyle)) look.hairStyle = 'short';
   if (Math.random() < 0.06) look.hair = pickR(DYED);
   if (!look.face) look.face = { eyes: pickR(EYES), mouth: pickR(MOUTHS), freckles: Math.random() < 0.15, glasses: Math.random() < 0.15, stache: Math.random() < 0.08, blush: Math.random() < 0.25 };
   if (look.beard === undefined) look.beard = Math.random() < 0.14 && !['long', 'bob', 'ponytail', 'bun'].includes(look.hairStyle);
@@ -4178,7 +4180,7 @@ function buildPerson(look) {
   p.headMats = [sk, sk, lam(look.hair), sk, faceMat(look.skin, look.hair, look.face, 'neutral'), sk];
   p.head = new THREE.Mesh(PG.head, p.headMats); p.head.position.set(0, 1.71, 0); g.add(p.head);
   mk(featGeo, look.skin, 0, 0, 0, p.head);
-  const hg = hairGeo(look.cap ? (look.hairStyle === 'bald' ? 'bald' : 'buzz') : look.hairStyle, look.beard);
+  const hg = hairGeo(look.hat === 'headscarf' || look.hat === 'chef' ? 'bald' : look.cap || look.hat ? (look.hairStyle === 'bald' ? 'bald' : 'buzz') : look.hairStyle, look.beard);
   if (hg) mk(hg, look.hair, 0, 0, 0, p.head);
   p.armL = mk(PG.arm, look.shirt, -0.395 * look.build, 1.5, 0);
   p.armR = mk(PG.arm, look.shirt, 0.395 * look.build, 1.5, 0);
@@ -4187,8 +4189,70 @@ function buildPerson(look) {
   if (look.gun) mk(PG.gun, 0x1c1c20, 0, 0, 0, p.armR);
   if (look.cap) { mk(PG.cap, look.cap, 0, 0.27, 0, p.head); mk(PG.brim, look.cap, 0, 0.23, 0.26, p.head); }
   if (look.vest) mk(PG.vest, look.vest, 0, 0.05, 0, p.torso);
-  mk(PG.shoe, 0x1a1a1a, 0, -0.78, 0.04, p.legL); mk(PG.shoe, 0x1a1a1a, 0, -0.78, 0.04, p.legR);
+  mk(PG.shoe, look.shoes || 0x1a1a1a, 0, -0.78, 0.04, p.legL); mk(PG.shoe, look.shoes || 0x1a1a1a, 0, -0.78, 0.04, p.legR);
+  dressExtras(p, look, mk);
   return p;
+}
+// ---------------------------------------------------------------------
+// what people wear and carry, so a crowd reads as a town full of different people
+// ---------------------------------------------------------------------
+const XG = {
+  beanie: new THREE.BoxGeometry(0.42, 0.16, 0.42), bobble: new THREE.BoxGeometry(0.12, 0.12, 0.12),
+  flatcap: new THREE.BoxGeometry(0.43, 0.07, 0.46), sunhat: new THREE.BoxGeometry(0.7, 0.04, 0.7), crown: new THREE.BoxGeometry(0.4, 0.14, 0.4),
+  hardhat: new THREE.BoxGeometry(0.44, 0.14, 0.46), hardbrim: new THREE.BoxGeometry(0.5, 0.03, 0.56), chef: new THREE.BoxGeometry(0.36, 0.3, 0.36),
+  scarf: new THREE.BoxGeometry(0.42, 0.12, 0.42), scarfTail: new THREE.BoxGeometry(0.1, 0.36, 0.05), tie: new THREE.BoxGeometry(0.07, 0.42, 0.02),
+  apron: new THREE.BoxGeometry(0.5, 0.9, 0.03), coat: new THREE.BoxGeometry(0.64, 0.5, 0.38), skirt: new THREE.BoxGeometry(0.62, 0.42, 0.38),
+  pack: new THREE.BoxGeometry(0.42, 0.5, 0.2), strap: new THREE.BoxGeometry(0.06, 0.6, 0.36), satchel: new THREE.BoxGeometry(0.3, 0.26, 0.1),
+  bag: new THREE.BoxGeometry(0.26, 0.3, 0.12).translate(0, -0.85, 0), case: new THREE.BoxGeometry(0.08, 0.3, 0.42).translate(0, -0.85, 0),
+  stick: new THREE.BoxGeometry(0.04, 0.95, 0.04).translate(0, -0.95, 0.1), headscarf: new THREE.BoxGeometry(0.42, 0.3, 0.42),
+};
+function dressExtras(p, L, mk) {
+  const H = p.head, T = p.torso;
+  if (L.hat === 'beanie' || L.hat === 'bobble') { mk(XG.beanie, L.hatCol, 0, 0.24, 0, H); if (L.hat === 'bobble') mk(XG.bobble, 0xf0f0f0, 0, 0.36, 0, H); }
+  else if (L.hat === 'flatcap') { const m = mk(XG.flatcap, L.hatCol, 0, 0.22, 0.03, H); m.rotation.x = -0.12; }
+  else if (L.hat === 'sunhat') { mk(XG.sunhat, L.hatCol, 0, 0.2, 0, H); mk(XG.crown, L.hatCol, 0, 0.28, 0, H); }
+  else if (L.hat === 'hardhat') { mk(XG.hardhat, L.hatCol, 0, 0.26, 0, H); mk(XG.hardbrim, L.hatCol, 0, 0.2, 0.02, H); }
+  else if (L.hat === 'chef') mk(XG.chef, 0xf4f4f0, 0, 0.34, 0, H);
+  else if (L.hat === 'headscarf') mk(XG.headscarf, L.hatCol, 0, 0.06, -0.02, H);
+  if (L.coat) { mk(XG.coat, L.coat, 0, -0.55, 0, T); T.material = lam(L.coat); p.armL.material = p.armR.material = lam(L.coat); }
+  if (L.skirt) mk(XG.skirt, L.skirt, 0, -0.52, 0, T);
+  if (L.scarf) { mk(XG.scarf, L.scarf, 0, 0.38, 0, T); mk(XG.scarfTail, L.scarf, 0.12, 0.18, 0.2, T); }
+  if (L.tie) mk(XG.tie, L.tie, 0, 0.06, 0.18, T);
+  if (L.apron) mk(XG.apron, L.apron, 0, -0.18, 0.185, T);
+  if (L.bag === 'backpack') { mk(XG.pack, L.bagCol, 0, 0.0, -0.27, T); }
+  else if (L.bag === 'satchel') { mk(XG.strap, L.bagCol, 0, 0.05, 0, T).rotation.z = 0.7; mk(XG.satchel, L.bagCol, 0.28, -0.32, 0.06, T); }
+  else if (L.bag === 'shopping') { mk(XG.bag, L.bagCol, 0, 0, 0, p.armL); mk(XG.bag, mpickP([0xf0f0f0, 0xe8c040, 0x3a8a4a]), 0, 0, 0, p.armR); }
+  else if (L.bag === 'case') mk(XG.case, 0x2a1a10, 0, 0, 0, p.armL);
+  if (L.old) { T.rotation.x = 0.18; H.position.z += 0.08; H.position.y -= 0.04; p.stick = mk(XG.stick, 0x5a3a22, 0, 0, 0, p.armR); }
+}
+const mpickP = (a) => a[Math.floor(Math.random() * a.length)];
+const HATCOLS = [0x2a3a6a, 0xc83a3a, 0x3a6a3a, 0xe0d0a0, 0x2a2a2a, 0x8a5a9a, 0xe08a2a, 0x6a6a72];
+const COATCOLS = [0x4a3a2a, 0x2a2a30, 0x6a5040, 0x3a4a5a, 0x8a2a2a, 0xc0a070, 0x2a4a3a];
+// everyday people dressed for who they are and where they are: office types downtown, pensioners in the
+// suburbs, dock workers in hi-vis. Returns {kind, slow} so the caller can make them move to match.
+function dressCivilian(look, town) {
+  const r = Math.random(), P = mpickP;
+  const pick = (w) => { let t = 0; for (const [k, p] of w) { t += p; if (r < t) return k; } return null; };
+  const kind = town === 'ASHFORD' ? pick([['pensioner', 0.2], ['parent', 0.14], ['gardener', 0.08], ['teen', 0.12], ['shopper', 0.12], ['smart', 0.06]])
+    : town === 'SALTMARSH DOCKS' ? pick([['docker', 0.3], ['fisher', 0.12], ['pensioner', 0.06], ['office', 0.08], ['teen', 0.06], ['chef', 0.04]])
+    : pick([['office', 0.22], ['student', 0.12], ['smart', 0.1], ['shopper', 0.1], ['pensioner', 0.07], ['chef', 0.03], ['tourist', 0.06]]);
+  const o = { kind, slow: 1 };
+  if (kind === 'office') { look.shirt = P([0xe8ecf0, 0xc8d8f0, 0xf0f0f0, 0xd0e0d0]); look.pants = P([0x23262e, 0x2a2a36, 0x3b3f4a]); look.tie = P([0xa02a2a, 0x2a3a8a, 0x2a6a3a, 0x6a2a6a]); look.shoes = 0x1a1210; if (Math.random() < 0.45) look.bag = 'case'; if (Math.random() < 0.3) look.coat = P(COATCOLS); }
+  else if (kind === 'student' || kind === 'teen') { look.shirt = P([0xc83a3a, 0x3a5a8c, 0x2a2a2a, 0x6b3a8c, 0x5a7a2a, 0xe0c030]); look.bag = 'backpack'; look.bagCol = P([0x2a2a2a, 0xc83a3a, 0x2a5aa0, 0xe0a020]); if (Math.random() < 0.4) { look.hat = 'beanie'; look.hatCol = P(HATCOLS); } look.shoes = P([0xf0f0f0, 0x1a1a1a, 0xc83a3a]); }
+  else if (kind === 'smart') { look.coat = P(COATCOLS); if (Math.random() < 0.6) look.scarf = P([0xc83a3a, 0xe0c060, 0x3a5a8c, 0xf0f0f0, 0x8a5a9a]); if (Math.random() < 0.4) look.skirt = P([0x2a2a30, 0x6a2a3a, 0x3a3a5a]); if (Math.random() < 0.3) { look.bag = 'satchel'; look.bagCol = P([0x6a3a1a, 0x1a1a1a]); } }
+  else if (kind === 'shopper' || kind === 'parent') { look.bag = 'shopping'; look.bagCol = P([0xf0f0f0, 0xe8c040, 0x3a8a4a, 0xc83a3a]); if (Math.random() < 0.35) look.skirt = P([0x3a5a8c, 0x8a3a3a, 0x2a2a2a, 0xd0a060]); }
+  else if (kind === 'pensioner') {
+    look.old = true; look.hair = P([0xd8d8d8, 0xe8e8e8, 0xb8b8b8, 0x9a9a9a]); look.coat = P([0x6a5040, 0x4a5a4a, 0x8a7a6a, 0x3a3a5a, 0xa08a70]);
+    if (Math.random() < 0.45) { look.hat = Math.random() < 0.5 ? 'flatcap' : 'headscarf'; look.hatCol = P([0x6a5a4a, 0x4a4a52, 0xc85a6a, 0x7a8a6a]); }
+    if (Math.random() < 0.3) look.skirt = P([0x5a4a6a, 0x4a3a2a, 0x3a4a5a]); if (Math.random() < 0.3) { look.bag = 'shopping'; look.bagCol = P([0x3a6a3a, 0xa03a3a]); }
+    o.slow = 0.7;
+  } else if (kind === 'gardener') { look.shirt = P([0x5a7a2a, 0x8a6a4a, 0xd0c090]); look.apron = 0x3a6a3a; look.hat = 'sunhat'; look.hatCol = 0xe0d0a0; }
+  else if (kind === 'docker') { look.vest = P([0xff7a1a, 0xe8e020, 0xff7a1a]); look.hat = Math.random() < 0.7 ? 'hardhat' : 'beanie'; look.hatCol = look.hat === 'hardhat' ? P([0xf0e020, 0xf0f0f0, 0xff8a2a]) : P(HATCOLS); look.pants = P([0x2c3e66, 0x3b3f4a, 0x23262e]); look.shoes = 0x4a3a2a; }
+  else if (kind === 'fisher') { look.coat = P([0xf0c020, 0xe8a020, 0x2a5aa0]); look.hat = 'beanie'; look.hatCol = P([0x2a3a6a, 0xc83a3a, 0x2a2a2a]); look.shoes = 0x1a1a1a; }
+  else if (kind === 'chef') { look.shirt = 0xf4f4f0; look.pants = P([0x2a2a2a, 0x3a3a3a]); look.apron = 0xe8e8e0; look.hat = 'chef'; }
+  else if (kind === 'tourist') { look.hat = 'sunhat'; look.hatCol = P([0xe0d0a0, 0xf0f0f0, 0xe08a2a]); look.bag = 'backpack'; look.bagCol = P([0x2a5aa0, 0xe0a020]); look.shirt = P([0xe07aa0, 0x2f7f8f, 0xf0e8d0, 0xd6763a]); }
+  if (look.hat && look.hat !== 'headscarf' && look.hat !== 'chef') look.cap = null;
+  return o;
 }
 
 const ragdolls = [];
@@ -4523,6 +4587,7 @@ function climbStep(dt, P, inp, cb, fx, fz) {
 
 
 
+
 const JOBS = ['vendor', 'sweeper', 'busker', 'courier', 'jogger', 'tourist', 'dogwalker'];
 const LIFE_JOB_LINES = {
   vendor: ['HOT PRETZELS!', 'GET YOUR CHURROS!', 'TWO FOR ONE!', 'FRESH LEMONADE!', 'HOT DOGS! HOT!', 'BEST IN TOWN!'],
@@ -4580,6 +4645,7 @@ function giveLifeJobProps(h) {
 // lifeDogs
 // ---------------------------------------------------------------------
 const lifeDogs = [];
+const LIFE_DOG_STATS = { alerts: 0 };
 const LIFE_DOG_COLS = [0x8a5a2a, 0xe0d0b0, 0x2a2a2a, 0xc0a070, 0xf0f0f0, 0x6a4a3a];
 function makeLifeDog(owner) {
   const g = new THREE.Group(), c = mpick(LIFE_DOG_COLS), s = mr(0.7, 1.15);
@@ -4602,6 +4668,14 @@ function updateLifeDogs(dt, C) {
     } else {
       const fx = Math.sin(O.face), fz = Math.cos(O.face);
       tx = O.x - fx * 0.4 + fz * 0.9; tz = O.z - fz * 0.4 - fx * 0.9;
+      // that nose: a dog that passes your hiding place smells you, strains at the lead and barks until its owner looks
+      D.sniffT = (D.sniffT || 0) - dt;
+      if (D.sniffT <= 0) { D.sniffT = 0.4; const S = sniffHide(D.x, D.z, 5); if (S && D.onto !== S) { D.onto = S; D.ontoT = 0; D.told = false; } else if (!S) D.onto = null; }
+      if (D.onto && D.onto.stand) {
+        D.ontoT += dt; tx = D.onto.stand.x; tz = D.onto.stand.z;
+        if (D.ontoT > 0.6 && Math.floor(D.ontoT / 0.7) !== Math.floor((D.ontoT - dt) / 0.7)) C.say(O, mpick(['WOOF!', 'WOOF WOOF!', 'GRRR... WOOF!', 'ARF! ARF!']));
+        if (D.ontoT > 2.2 && !D.told) { D.told = true; LIFE_DOG_STATS.alerts++; if (C.dogAlert) C.dogAlert(O, D.onto); }
+      }
       const d = Math.hypot(tx - D.x, tz - D.z); spd = d > 6 ? 7 : d > 0.4 ? Math.min(4.5, d * 2.2) : 0;
       if (d > 25) { D.x = tx; D.z = tz; spd = 0; }
     }
@@ -4623,6 +4697,13 @@ function clearCityLife() { for (const D of lifeDogs) scene.remove(D.g); lifeDogs
 // jobs and activities
 // ---------------------------------------------------------------------
 const lifeVendorCarts = new Map(); // cart spot -> vendor
+// put someone behind a market stall (or any cart) as its trader
+function hireVendor(h, spot) {
+  if (lifeVendorCarts.has(spot) || h.job) return false;
+  lifeVendorCarts.set(spot, h); h.cart = spot; h.job = 'vendor'; giveLifeJobProps(h);
+  return true;
+}
+const vendorOf = (spot) => lifeVendorCarts.get(spot) || null;
 // called once when someone is spawned: maybe give them a job
 function assignJob(h, C) {
   if (h.type === 'cop' || h.type === 'brute' || h.contract || h.rival || h.guard) return;
@@ -4651,7 +4732,7 @@ function nearestLifeSpot(h, kind, maxD) {
   return best;
 }
 function lifeCartSides(s) { // the two long sides of a cart: one for the vendor, one for customers
-  const px = s.alongX ? 0 : 1, pz = s.alongX ? 1 : 0, off = s.alongX ? 1.15 : 1.15;
+  const sg = s.flip ? -1 : 1, px = s.alongX ? 0 : sg, pz = s.alongX ? sg : 0, off = 1.15; // flip: a market stall with its customers on the other side
   return [{ x: s.x + px * off, z: s.z + pz * off, face: Math.atan2(-px, -pz) }, { x: s.x - px * off, z: s.z - pz * off, face: Math.atan2(px, pz) }].filter((q) => !blockedAt(q.x, q.z));
 }
 function lifeBegin(h, kind, tx, tz, face, dur, extra) {
@@ -4734,6 +4815,7 @@ function routineVisit(h, want, C) {
 function lifeStart(h, C) {
   if (h.act || h.state === 'chase' || h.huntT > 0 || Math.abs(h.y) > 1 || h.contract || h.rival || h.guard) return false;
   const hr = C.hour, night = hr < 6 || hr > 22.5, J = h.job;
+  if (J === 'vendor' && h.cart && h.cart.stall) { const B = h.cart.stall.back, F = h.cart.stall.front; return lifeBegin(h, 'vend', B.x, B.z, Math.atan2(F.x - B.x, F.z - B.z), night ? 20 : mr(240, 480)); } // market traders stay put
   if (J === 'vendor' && h.cart) { const sd = lifeCartSides(h.cart)[0]; if (sd) return lifeBegin(h, 'vend', sd.x, sd.z, sd.face, night ? 20 : mr(60, 140)); }
   if (J === 'busker' && Math.random() < 0.8) return lifeBegin(h, 'busk', h.x, h.z, h.face, mr(40, 90));
   if (J === 'tourist' && Math.random() < 0.6) return lifeBegin(h, 'photo', h.x, h.z, h.face + mr(-1.5, 1.5), mr(3, 6));
@@ -4751,7 +4833,7 @@ function lifeStart(h, C) {
   if (r < 0.32) { const s = nearestLifeSpot(h, 'bench', 45); if (s) { s.taken = h; return lifeBegin(h, 'sit', s.x, s.z, s.face, mr(10, 30), { spot: s }); } }
   if (r < (lunch ? 0.6 : 0.42)) {
     let best = null, bd = 50; for (const s of lifeSpots) if (s.kind === 'cart' && lifeVendorCarts.has(s)) { const d = Math.abs(s.x - h.x) + Math.abs(s.z - h.z); if (d < bd) { bd = d; best = s; } }
-    if (best) { const sd = lifeCartSides(best); const q = sd[1] || sd[0]; if (q) { const n = (best.queue = (best.queue || 0) + 1) - 1, ux = Math.sin(q.face), uz = Math.cos(q.face); return lifeBegin(h, 'queue', q.x - ux * n * 0.9, q.z - uz * n * 0.9, q.face, mr(6, 12), { cart: best }); } }
+    if (best) { const sd = lifeCartSides(best); const q = best.stall ? { x: best.stall.front.x, z: best.stall.front.z, face: Math.atan2(best.stall.back.x - best.stall.front.x, best.stall.back.z - best.stall.front.z) } : sd[1] || sd[0]; if (q) { const n = (best.queue = (best.queue || 0) + 1) - 1, ux = Math.sin(q.face), uz = Math.cos(q.face); return lifeBegin(h, 'queue', q.x - ux * n * 0.9, q.z - uz * n * 0.9, q.face, mr(6, 12), { cart: best }); } }
   }
   if (r < 0.62) { // find someone to talk to
     let best = null, bd = 14;
@@ -4837,7 +4919,7 @@ function lifeStep(h, dt, C) {
     }
   } else if (A.lineT <= 0) {
     A.lineT = mr(5, 11);
-    const lines = VISIT_LINES[A.kind] && A.kind !== 'home' ? VISIT_LINES[A.kind] : A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
+    const lines = VISIT_LINES[A.kind] && A.kind !== 'home' ? VISIT_LINES[A.kind] : A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? (h.cart && h.cart.lines) || LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
     if (lines && heard && Math.random() < 0.6) C.say(h, mpick(lines));
   }
   if (A.kind === 'photo' && A.phase === 'do' && !A.flashed && A.t > 1.2) { A.flashed = true; const fx = Math.sin(h.face), fz = Math.cos(h.face); emitPuff(h.x + fx * 0.5, h.y + 1.6, h.z + fz * 0.5, { life: 0.15, size0: 0.5, size1: 1.2, alpha: 0.9, color: 0xffffff }); }
@@ -4893,7 +4975,7 @@ function lifePose(h, dt, C) {
   else if (A.kind === 'deliver') { p.armL.rotation.x = p.armR.rotation.x = -1.25; }
 }
 function updateCityLife(dt, C) { updateLifeDogs(dt, C); }
-const cityLifeDebug = { dogs: lifeDogs, vendorCarts: lifeVendorCarts, routineWants, routineVisit };
+const cityLifeDebug = { dogs: lifeDogs, dogStats: LIFE_DOG_STATS, makeLifeDog: (h) => makeLifeDog(h), vendorCarts: lifeVendorCarts, routineWants, routineVisit };
 
 // Cartoon knockdowns: every weapon floors people in its own silly, bloodless way. Laser eyes turn
 // the bit they hit into black cartoon ash that crumbles away as they go flying, the crowbar sends
@@ -6435,7 +6517,9 @@ function enterHide(S, K) {
   }
   if (S.kind !== 'lorry') K.showMsg(seen ? 'THEY SAW YOU GET IN. NOT GREAT' : `IN THE ${hideName(S)}. KEEP STILL. E TO GET OUT`, 2.5);
 }
-const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY' })[S.kind] || 'BIN';
+const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY', stall: 'MARKET STALL', shed: 'SHED', loo: 'PORTALOO', compost: 'COMPOST BIN' })[S.kind] || 'BIN';
+// a dog's nose: the hiding place you're in, if it's within r of (x, z) (dogs can't smell you over a moving lorry)
+function sniffHide(x, z, r) { const S = SK_STATE.hide; if (!S || S.kind === 'lorry') return null; return Math.abs(S.x - x) < r && Math.abs(S.z - z) < r ? S : null; }
 function leaveHide(K, found = null) {
   const S = SK_STATE.hide; if (!S) return;
   SK_STATE.hide = null; K.player.hide = null; S.lift = 1;
@@ -6470,7 +6554,11 @@ function hunterPeekArrive(h, K) {
   if (!S) return;
   S.lift = 0.8; if (Math.abs(S.x - K.player.x) + Math.abs(S.z - K.player.z) < 25) K.sfx.lid();
   h.waitT = 1.2; h.face = Math.atan2(S.x - h.x, S.z - h.z);
-  if (SK_STATE.hide === S) { leaveHide(K, h); return; }
+  if (SK_STATE.hide === S) {
+    // a portaloo door opened on you: mostly they're too embarrassed to look properly
+    if (S.kind === 'loo' && Math.random() < 0.65) { K.say(h, mpick(['OH! SORRY! SORRY!', 'OCCUPIED. RIGHT. SORRY', 'LOCK THE DOOR, FOR GOODNESS\' SAKE', 'I\'LL... WAIT OVER HERE']));  return; }
+    leaveHide(K, h); return;
+  }
   if (Math.random() > 0.35) return;
   if (S.kind !== 'dumpster') K.say(h, mpick(['NOBODY IN HERE', 'JUST COATS', 'EMPTY', 'HELLO? NO. NOBODY']));
   else K.say(h, mpick(['JUST RUBBISH', 'NOTHING. UGH, THE SMELL', 'NOT IN THIS ONE', 'EMPTY. WELL, NOT EMPTY. BUT NO ONE']));
@@ -6482,12 +6570,18 @@ function hunterPeekArrive(h, K) {
 const JUNK_SHAPES = {
   bottle: stGeo((b) => { b.cyl(0, 0, 0.06, 0.06, -0.12, 0.06, 0x2f7a3a, 7); b.cyl(0, 0, 0.06, 0.025, 0.06, 0.12, 0x2f7a3a, 7); b.cyl(0, 0, 0.025, 0.025, 0.12, 0.18, 0x3a8a4a, 6); }),
   can: stGeo((b) => { b.cyl(0, 0, 0.045, 0.045, -0.07, 0.07, 0xc8c8cc, 8); b.cyl(0, 0, 0.046, 0.046, -0.03, 0.04, 0xc0302a, 8, false); }),
+  // from the market's bric-a-brac stall: a string of bangers, and a wind-up alarm clock
+  banger: stGeo((b) => { for (const x of [-0.05, 0, 0.05]) b.cyl(x, 0, 0.022, 0.022, -0.09, 0.09, 0xd83a2a, 6); b.cyl(0, 0, 0.006, 0.006, 0.09, 0.16, 0xe8e0a0, 4); }),
+  clock: stGeo((b) => { b.cyl(0, 0, 0.09, 0.09, -0.08, 0.08, 0xd0b030, 10); b.cyl(0, 0, 0.075, 0.075, -0.082, 0.082, 0xf4f0e0, 10, false); for (const x of [-0.06, 0.06]) b.cyl(x, 0, 0.04, 0.04, 0.08, 0.12, 0xd0b030, 6); }),
 };
+const JUNK_NAMES = { bottle: ['BOTTLE', 'BOTTLES'], can: ['CAN', 'CANS'], banger: ['BANGER', 'BANGERS'], clock: ['ALARM CLOCK', 'ALARM CLOCKS'] };
 const junk = []; // {kind, x, y, z, ry, i, taken, mesh}
 const junkMeshes = {};
 const flying = []; // thrown {kind, x,y,z, vx,vy,vz, spin, mesh}
-const flyMeshes = { bottle: new THREE.Mesh(JUNK_SHAPES.bottle, stMat), can: new THREE.Mesh(JUNK_SHAPES.can, stMat) };
-const flyPool = { bottle: [], can: [] };
+const flyMeshes = {}, flyPool = {};
+for (const k in JUNK_SHAPES) { flyMeshes[k] = new THREE.Mesh(JUNK_SHAPES[k], stMat); flyPool[k] = []; }
+// things that go off after they land: bangers pop, alarm clocks ring for a while
+const fuses = []; // {kind, x, y, z, t, rings, m}
 function junkDraw(J) {
   const M = junkMeshes[J.kind];
   if (J.taken) hidden(M, J.i); else stSet(M, J.i, J.x, J.y, J.z, Math.PI / 2, J.ry);
@@ -6551,13 +6645,18 @@ function noiseAt(x, z, r, K, what = 'smash') {
       h.state = 'search'; h.alertT = -1; h.huntT = 14; h.sus = 0.5;
     } else { h.huntT = Math.max(h.huntT, 10); K.interrupt(h); }
     h.wt = randomOpenPoint(x, z, 0, 2.5, 6) || { x, z }; h.waitT = 0; h.lured = 6; n++;
-    if (n <= 2 && Math.random() < 0.7) K.say(h, mpick(what === 'smash' ? ['WHAT WAS THAT?', 'OVER THERE!', 'WHO\'S THAT?', 'HELLO?'] : ['WHAT\'S THAT?', 'HUH?']));
+    if (n <= 2 && Math.random() < 0.7) K.say(h, mpick(what === 'smash' ? ['WHAT WAS THAT?', 'OVER THERE!', 'WHO\'S THAT?', 'HELLO?'] : what === 'bang' ? ['GUNSHOTS?!', 'WAS THAT A GUN?', 'OVER THERE!', 'FIREWORKS? NOW?'] : what === 'ring' ? ['WHOSE ALARM IS THAT?', 'SOMEONE TURN THAT OFF', 'IT\'S COMING FROM OVER THERE'] : ['WHAT\'S THAT?', 'HUH?']));
   }
   if (n && K.G.lastSeenT > 1.5) { K.G.lkp.x = x; K.G.lkp.z = z; } // and the search moves over there too
   if (n) SK_STATE.luredT = 4;
   return n;
 }
 function landJunk(F, K, hitPerson) {
+  if (F.kind === 'banger' || F.kind === 'clock') { // lies there fizzing (or ticking), then goes off
+    K.sfx.thunk(); F.m.position.y = floorAt(F.x, F.z, F.y + 0.3) + 0.1;
+    fuses.push({ kind: F.kind, x: F.x, y: F.m.position.y, z: F.z, t: F.kind === 'banger' ? 1.8 : 5, rings: F.kind === 'banger' ? 3 : 7, m: F.m });
+    return;
+  }
   if (F.kind === 'bottle') {
     K.sfx.smash();
     for (let k = 0; k < 4; k++) emitPuff(F.x, F.y + 0.05, F.z, { life: 0.4, vx: mr(-1.5, 1.5), vy: mr(0.5, 2), vz: mr(-1.5, 1.5), size0: 0.08, size1: 0.25, alpha: 0.9, color: k % 2 ? 0x7ad08a : 0xe8fff0 });
@@ -6848,6 +6947,7 @@ function resetStealth(K) {
   SK_STATE.hide = null; SK_STATE.junk.length = 0; SK_STATE.smellT = 0; SK_STATE.hideT = 0; SK_STATE.lifted = 0; SK_STATE.liftedCash = 0; SK_STATE.camsBroken = 0; SK_STATE.camAlarms = 0;
   if (K) K.player.hide = null;
   for (const F of flying) { scene.remove(F.m); flyPool[F.kind].push(F.m); } flying.length = 0;
+  for (const F of fuses) { scene.remove(F.m); flyPool[F.kind].push(F.m); } fuses.length = 0;
   stealthNewDay();
 }
 // overnight: the council fixes the cameras and the streets fill up with rubbish again
@@ -6868,13 +6968,31 @@ function updateStealth(dt, K) {
   }
   SK_STATE.luredT = Math.max(0, SK_STATE.luredT - dt);
   updateFlying(dt, K);
+  updateFuses(dt, K);
   updateCams(dt, K);
   updatePigeons(dt, K);
+}
+function updateFuses(dt, K) {
+  for (let i = fuses.length - 1; i >= 0; i--) {
+    const F = fuses[i]; F.t -= dt;
+    if (F.kind === 'banger' && Math.random() < dt * 20) emitPuff(F.x, F.y + 0.1, F.z, { life: 0.3, vy: 1.5, size0: 0.04, size1: 0.12, alpha: 0.9, color: 0xffd060 });
+    if (F.kind === 'clock') F.m.rotation.z = F.t < 0 ? Math.sin(K.G.elapsed * 60) * 0.15 : 0;
+    if (F.t > 0) continue;
+    if (F.kind === 'banger') { // three loud pops a beat apart
+      K.sfx.shot(); comicWord(mpick(['BANG!', 'POP!', 'CRACK!']), F.x + mr(-0.3, 0.3), F.y + 1, F.z + mr(-0.3, 0.3));
+      for (let k = 0; k < 5; k++) emitPuff(F.x, F.y + 0.2, F.z, { life: 0.8, vx: mr(-1, 1), vy: mr(1, 2.5), vz: mr(-1, 1), size0: 0.2, size1: 0.7, alpha: 0.5, color: k % 2 ? 0xd8d8d8 : 0xffb040 });
+      noiseAt(F.x, F.z, 42, K, 'bang'); F.t = 0.35;
+    } else { // brrrrring: anyone in earshot comes over to switch it off
+      K.sfx.bell(); if (F.rings % 2) comicWord('BRRRING!', F.x, F.y + 0.9, F.z);
+      noiseAt(F.x, F.z, 30, K, 'ring'); F.t = 1.4;
+    }
+    if (--F.rings <= 0) { scene.remove(F.m); flyPool[F.kind].push(F.m); fuses.splice(i, 1); }
+  }
 }
 // how much the stealth bits make you stand out (the smell, mostly)
 function stealthConspic() { return SK_STATE.smellT > 0 ? 0.3 : 0; }
 function stealthDebug() {
-  return { ...SK_STATE, hideSpots: hideSpots.filter((S) => S.stand).length, hideAll: hideSpots.length, junk: junk.filter((J) => !J.taken).length, pocket: SK_STATE.junk.length, cams: cams.length, camsLive: cams.filter((C) => !C.broken).length, flocks: flocks.length, birds: birdCount, flying: flying.length, hide: !!SK_STATE.hide };
+  return { ...SK_STATE, hideSpots: hideSpots.filter((S) => S.stand).length, hideAll: hideSpots.length, junk: junk.filter((J) => !J.taken).length, pocket: SK_STATE.junk.length, cams: cams.length, camsLive: cams.filter((C) => !C.broken).length, flocks: flocks.length, birds: birdCount, flying: flying.length, fuses: fuses.length, hide: !!SK_STATE.hide };
 }
 
 
@@ -6898,7 +7016,8 @@ function stealthDebug() {
 
 
 
-const GJ_STATE = { gig: null, ride: null, rep: 0, done: 0, earned: 0, failed: 0, binsEmptied: 0, hopperRides: 0, msgT: 0 };
+
+const GJ_STATE = { gig: null, ride: null, rep: 0, done: 0, earned: 0, failed: 0, binsEmptied: 0, hopperRides: 0, msgT: 0, regulars: {}, perks: {} };
 const gigBoards = []; // {x, z, face, city, name, offers, day}
 // a repeatable 0..1 from a position (the world's seeded random stream must not shift when things are added)
 const gjHash = (x, z, k = 0) => { const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return s - Math.floor(s); };
@@ -7127,6 +7246,8 @@ const GIG_KINDS = {
   litter: { label: 'LITTER PICK', color: '#9aff7a', hex: 0x9aff7a },
   pet: { label: 'LOST CAT', color: '#ff9ad0', hex: 0xff9ad0 },
   bincrew: { label: 'BIN CREW', color: '#c8ff4a', hex: 0xc8ff4a },
+  errand: { label: 'MARKET ERRAND', color: '#ff8a3a', hex: 0xff8a3a },
+  lookout: { label: 'LOOKOUT', color: '#d8a0ff', hex: 0xd8a0ff },
 };
 const CAT_NAMES = ['BISCUIT', 'MR WHISKERS', 'NOODLE', 'DUCHESS', 'PICKLE', 'SIR PURRSALOT', 'MARMALADE', 'TOFFEE', 'PRINCESS FLUFFBALL', 'GERALD'];
 const CLIENTS = ['MRS OKAFOR AT NUMBER 12', 'A MAN CALLED DES', 'THE CORNER SHOP', 'A VERY ANXIOUS LANDLORD', 'THE RESIDENTS\' COMMITTEE', 'SOMEONE WHO SIGNED IT "X"', 'NANA PEG', 'THE CHURCH HALL', 'A STRESSED CAFE OWNER', 'THE ALLOTMENT SOCIETY'];
@@ -7136,39 +7257,114 @@ const BOARD_BLURBS = ['"Reliable person wanted. Cash in hand. No questions asked
 const payMul = (K) => (1 + GJ_STATE.rep * 0.06) * (1 + (K.G.day - 1) * 0.02);
 const round5 = (n) => Math.max(5, Math.round(n / 5) * 5);
 function nearWalkIns(x, z, r0, r1, filter = () => true) { return walkIns.filter((W) => { const d = Math.hypot(W.x - x, W.z - z); return d > r0 && d < r1 && filter(W); }); }
+// one job of a given kind, posted on board B (null if there's nothing suitable round here)
+function buildOffer(kind, B, K) {
+  const O = { id: `${kind}-${Math.random().toString(36).slice(2, 7)}`, kind, client: mpick(CLIENTS), board: B };
+  if (kind === 'delivery') {
+    const from = mpick(nearWalkIns(B.x, B.z, 20, 160, (W) => !W.home)) || mpick(nearWalkIns(B.x, B.z, 10, 220));
+    if (!from) return null;
+    const to = mpick(nearWalkIns(from.x, from.z, 80, 260, (W) => W.home)) || mpick(nearWalkIns(from.x, from.z, 70, 260));
+    if (!to) return null;
+    O.from = from; O.to = to; O.what = mpick(PARCELS);
+    const d = Math.hypot(to.x - from.x, to.z - from.z);
+    O.pay = round5((18 + d * 0.12) * payMul(K)); O.time = Math.round(120 + d / 3);
+    O.desc = `Collect ${O.what} from ${from.name} and drop it at ${to.name}, ${Math.round(d)} m away. Don't get it knocked about.`;
+  } else if (kind === 'leaflets') {
+    const doors = nearWalkIns(B.x, B.z, 15, 170).sort(() => Math.random() - 0.5).slice(0, 5);
+    if (doors.length < 3) return null;
+    O.doors = doors; O.what = mpick(LEAFLETS);
+    O.pay = round5((10 + doors.length * 5) * payMul(K)); O.time = 200;
+    O.desc = `Push leaflets for ${O.what} through ${doors.length} doors round here. Walk up to each door.`;
+  } else if (kind === 'litter') {
+    O.pay = round5(32 * payMul(K)); O.time = 160; O.bags = 7;
+    O.desc = 'Seven bags of rubbish dumped on a patch of pavement. Clear the lot. Nobody looks at the person picking up litter.';
+  } else if (kind === 'pet') {
+    O.what = mpick(CAT_NAMES); O.pay = round5(mr(40, 60) * payMul(K)); O.time = 240;
+    O.desc = `${O.what} hasn't come home. Search the marked area, creep up slowly (crouch, they spook easily) and bring them back here.`;
+  } else if (kind === 'errand') { // pop to the market for something and bring it round
+    const st = nearestStall(B.x, B.z, mpick(['fruit', 'bakery', 'flowers'])); const to = mpick(nearWalkIns(B.x, B.z, 10, 200, (W) => W.home)) || mpick(nearWalkIns(B.x, B.z, 10, 220));
+    if (!st || !to) return null;
+    O.stall = st; O.to = to; O.what = ERRAND_WHAT[st.kind];
+    const d = Math.hypot(st.x - B.x, st.z - B.z) + Math.hypot(to.x - st.x, to.z - st.z);
+    O.pay = round5((22 + d * 0.08) * payMul(K)); O.time = Math.round(200 + d / 2.5);
+    O.desc = `Buy ${O.what} at the ${st.market.name} (the ${STALL_KINDS[st.kind].name.toLowerCase()} stall) and take it round to ${to.name}. Pays your money back and then some.`;
+  } else if (kind === 'lookout') { // stand on a corner and watch the street, without getting spotted
+    const p = randomOpenPoint(B.x, B.z, 25, 80) || randomOpenPoint(B.x, B.z, 15, 60);
+    if (!p) return null;
+    O.at = p; O.need = 40; O.pay = round5(38 * payMul(K)); O.time = 240;
+    O.desc = `Stand on the marked corner and keep an eye out for ${mpick(LOOKOUT_FOR)}. 40 seconds, and nobody can clock you while you're at it.`;
+  } else {
+    O.pay = round5(35 * payMul(K)); O.time = 220; O.need = 45;
+    O.desc = 'The council\'s short-handed. Find a bin lorry and ride the back step for 45 seconds. Hi-vis provided, in spirit.';
+  }
+  O.label = GIG_KINDS[kind].label;
+  return O;
+}
 function gjMakeOffers(B, K) {
   B.offers = []; B.day = K.G.day;
-  const kinds = ['delivery', 'leaflets', 'litter', 'pet', 'bincrew'].sort(() => Math.random() - 0.5).slice(0, 3);
-  for (const kind of kinds) {
-    const O = { id: `${kind}-${Math.random().toString(36).slice(2, 7)}`, kind, client: mpick(CLIENTS), board: B };
-    if (kind === 'delivery') {
-      const from = mpick(nearWalkIns(B.x, B.z, 20, 160, (W) => !W.home)) || mpick(nearWalkIns(B.x, B.z, 10, 220));
-      if (!from) continue;
-      const to = mpick(nearWalkIns(from.x, from.z, 80, 260, (W) => W.home)) || mpick(nearWalkIns(from.x, from.z, 70, 260));
-      if (!to) continue;
-      O.from = from; O.to = to; O.what = mpick(PARCELS);
-      const d = Math.hypot(to.x - from.x, to.z - from.z);
-      O.pay = round5((18 + d * 0.12) * payMul(K)); O.time = Math.round(120 + d / 3);
-      O.desc = `Collect ${O.what} from ${from.name} and drop it at ${to.name}, ${Math.round(d)} m away. Don't get it knocked about.`;
-    } else if (kind === 'leaflets') {
-      const doors = nearWalkIns(B.x, B.z, 15, 170).sort(() => Math.random() - 0.5).slice(0, 5);
-      if (doors.length < 3) continue;
-      O.doors = doors; O.what = mpick(LEAFLETS);
-      O.pay = round5((10 + doors.length * 5) * payMul(K)); O.time = 200;
-      O.desc = `Push leaflets for ${O.what} through ${doors.length} doors round here. Walk up to each door.`;
-    } else if (kind === 'litter') {
-      O.pay = round5(32 * payMul(K)); O.time = 160; O.bags = 7;
-      O.desc = 'Seven bags of rubbish dumped on a patch of pavement. Clear the lot. Nobody looks at the person picking up litter.';
-    } else if (kind === 'pet') {
-      O.what = mpick(CAT_NAMES); O.pay = round5(mr(40, 60) * payMul(K)); O.time = 240;
-      O.desc = `${O.what} hasn't come home. Search the marked area, creep up slowly (crouch, they spook easily) and bring them back here.`;
-    } else {
-      O.pay = round5(35 * payMul(K)); O.time = 220; O.need = 45;
-      O.desc = 'The council\'s short-handed. Find a bin lorry and ride the back step for 45 seconds. Hi-vis provided, in spirit.';
-    }
-    O.label = GIG_KINDS[kind].label;
-    B.offers.push(O);
-  }
+  const kinds = ['delivery', 'leaflets', 'litter', 'pet', 'bincrew', 'errand', 'lookout'].sort(() => Math.random() - 0.5).slice(0, 3);
+  for (const kind of kinds) { const O = buildOffer(kind, B, K); if (O) B.offers.push(O); }
+  // a regular client with more work for you puts their next job up first
+  const R = nextRegularFor(B, K); if (R) B.offers.unshift(R);
+}
+// ---------------------------------------------------------------------
+// regular clients: do one of their jobs and they come back with the next part of the story. Finish the
+// whole run and they do something for you in return.
+// ---------------------------------------------------------------------
+const ERRAND_WHAT = { fruit: 'A BAG OF APPLES', bakery: 'A SAUSAGE ROLL', flowers: 'A BUNCH OF FLOWERS', fish: 'SOME CHIPS' };
+const LOOKOUT_FOR = ['the bailiffs', 'a traffic warden with a grudge', 'my ex', 'the landlord', 'a man in a brown hat', 'anyone from the council'];
+const REGULARS = {
+  peg: { name: 'NANA PEG', town: 'ASHFORD', perk: 'cardigan', perkText: 'NANA PEG KNITTED YOU A CARDIGAN. NOBODY SUSPECTS A CARDIGAN',
+    steps: [
+      { kind: 'pet', intro: 'Nana Peg\'s cat has gone walkabout again.' },
+      { kind: 'errand', intro: 'She wants to say thank you. Well, she wants you to fetch her shopping first.' },
+      { kind: 'delivery', intro: 'A steak pie for her sister across town. Still warm. Do NOT drop it.', what: 'A STEAK PIE IN A TIN' },
+      { kind: 'lookout', intro: 'The man from the council is coming about her hedge. Watch for him.' },
+    ] },
+  des: { name: 'A MAN CALLED DES', town: 'PORT HALDEN', perk: 'pal', perkText: 'DES SAYS HIS COUSIN WILL LOOK AFTER YOU. HIS COUSIN IS LARGE',
+    steps: [
+      { kind: 'delivery', intro: 'Des has a box. Des would like it moved. Des will not say what is in it.' },
+      { kind: 'leaflets', intro: 'Des is launching a business. The leaflets have three spelling mistakes.' },
+      { kind: 'lookout', intro: 'Des needs someone to "keep an eye out" while he "sorts something".' },
+      { kind: 'delivery', intro: 'One last box for Des. Heavier. It ticks. Don\'t ask.', what: 'A TICKING BOX (IT\'S A CLOCK. PROBABLY)' },
+    ] },
+  shop: { name: 'THE CORNER SHOP', town: null, perk: 'discount', perkText: 'THE CORNER SHOP PUT A WORD IN. MARKET TRADERS GIVE YOU A QUARTER OFF',
+    steps: [
+      { kind: 'litter', intro: 'Someone keeps dumping bags outside the corner shop.' },
+      { kind: 'leaflets', intro: 'The corner shop has a meal deal to shout about.' },
+      { kind: 'errand', intro: 'They\'ve run out of stock. Pop to the market for them.' },
+    ] },
+  harbour: { name: 'THE HARBOUR MASTER', town: 'SALTMARSH DOCKS', perk: 'guard', perkText: 'THE HARBOUR MASTER SENT A DOCKER TO WATCH YOUR BACK',
+    steps: [
+      { kind: 'bincrew', intro: 'The harbour master wants the quay cleaned up before an inspection.' },
+      { kind: 'delivery', intro: 'Paperwork for a ship\'s captain. Very important. Smells of fish.' },
+      { kind: 'lookout', intro: 'Watch the gate for the inspector. Whistle if you see a clipboard.' },
+    ] },
+};
+function nextRegularFor(B, K) {
+  const ids = Object.keys(REGULARS).filter((id) => { const R = REGULARS[id], st = GJ_STATE.regulars[id] || 0; return st < R.steps.length && (!R.town || R.town === B.city); });
+  if (!ids.length) return null;
+  // the one you've done most for comes first; a new regular only once you've done a couple of odd jobs
+  ids.sort((a, b) => (GJ_STATE.regulars[b] || 0) - (GJ_STATE.regulars[a] || 0));
+  const id = ids[0], R = REGULARS[id], i = GJ_STATE.regulars[id] || 0;
+  if (i === 0 && GJ_STATE.done < 1) return null;
+  const step = R.steps[i];
+  const O = buildOffer(step.kind, B, K); if (!O) return null;
+  O.regular = id; O.step = i; O.client = R.name; if (step.what) O.what = step.what;
+  if (step.what && O.kind === 'delivery') O.desc = O.desc.replace(/^Collect .*? from/, `Collect ${step.what} from`);
+  O.pay = round5(O.pay * (1.4 + i * 0.25));
+  O.desc = `${step.intro} ${O.desc} (Part ${i + 1} of ${R.steps.length}.)`;
+  O.label = `★ ${O.label}`;
+  return O;
+}
+const nearestStall = (x, z, kind) => { let b = null, bd = 1e9; for (const st of marketStalls) { if (kind && st.kind !== kind) continue; const d = Math.hypot(st.x - x, st.z - z); if (d < bd) { bd = d; b = st; } } return b; };
+function regularDone(O, K) {
+  const id = O.regular, R = REGULARS[id];
+  GJ_STATE.regulars[id] = Math.max(GJ_STATE.regulars[id] || 0, O.step + 1);
+  if (GJ_STATE.regulars[id] < R.steps.length) { K.showMsg(`${R.name} WILL HAVE MORE WORK FOR YOU. CHECK THE BOARDS`, 2.6); return; }
+  GJ_STATE.perks[R.perk] = true;
+  K.perk(R.perk);
+  K.showMsg(R.perkText, 3.5);
 }
 // the notice board menu (uses the same panel as the shops)
 function gigMenu(K) {
@@ -7245,6 +7441,8 @@ function startGig(O, K) {
     g.area = { x: p.x + mr(-14, 14), z: p.z + mr(-14, 14), r: 24 };
     g.targets = [{ x: g.area.x, z: g.area.z, label: 'SEARCH', area: true }];
   } else if (O.kind === 'bincrew') { g.rode = 0; g.targets = []; }
+  else if (O.kind === 'errand') { g.bought0 = MK_STATE.bought + MK_STATE.nicked; g.targets = [{ x: O.stall.front.x, z: O.stall.front.z, label: 'STALL' }]; }
+  else if (O.kind === 'lookout') { g.watch = 0; g.targets = [{ x: O.at.x, z: O.at.z, label: 'CORNER' }]; }
   GJ_STATE.gig = g;
   K.sfx.pickup();
 }
@@ -7257,6 +7455,7 @@ function endGig(K, ok, msg) {
     if (g.kind === 'delivery' && g.bumps > 0) pay = round5(pay * Math.max(0.4, 1 - g.bumps * 0.25));
     K.addCash(pay); K.sfx.cash(); GJ_STATE.done++; GJ_STATE.earned += pay; GJ_STATE.rep = Math.min(10, GJ_STATE.rep + 1);
     K.showMsg(`${msg} +$${pay}`, 2.6);
+    if (g.offer.regular) setTimeout(() => regularDone(g.offer, K), 2700);
   } else {
     if (msg) K.showMsg(msg, 2.4);
     GJ_STATE.failed++; GJ_STATE.rep = Math.max(0, GJ_STATE.rep - 1);
@@ -7266,7 +7465,7 @@ function endGig(K, ok, msg) {
 function gigConspic(K) {
   const g = GJ_STATE.gig, R = GJ_STATE.ride;
   let k = 0;
-  if (g && (g.carry || g.kind === 'litter' || g.kind === 'leaflets')) k -= 0.12;
+  if (g && (g.carry || g.kind === 'litter' || g.kind === 'leaflets' || g.kind === 'errand')) k -= 0.12;
   if (R && R.mode === 'step') k -= 0.15;
   if (k && K.player.outfit && K.player.outfit.body === 'hivis') k -= 0.1;
   return k;
@@ -7293,6 +7492,15 @@ function updateGig(dt, K) {
     for (const T of g.targets) if (!T.done && near(T.x, T.z, 1.5) && !P.car) { T.done = true; T.mesh.visible = false; K.sfx.paper(); }
     if (g.targets.every((T) => T.done)) endGig(K, true, 'PAVEMENT SPOTLESS');
   } else if (g.kind === 'pet') updateCat(g, dt, K, near);
+  else if (g.kind === 'errand') {
+    if (!g.carry && MK_STATE.bought + MK_STATE.nicked > g.bought0 && MK_STATE.lastStall === g.offer.stall.kind) { g.carry = 'shopping'; K.showMsg(`GOT ${g.offer.what}. NOW ROUND TO ${g.offer.to.name}`, 2.4); g.targets = [{ x: g.offer.to.x, z: g.offer.to.z, label: 'DROP' }]; }
+    else if (g.carry && near(g.offer.to.x, g.offer.to.z, 2.2) && !P.car) { g.carry = null; endGig(K, true, 'SHOPPING DROPPED OFF. THEY SAY YOU\'RE A STAR'); }
+  } else if (g.kind === 'lookout') {
+    const at = g.offer.at, on = near(at.x, at.z, 6) && !P.car;
+    if (on && K.G.lastSeenT > 2) { const was = g.watch; g.watch += dt; if (Math.floor(was / 10) !== Math.floor(g.watch / 10) && g.watch < g.offer.need) K.showMsg(`WATCHING... ${Math.ceil(g.offer.need - g.watch)} s`, 1); }
+    else if (on && K.G.lastSeenT <= 2 && g.watch > 0) { g.watch = Math.max(0, g.watch - dt * 3); }
+    if (g.watch >= g.offer.need) endGig(K, true, 'ALL CLEAR. NOBODY CAME. NOBODY SAW YOU');
+  }
   else if (g.kind === 'bincrew') {
     if (GJ_STATE.ride && GJ_STATE.ride.mode === 'step') { g.rode += dt; if (g.rode >= g.offer.need) endGig(K, true, 'SHIFT DONE. THE CREW SAYS YOU\'RE ALRIGHT'); }
     const L = nearestLorry(K, P.x, P.z); g.targets = L ? [{ x: L.x, z: L.z, label: 'LORRY' }] : [];
@@ -7341,9 +7549,11 @@ function gigHud(K) {
   if (g.kind === 'delivery') what = g.carry ? `TAKE IT TO ${g.offer.to.name}` : `COLLECT FROM ${g.offer.from.name}`;
   else if (g.kind === 'leaflets') what = `${open.length} DOORS LEFT`;
   else if (g.kind === 'litter') what = `${open.length} BAGS LEFT`;
+  else if (g.kind === 'errand') what = g.carry ? `TAKE ${g.offer.what} TO ${g.offer.to.name}` : `BUY ${g.offer.what} AT THE MARKET`;
+  else if (g.kind === 'lookout') what = `WATCH THE CORNER · ${Math.floor(g.watch)} / ${g.offer.need} s (DON'T GET SEEN)`;
   else if (g.kind === 'pet') what = g.carry === 'cat' ? `${g.offer.what} BACK TO THE BOARD` : g.cat.seen ? `CATCH ${g.offer.what} (CROUCH)` : `FIND ${g.offer.what} IN THE PINK AREA`;
   else what = GJ_STATE.ride && GJ_STATE.ride.mode === 'step' ? `RIDING · ${Math.ceil(g.offer.need - g.rode)} s TO GO` : 'FIND A BIN LORRY, HOP ON THE BACK';
-  return `<b style="color:${GIG_KINDS[g.kind].color}">${GIG_KINDS[g.kind].label}</b> ${what}<br>${dist}${t} left · pays $${g.pay}`;
+  return `<b style="color:${GIG_KINDS[g.kind].color}">${g.offer.regular ? '★ ' : ''}${GIG_KINDS[g.kind].label}</b> ${what}<br>${dist}${t} left · pays $${g.pay}`;
 }
 
 // =====================================================================
@@ -7443,6 +7653,7 @@ function updateGigs(dt, K) {
   for (let i = n; i < beams.length; i++) beams[i].visible = false;
 }
 function resetGigs() {
+  GJ_STATE.regulars = {}; GJ_STATE.perks = {};
   GJ_STATE.gig = null; GJ_STATE.ride = null; GJ_STATE.rep = 0; GJ_STATE.done = 0; GJ_STATE.earned = 0; GJ_STATE.failed = 0; GJ_STATE.binsEmptied = 0; GJ_STATE.hopperRides = 0;
   clearGigMeshes(); for (const m of beams) if (m) m.visible = false;
   for (const B of gigBoards) { B.offers = []; B.day = 0; }
@@ -7451,7 +7662,361 @@ function gigsDebug() {
   const kinds = {}; for (const S of hideSpots) kinds[S.kind] = (kinds[S.kind] || 0) + 1;
   return { boards: gigBoards.length, clutter: gjClutter, terraceMiss: gjTerraceMiss, terraceSeats: terraceSeats.length, hideKinds: kinds, gig: GJ_STATE.gig ? { kind: GJ_STATE.gig.kind, targets: GJ_STATE.gig.targets.length, carry: GJ_STATE.gig.carry, t: GJ_STATE.gig.t } : null, ride: GJ_STATE.ride ? GJ_STATE.ride.mode : null, rep: GJ_STATE.rep, done: GJ_STATE.done, earned: GJ_STATE.earned, binsEmptied: GJ_STATE.binsEmptied };
 }
-const gigInternals = { startGig, endGig, gjMakeOffers, rearOf, nearestLorry, clamp };
+const gigInternals = { startGig, endGig, gjMakeOffers, buildOffer, nextRegularFor, regularDone, rearOf, nearestLorry, clamp };
+
+// Markets, garden sheds and portaloos.
+//  - Every town has a market: Halden Commons in PORT HALDEN, a village market round the water tower in
+//    ASHFORD, and a fish market at SALTMARSH DOCKS. Striped stalls sell food (patches you up), hats and
+//    scarves (cheap, quick disguises), bric-a-brac (bottles, bangers and wind-up alarm clocks to throw as
+//    lures, an old town map that marks hiding places), flowers (nobody suspects someone carrying flowers)
+//    and dodgy gadgets (a burner phone for a fake tip-off). Markets open 7 till 6, traders come and man the
+//    stalls, and the crowd is easy to blend into. A stall with nobody minding it runs on an honesty box,
+//    and you can always just help yourself (if nobody's looking).
+//  - Duck under a stall's tablecloth from the trader's side to hide. Portaloos stand at the edge of each
+//    market: people who open the door on you mostly apologise and shut it again.
+//  - The sheds in the suburban back gardens are hiding places too, and the first rummage of the day in
+//    each one turns something up.
+
+
+
+
+
+const MK_STATE = { bought: 0, nicked: 0, spent: 0, tips: 0, flowersT: 0, mapDay: 0, shedFinds: 0, lastStall: null };
+const markets = []; // {city, name, x, z, x0, x1, z0, z1, stalls, loos}
+const marketStalls = []; // {kind, name, x, z, alongX, flip, front, back, market, spot, hide}
+const mkHash = (x, z, k = 0) => { const s = Math.sin(x * 12.9898 + z * 78.233 + k * 53.117) * 43758.5453; return s - Math.floor(s); };
+const mkOverlap = (c, x0, x1, z0, z1) => c.x1 > x0 && c.x0 < x1 && c.z1 > z0 && c.z0 < z1;
+const mkClear = (list, x0, x1, z0, z1) => !list.some((c) => (c.h || 0) > 0.28 && (c.y0 || 0) < 2.6 && mkOverlap(c, x0, x1, z0, z1))
+  && !keepClear.some((k) => mkOverlap(k, x0, x1, z0, z1)) && !groundHoles.some((k) => mkOverlap(k, x0 - 1, x1 + 1, z0 - 1, z1 + 1));
+
+// =====================================================================
+// What the stalls sell
+// =====================================================================
+const STALL_KINDS = {
+  fruit: { name: 'FRUIT & VEG', cloth: 0x3a8a3a, canopy: [0x3a8a3a, 0xf0f0e8], lines: ['LOVELY APPLES!', 'POUND A BOWL!', 'BANANAS! GET YOUR BANANAS!', 'FRESH THIS MORNING!', 'COME ON, LADIES AND GENTS!'] },
+  bakery: { name: 'BAKERY', cloth: 0xc89a5a, canopy: [0xc8302a, 0xf0e8d0], lines: ['HOT SAUSAGE ROLLS!', 'STILL WARM!', 'DOUGHNUTS, FIVE FOR A FIVER!', 'BEST BREAD IN TOWN!'] },
+  hats: { name: 'HATS & SCARVES', cloth: 0x6a3a8a, canopy: [0x6a3a8a, 0xf0d040], lines: ['KEEP YOUR HEAD WARM!', 'ONE SIZE FITS MOST!', 'TRY IT ON, LOVE!', 'SUNGLASSES, ANY STYLE!'] },
+  junk: { name: 'BRIC-A-BRAC', cloth: 0x8a5a2a, canopy: [0x2a5a8a, 0xe8e0d0], lines: ['EVERYTHING MUST GO!', 'ONE MAN\'S RUBBISH!', 'IT\'S VINTAGE, THAT!', 'NO REFUNDS!'] },
+  flowers: { name: 'FLOWERS', cloth: 0xe07aa0, canopy: [0xe07aa0, 0xf0f0f0], lines: ['FRESH FLOWERS!', 'SAY IT WITH FLOWERS!', 'TULIPS! ROSES!', 'TREAT SOMEONE SPECIAL!'] },
+  gadgets: { name: 'PHONES & GADGETS', cloth: 0x2a2a30, canopy: [0x2a2a30, 0x3ab0e0], lines: ['PHONES UNLOCKED!', 'CHARGERS, CABLES, CASES!', 'DON\'T ASK WHERE IT\'S FROM!', 'BURNERS! I MEAN... PHONES!'] },
+  fish: { name: 'FISH', cloth: 0x2a6a9a, canopy: [0x2a6a9a, 0xf0f0f0], lines: ['FRESH OFF THE BOAT!', 'COCKLES AND WHELKS!', 'CHIPS! HOT CHIPS!', 'SMELL THAT SEA AIR!'] },
+};
+// costume bits sold at the hat stall (worn through the same disguise system as the costume shops)
+const MK_COSTUME = [
+  { id: 'mk_bobble', slot: 'head', cat: 'market', name: 'BOBBLE HAT', price: 12, dg: 0.18, desc: 'Woolly, warm, faintly ridiculous. Covers your hair and half your forehead.' },
+  { id: 'mk_flatcap', slot: 'head', cat: 'market', name: 'FLAT CAP', price: 10, dg: 0.15, desc: 'Instantly makes you look like you have opinions about pigeons.' },
+  { id: 'mk_sunhat', slot: 'head', cat: 'market', name: 'FLOPPY SUN HAT', price: 14, dg: 0.2, desc: 'A brim so wide it has its own weather.' },
+  { id: 'mk_scarf', slot: 'face', cat: 'market', name: 'CHUNKY SCARF', price: 12, dg: 0.18, desc: 'Wrap it up to the nose. Very mysterious. Very itchy.' },
+  { id: 'mk_shades', slot: 'eyes', cat: 'market', name: 'KNOCK-OFF SUNGLASSES', price: 6, dg: 0.15, desc: 'The logo is spelled wrong. Works fine.' },
+  { id: 'mk_poncho', slot: 'body', cat: 'market', name: 'RAIN PONCHO', price: 8, dg: 0.22, desc: 'Bright plastic, hood up. You look like every other tourist.' },
+];
+for (const c of MK_COSTUME) if (!CATALOG.costume.some((o) => o.id === c.id)) CATALOG.costume.push(c);
+const STALL_GOODS = {
+  fruit: [
+    { id: 'mk_apples', name: 'BAG OF APPLES', price: 3, heal: 12, desc: 'Crunchy. Patches you up a bit (+12).' },
+    { id: 'mk_bananas', name: 'BUNCH OF BANANAS', price: 4, heal: 16, desc: 'Potassium for the long run (+16).' },
+    { id: 'mk_melon', name: 'A WHOLE WATERMELON', price: 9, heal: 35, desc: 'You eat the whole thing, standing up. Nobody judges (+35).' },
+  ],
+  bakery: [
+    { id: 'mk_roll', name: 'SAUSAGE ROLL', price: 4, heal: 20, desc: 'Flaky pastry everywhere (+20).' },
+    { id: 'mk_donut', name: 'JAM DOUGHNUT', price: 3, heal: 10, desc: 'Sugar. Jam on your chin (+10).' },
+    { id: 'mk_tea', name: 'FLASK OF TEA', price: 5, heal: 15, desc: 'Hot, strong and sweet. Steadies the nerves (+15, lowers heat a little).' },
+  ],
+  fish: [
+    { id: 'mk_chips', name: 'CHIPS IN PAPER', price: 5, heal: 25, desc: 'Salt, vinegar, scalding (+25).' },
+    { id: 'mk_whelks', name: 'POT OF WHELKS', price: 2, heal: 8, desc: 'An acquired taste (+8).' },
+    { id: 'mk_crab', name: 'DRESSED CRAB', price: 7, heal: 28, desc: 'Fancy. With a little fork (+28).' },
+  ],
+  hats: MK_COSTUME.filter((c) => c.id !== 'mk_poncho'),
+  junk: [
+    { id: 'mk_empties', name: 'CRATE OF EMPTIES', price: 3, junk: ['bottle', 'bottle', 'bottle'], desc: 'Three empty bottles. Throw them round a corner (T) to send people looking.' },
+    { id: 'mk_bangers', name: 'STRING OF BANGERS', price: 8, junk: ['banger', 'banger'], desc: 'Two. Throw one and it fizzes, then goes BANG BANG BANG. Everyone in earshot comes running to it.' },
+    { id: 'mk_clock', name: 'WIND-UP ALARM CLOCK', price: 10, junk: ['clock'], desc: 'Throw it somewhere. A few seconds later it rings, and keeps ringing, and people go to shut it up.' },
+    { id: 'mk_map', name: 'OLD TOWN MAP (WITH NOTES)', price: 6, map: true, desc: 'Someone has scribbled every good hiding place on it. Marks them on your map for the rest of the day.' },
+  ],
+  flowers: [
+    { id: 'mk_bouquet', name: 'BIG BUNCH OF FLOWERS', price: 8, flowers: 150, desc: 'Carry them for a couple of minutes. Nobody suspects someone with flowers. Nobody.' },
+    { id: 'mk_fern', name: 'POTTED FERN', price: 5, flowers: 80, desc: 'Hold it in front of your face. Surprisingly effective for a minute or so.' },
+  ],
+  gadgets: [
+    { id: 'mk_burner', name: 'BURNER PHONE TIP-OFF', price: 25, tip: true, desc: 'Ring in a fake sighting on the other side of town. Searchers head off there and the heat drops.' },
+    { id: 'mk_poncho', name: 'RAIN PONCHO', price: 8, costume: true, desc: MK_COSTUME.find((c) => c.id === 'mk_poncho').desc },
+    { id: 'mk_shades2', name: 'KNOCK-OFF SUNGLASSES', price: 6, costume: 'mk_shades', desc: MK_COSTUME.find((c) => c.id === 'mk_shades').desc },
+  ],
+};
+const TOWN_MARKETS = {
+  'PORT HALDEN': { name: 'HALDEN COMMONS MARKET', kinds: ['fruit', 'bakery', 'hats', 'junk', 'flowers', 'gadgets', 'fruit', 'hats', 'bakery', 'junk'], prefer: (c) => [c.n / 2 - 1, c.n / 2 - 1] },
+  'ASHFORD': { name: 'ASHFORD VILLAGE MARKET', kinds: ['fruit', 'flowers', 'bakery', 'junk', 'hats', 'junk', 'fruit', 'flowers'], prefer: (c) => [c.n - 2, 1] },
+  'SALTMARSH DOCKS': { name: 'SALTMARSH FISH MARKET', kinds: ['fish', 'fish', 'bakery', 'junk', 'gadgets', 'hats', 'fish', 'junk'], prefer: null },
+};
+
+// =====================================================================
+// Building
+// =====================================================================
+// a box given in a stall's own frame: a along the counter, b out towards the customers
+function stallFrame(st) {
+  const { x, z, alongX } = st, s = st.flip ? -1 : 1;
+  return (a0, a1, y0, y1, b0, b1, col, buf = propBuf) => {
+    if (alongX) buf.box(x + a0, x + a1, y0, y1, Math.min(z - s * b0, z - s * b1), Math.max(z - s * b0, z - s * b1), col);
+    else buf.box(Math.min(x - s * b0, x - s * b1), Math.max(x - s * b0, x - s * b1), y0, y1, z + a0, z + a1, col);
+  };
+}
+// where (a, b) in a stall's frame is in the world
+function stallPt(st, a, b) { const s = st.flip ? -1 : 1; return st.alongX ? { x: st.x + a, z: st.z - s * b } : { x: st.x - s * b, z: st.z + a }; }
+const GOODS_COLS = {
+  fruit: [0xd83a2a, 0x7ac83a, 0xf0d040, 0xf08a2a, 0x9a3a8a, 0x3a8a2a], bakery: [0xc8904a, 0xa86a2a, 0xe8c080, 0xf0e0c0], hats: [0xc83a3a, 0x2a5aa0, 0xf0d040, 0x3a8a4a, 0x6a3a8a, 0xf0f0f0],
+  junk: [0x8a6a4a, 0x5a5a62, 0xb8a070, 0x3a6a8a, 0xa03a2a, 0xd0c8b0], flowers: [0xe04a6a, 0xf0d040, 0xa04ae0, 0xf08ab0, 0xffffff, 0xff8a2a], gadgets: [0x1a1a1e, 0x2a2a30, 0x3a3a44, 0xd0d0d8], fish: [0xc0c8d0, 0x9aa8b8, 0xe08a6a, 0xb0b8c0],
+};
+function buildStall(st) {
+  const B = stallFrame(st), K = STALL_KINDS[st.kind], H = mkHash(st.x, st.z, 1);
+  // trestle table with a cloth hanging to the ground on the front and both ends (the back is open)
+  B(-1.3, 1.3, 0.84, 0.9, -0.55, 0.55, 0x9a7a52);
+  B(-1.3, 1.3, 0.2, 0.86, 0.53, 0.58, K.cloth); B(-1.33, -1.28, 0.2, 0.86, -0.55, 0.58, K.cloth); B(1.28, 1.33, 0.2, 0.86, -0.55, 0.58, K.cloth);
+  // four poles and a striped canopy, the front valance and a name board
+  for (const a of [-1.38, 1.38]) for (const b of [-0.8, 0.8]) B(a - 0.03, a + 0.03, 0.15, 2.5, b - 0.03, b + 0.03, 0xb8b8c0);
+  for (let k = 0; k < 6; k++) { const a0 = -1.45 + k * (2.9 / 6); B(a0, a0 + 2.9 / 6, 2.48, 2.56, -0.95, 0.95, K.canopy[k % 2]); B(a0, a0 + 2.9 / 6, 2.26, 2.5, 0.93, 0.97, K.canopy[(k + 1) % 2]); }
+  B(-0.9, 0.9, 2.56, 2.9, 0.88, 0.92, 0xf4f0e0); B(-0.8, 0.8, 2.62, 2.84, 0.92, 0.93, K.cloth, glowBuf);
+  // the goods: trays and crates of whatever they sell
+  const cols = GOODS_COLS[st.kind];
+  for (let k = 0; k < 4; k++) {
+    const a = -1.0 + k * 0.66, c = cols[Math.floor(mkHash(st.x, st.z, 10 + k) * cols.length)];
+    if (st.kind === 'flowers') { B(a - 0.18, a + 0.18, 0.9, 1.15, -0.2, 0.2, 0x5a6a7a); for (let q = 0; q < 4; q++) B(a - 0.16 + (q % 2) * 0.18, a - 0.02 + (q % 2) * 0.18, 1.15, 1.45 + (q >> 1) * 0.08, -0.15 + (q >> 1) * 0.15, 0.0 + (q >> 1) * 0.15, q === 0 ? 0x3a8a3a : cols[(k + q) % cols.length]); continue; }
+    if (st.kind === 'fish') { B(a - 0.3, a + 0.3, 0.9, 1.0, -0.35, 0.35, 0xe8f0f4); for (let q = 0; q < 3; q++) B(a - 0.22, a + 0.22, 1.0, 1.05, -0.25 + q * 0.2, -0.15 + q * 0.2, c); continue; }
+    if (st.kind === 'gadgets') { B(a - 0.25, a + 0.25, 0.9, 0.95, -0.3, 0.3, 0x1a1a1e); for (let q = 0; q < 3; q++) { B(a - 0.2 + q * 0.14, a - 0.1 + q * 0.14, 0.95, 0.97, -0.1, 0.1, 0x2a2a30); B(a - 0.19 + q * 0.14, a - 0.11 + q * 0.14, 0.97, 0.975, -0.08, 0.08, 0x5ac8f0, glowBuf); } continue; }
+    if (st.kind === 'hats') { for (let q = 0; q < 3; q++) B(a - 0.18, a + 0.18, 0.9 + q * 0.09, 0.98 + q * 0.09, -0.18 + q * 0.04, 0.18 - q * 0.04, cols[(k + q) % cols.length]); continue; }
+    if (st.kind === 'junk') { const h = 0.15 + mkHash(st.x, st.z, 20 + k) * 0.35; B(a - 0.2, a + 0.2, 0.9, 0.9 + h, -0.2, 0.2, c); B(a - 0.06, a + 0.06, 0.9 + h, 1.0 + h, -0.06, 0.06, cols[(k + 2) % cols.length]); continue; }
+    B(a - 0.28, a + 0.28, 0.9, 1.06, -0.38, 0.38, 0x8a6a40); // fruit and bread in crates
+    for (let q = 0; q < 6; q++) B(a - 0.24 + (q % 3) * 0.16, a - 0.1 + (q % 3) * 0.16, 1.06, 1.16 + (st.kind === 'bakery' ? 0.04 : 0), -0.3 + (q / 3 | 0) * 0.3, -0.06 + (q / 3 | 0) * 0.3, cols[(k + q) % cols.length]);
+  }
+  // a crate or two behind for the trader to sit on
+  if (H < 0.6) B(-0.9, -0.5, 0.15, 0.55, -1.05, -0.7, 0x8a6a40);
+  const p0 = stallPt(st, -1.33, -0.58), p1 = stallPt(st, 1.33, 0.58);
+  addCollider(Math.min(p0.x, p1.x), Math.max(p0.x, p1.x), Math.min(p0.z, p1.z), Math.max(p0.z, p1.z), 0.9, { y0: 0, stall: true });
+  // under the table: you get in from the trader's side and peer out through the cloth
+  const back = stallPt(st, 0, -1.15), eye = stallPt(st, 0, 0.3), out = stallPt(st, 0, -1), mid = stallPt(st, 0, 0);
+  const ux = out.x - mid.x, uz = out.z - mid.z;
+  st.hide = { kind: 'stall', x: st.x, z: st.z, lx: Math.abs(p1.x - p0.x) / 2, lz: Math.abs(p1.z - p0.z) / 2, top: 0.9, indoor: true, eye: { x: eye.x, y: 0.55, z: eye.z }, stand: { x: back.x, z: back.z, ux, uz }, stall: st };
+  hideSpots.push(st.hide);
+  st.front = stallPt(st, 0, 1.15); st.back = back;
+  st.spot = { kind: 'cart', x: st.x, z: st.z, alongX: st.alongX, flip: st.flip, face: 0, sx: st.x, sz: st.z, stall: st, lines: K.lines };
+  lifeSpots.push(st.spot);
+}
+function buildLoo(x, z, ux, uz) {
+  propBuf.box(x - 0.6, x + 0.6, 0.15, 2.35, z - 0.6, z + 0.6, 0x2a6ac8); propBuf.box(x - 0.65, x + 0.65, 2.35, 2.45, z - 0.65, z + 0.65, 0xe8e8e8);
+  const fx = x + ux * 0.61, fz = z + uz * 0.61;
+  if (ux) propBuf.box(Math.min(fx, fx + ux * 0.02), Math.max(fx, fx + ux * 0.02), 0.25, 2.1, z - 0.4, z + 0.4, 0x1a4a9a); else propBuf.box(x - 0.4, x + 0.4, 0.25, 2.1, Math.min(fz, fz + uz * 0.02), Math.max(fz, fz + uz * 0.02), 0x1a4a9a);
+  if (ux) glowBuf.box(Math.min(fx, fx + ux * 0.03), Math.max(fx, fx + ux * 0.03), 1.6, 1.7, z + 0.1, z + 0.3, 0x5aff6a); else glowBuf.box(x + 0.1, x + 0.3, 1.6, 1.7, Math.min(fz, fz + uz * 0.03), Math.max(fz, fz + uz * 0.03), 0x5aff6a);
+  addCollider(x - 0.6, x + 0.6, z - 0.6, z + 0.6, 2.45, { y0: 0 });
+  const S = { kind: 'loo', x, z, lx: 0.6, lz: 0.6, top: 2.45, indoor: true, eye: { x: x + ux * 0.4, y: 1.6, z: z + uz * 0.4 }, stand: { x: x + ux * 1.15, z: z + uz * 1.15, ux, uz } };
+  hideSpots.push(S);
+  return S;
+}
+// find room for a market in a town: a block with space for a ring of stalls round an open middle
+function placeMarket(city) {
+  const T = TOWN_MARKETS[city.name]; if (!T) return;
+  const blocks = blockRects.filter((b) => b.city === city);
+  const pref = T.prefer ? T.prefer(city) : null;
+  const scored = [];
+  for (const r of blocks) {
+    const ix0 = r.x0 + SW + 1, ix1 = r.x1 - SW - 1, iz0 = r.z0 + SW + 1, iz1 = r.z1 - SW - 1;
+    const list = colliders.filter((c) => mkOverlap(c, ix0 - 2, ix1 + 2, iz0 - 2, iz1 + 2));
+    const cands = [];
+    const cx = (ix0 + ix1) / 2, cz = (iz0 + iz1) / 2;
+    for (let x = ix0 + 1.8; x <= ix1 - 1.8; x += 1) for (let z = iz0 + 1.8; z <= iz1 - 1.8; z += 1) {
+      // face the middle of the block, along whichever axis it's further off
+      const alongX = Math.abs(z - cz) >= Math.abs(x - cx);
+      const flip = alongX ? z < cz : x < cx; // flip: customers on the +z / +x side
+      const st = { x, z, alongX, flip };
+      const p0 = stallPt(st, -1.5, -1.6), p1 = stallPt(st, 1.5, 1.8);
+      const x0 = Math.min(p0.x, p1.x), x1 = Math.max(p0.x, p1.x), z0 = Math.min(p0.z, p1.z), z1 = Math.max(p0.z, p1.z);
+      if (x0 < ix0 || x1 > ix1 || z0 < iz0 || z1 > iz1) continue;
+      if (Math.hypot(x - cx, z - cz) < 5) continue; // keep the middle open
+      if (!mkClear(list, x0, x1, z0, z1)) continue;
+      cands.push({ ...st, rect: { x0, x1, z0, z1 }, d: Math.hypot(x - cx, z - cz) });
+    }
+    if (cands.length < 6) continue;
+    const isPref = pref && r.i === pref[0] && r.j === pref[1];
+    scored.push({ r, cands, list, cx, cz, score: cands.length + (isPref ? 1e4 : 0) - Math.hypot(cx - city.cx, cz - city.cz) * 0.3 });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  for (const S of scored) {
+    // greedy ring: nearest-in candidates first, never overlapping
+    const chosen = [];
+    const cands = S.cands.sort((a, b) => a.d - b.d || mkHash(a.x, a.z, 2) - mkHash(b.x, b.z, 2));
+    for (const c of cands) {
+      if (chosen.length >= T.kinds.length) break;
+      if (chosen.some((o) => mkOverlap(o.rect, c.rect.x0 - 0.3, c.rect.x1 + 0.3, c.rect.z0 - 0.3, c.rect.z1 + 0.3))) continue;
+      chosen.push(c);
+    }
+    if (chosen.length < 4) continue;
+    const M = { city: city.name, name: T.name, x: S.cx, z: S.cz, stalls: [], loos: [] };
+    chosen.forEach((c, i) => {
+      const st = { kind: T.kinds[i], x: c.x, z: c.z, alongX: c.alongX, flip: c.flip, market: M };
+      st.name = `${STALL_KINDS[st.kind].name} STALL`;
+      buildStall(st); M.stalls.push(st); marketStalls.push(st);
+    });
+    M.x0 = Math.min(...M.stalls.map((s) => s.x)) - 4; M.x1 = Math.max(...M.stalls.map((s) => s.x)) + 4;
+    M.z0 = Math.min(...M.stalls.map((s) => s.z)) - 4; M.z1 = Math.max(...M.stalls.map((s) => s.z)) + 4;
+    // two portaloos tucked in a corner of the block
+    const ix0 = S.r.x0 + SW + 1, ix1 = S.r.x1 - SW - 1, iz0 = S.r.z0 + SW + 1, iz1 = S.r.z1 - SW - 1;
+    const list = colliders.filter((c) => mkOverlap(c, ix0 - 2, ix1 + 2, iz0 - 2, iz1 + 2));
+    for (const [x, z, ux, uz] of [[ix0 + 1, iz0 + 1, 0, 1], [ix0 + 2.4, iz0 + 1, 0, 1], [ix1 - 1, iz1 - 1, 0, -1], [ix1 - 2.4, iz1 - 1, 0, -1], [ix1 - 1, iz0 + 1, 0, 1], [ix0 + 1, iz1 - 1, 0, -1]]) {
+      if (M.loos.length >= 2) break;
+      if (!mkClear(list, x - 0.7, x + 0.7, z - 0.7, z + 0.7) || !mkClear(list, x + ux * 1.15 - 0.4, x + ux * 1.15 + 0.4, z + uz * 1.15 - 0.4, z + uz * 1.15 + 0.4)) continue;
+      M.loos.push(buildLoo(x, z, ux, uz));
+    }
+    markets.push(M);
+    return;
+  }
+}
+// the garden sheds become hiding places, door on the +z side
+function placeShedHides() {
+  for (const G of gardenSheds) {
+    const S = { kind: 'shed', x: G.x, z: G.z, lx: 1.2, lz: 1.0, top: 2.5, indoor: true, eye: { x: G.x, y: 1.5, z: G.z + 0.75 }, stand: { x: G.x, z: G.z + 1.6, ux: 0, uz: 1 }, lootDay: 0 };
+    hideSpots.push(S);
+  }
+}
+worldHooks.beforeBake.push(() => { for (const c of CITIES) placeMarket(c); placeShedHides(); });
+
+// =====================================================================
+// Playing: shopping, traders, the crowd, the sheds
+// =====================================================================
+const marketOpen = (hour) => hour >= 7 && hour < 18;
+function stallNear(x, y, z) {
+  if (y > 1.2 || y < -0.5) return null;
+  let best = null, bd = 1.7;
+  for (const st of marketStalls) {
+    if (Math.abs(st.x - x) > 4 || Math.abs(st.z - z) > 4) continue;
+    const d = Math.hypot(st.front.x - x, st.front.z - z);
+    if (d < bd) { bd = d; best = st; }
+  }
+  return best;
+}
+function traderAt(st, K) {
+  for (const h of K.hunters()) if (!h.dead && h.cart === st.spot && h.state !== 'chase' && Math.hypot(h.x - st.back.x, h.z - st.back.z) < 2.6) return h;
+  return null;
+}
+const nickable = (st) => (STALL_GOODS[st.kind] || []).filter((it) => !it.tip);
+// the stall menu (the same panel as the shops)
+function stallMenu(st, K) {
+  return {
+    cash: () => K.player.cash,
+    items() {
+      const T = traderAt(st, K), off = K.discount ? K.discount() : 0, list = (STALL_GOODS[st.kind] || []).map((it) => ({ ...it, price: off ? Math.max(1, Math.round(it.price * (1 - off))) : it.price, desc: it.desc + (T ? '' : ' (Honesty box: leave the money in the tin.)') }));
+      if (!T) list.push({ id: 'mk_nick', name: 'HELP YOURSELF', price: 0, desc: 'Nobody\'s minding the stall. Just take something. If anyone sees you, they will make a scene.', tag: 'NICK IT' });
+      return list;
+    },
+    state(it) {
+      if (it.slot || it.costume) { const id = it.costume === true ? it.id : it.costume || it.id; const C = MK_COSTUME.find((c) => c.id === id); return C && K.player.outfit[C.slot] === id ? 'owned' : ''; }
+      if (it.map && MK_STATE.mapDay === K.G.day) return 'owned';
+      return '';
+    },
+    buy(it) {
+      if (it.id === 'mk_nick') return nickFrom(st, K);
+      const st0 = this.state(it);
+      if (st0 === 'owned') return 'YOU\'VE ALREADY GOT ONE';
+      if (K.player.cash < it.price) return `YOU NEED $${it.price - K.player.cash} MORE`;
+      K.player.cash -= it.price; K.sfx.cash(); MK_STATE.bought++; MK_STATE.spent += it.price; MK_STATE.lastStall = st.kind;
+      if (traderAt(st, K)) K.bumpLocal(0.04); // they got a look at you (but it's busy, and they see a lot of faces)
+      return giveGood(it, K, st);
+    },
+  };
+}
+function giveGood(it, K, st) {
+  const P = K.player;
+  if (it.heal && P.hp >= 100) return mpick(['NOT HUNGRY. YOU EAT IT ANYWAY', 'FOR LATER. (YOU EAT IT NOW)', 'WORTH EVERY PENNY']);
+  if (it.heal) { P.hp = Math.min(100, P.hp + it.heal); if (it.id === 'mk_tea') K.coolHeat(6); return mpick(['DELICIOUS', 'LOVELY, THAT', 'MUCH BETTER', 'CRUMBS EVERYWHERE']); }
+  if (it.junk) { for (const k of it.junk) K.addJunk(k); return `${it.name}: IN YOUR POCKETS. T TO THROW`; }
+  if (it.map) { MK_STATE.mapDay = K.G.day; return 'HIDING PLACES MARKED ON YOUR MAP (TODAY ONLY)'; }
+  if (it.flowers) { MK_STATE.flowersT = Math.max(MK_STATE.flowersT, it.flowers); return it.id === 'mk_fern' ? 'YOU PEER OUT FROM BEHIND THE FERN' : 'FLOWERS IN HAND. YOU LOOK HARMLESS'; }
+  if (it.tip) { fakeTipOff(K); return 'TIP-OFF PHONED IN. THEY\'RE OFF TO THE WRONG END OF TOWN'; }
+  const id = it.costume === true ? it.id : it.costume || it.id;
+  if (MK_COSTUME.some((c) => c.id === id)) return K.wear(id);
+  return 'THANKS!';
+}
+function nickFrom(st, K) {
+  if (traderAt(st, K)) return 'THE TRADER\'S RIGHT THERE';
+  const pool = nickable(st).filter((it) => !(it.heal && K.player.hp >= 100) && !(it.map && MK_STATE.mapDay === K.G.day));
+  const it = mpick(pool.length ? pool : nickable(st));
+  // anyone watching?
+  let seen = null;
+  for (const h of K.hunters()) { if (h.dead || h.inside) continue; const d = Math.hypot(h.x - K.player.x, h.z - K.player.z); if (d < 18 && K.canSee(h)) { seen = h; break; } }
+  MK_STATE.nicked++;
+  const msg = giveGood(it, K, st);
+  if (seen) {
+    K.say(seen, mpick(['OI! THIEF!', 'PUT THAT BACK!', 'I SAW THAT!', 'STOP, THIEF!']));
+    seen.alert(0.2); K.addHeat(4); K.bumpLocal(0.25);
+    return `NICKED ${it.name}. SOMEONE SAW!`;
+  }
+  return `NICKED ${it.name}. NOBODY SAW. ${msg}`;
+}
+// a fake sighting: everyone searching heads off to a spot a long way away
+function fakeTipOff(K) {
+  const P = K.player, a = Math.random() * Math.PI * 2, r = mr(160, 240);
+  const p = K.openPoint(P.x + Math.cos(a) * r, P.z + Math.sin(a) * r) || { x: P.x + Math.cos(a) * r, z: P.z + Math.sin(a) * r };
+  K.G.lkp.x = p.x; K.G.lkp.z = p.z; K.G.lastSeenT = Math.max(K.G.lastSeenT, 20);
+  let n = 0;
+  for (const h of K.hunters()) {
+    if (h.dead || h.guard || h.contract || h.hasLOS) continue;
+    if (h.state === 'chase' && h.lastSeen < 2) continue;
+    if (h.state === 'chase') h.state = 'search';
+    h.huntT = Math.max(h.huntT, 25); h.wt = K.openPoint(p.x, p.z, 4, 30) || { x: p.x, z: p.z }; h.waitT = 0; n++;
+  }
+  K.coolHeat(10); MK_STATE.tips++; MK_STATE.tipAt = p; MK_STATE.tipSent = n;
+}
+// in a busy market you're just another shopper (a negative nudge on how much you stand out)
+function marketConspic(K) {
+  let k = 0;
+  if (MK_STATE.flowersT > 0) k -= 0.15;
+  const M = marketAt(K.player.x, K.player.z);
+  if (M && marketOpen(K.G.hour) && !K.player.car) k -= 0.12;
+  return k;
+}
+function marketAt(x, z) { for (const M of markets) if (x > M.x0 && x < M.x1 && z > M.z0 && z < M.z1) return M; return null; }
+let mkTraderT = 0;
+function updateMarkets(dt, K) {
+  const P = K.player;
+  if (MK_STATE.flowersT > 0) MK_STATE.flowersT = Math.max(0, MK_STATE.flowersT - dt);
+  // traders come in to mind the stalls while the market's open (near you, so it's busy when you get there)
+  mkTraderT -= dt;
+  if (mkTraderT <= 0) {
+    mkTraderT = 2;
+    if (marketOpen(K.G.hour) && !K.G.super) for (const M of markets) {
+      if (Math.abs(M.x - P.x) > 170 || Math.abs(M.z - P.z) > 170) continue;
+      const st = M.stalls.find((s) => !K.vendorOf(s.spot));
+      if (st) { K.hireTrader(st.spot, st.back.x, st.back.z); break; }
+    }
+  }
+  // the first rummage in a shed each day turns something up
+  const S = P.hide;
+  if (S && S.kind === 'shed' && S.lootDay !== K.G.day && K.hideT() > 1.5) {
+    S.lootDay = K.G.day; MK_STATE.shedFinds++;
+    const r = Math.random();
+    if (r < 0.3) { K.addJunk('bottle'); K.addJunk('can'); K.showMsg('RUMMAGED IN THE SHED: A BOTTLE AND A CAN', 2.2); }
+    else if (r < 0.5) { const n = Math.round(mr(4, 14)); P.cash += n; K.sfx.cash(); K.showMsg(`RUMMAGED IN THE SHED: $${n} IN AN OLD TOBACCO TIN`, 2.2); }
+    else if (r < 0.62) { K.addJunk('banger'); K.showMsg('RUMMAGED IN THE SHED: A LEFTOVER BANGER FROM BONFIRE NIGHT', 2.4); }
+    else if (r < 0.7 && K.giveCrowbar()) K.showMsg('RUMMAGED IN THE SHED: A RUSTY CROWBAR. THAT\'LL DO', 2.4);
+    else if (r < 0.82) { P.hp = Math.min(100, P.hp + 10); K.showMsg('RUMMAGED IN THE SHED: A FORGOTTEN BISCUIT TIN (+10)', 2.2); }
+    else K.showMsg(mpick(['RUMMAGED IN THE SHED: JUST SPIDERS', 'RUMMAGED IN THE SHED: A LAWNMOWER AND REGRETS', 'RUMMAGED IN THE SHED: NOTHING BUT FLOWERPOTS']), 2.2);
+  }
+}
+// trader's lines while they're at the stall
+function stallLines(spot) { return spot && spot.lines; }
+function resetMarkets() {
+  MK_STATE.bought = 0; MK_STATE.nicked = 0; MK_STATE.spent = 0; MK_STATE.tips = 0; MK_STATE.flowersT = 0; MK_STATE.mapDay = 0; MK_STATE.shedFinds = 0; MK_STATE.lastStall = null;
+  for (const S of hideSpots) if (S.kind === 'shed') S.lootDay = 0;
+}
+// what the minimap shows: markets, and (with the old map) every hiding place
+function marketMapMarks(K) {
+  const out = markets.map((M) => ({ x: M.x, z: M.z, kind: 'market', open: marketOpen(K.G.hour) }));
+  if (MK_STATE.mapDay === K.G.day) for (const S of hideSpots) if (S.stand) out.push({ x: S.x, z: S.z, kind: 'hide' });
+  return out;
+}
+function marketsDebug() {
+  const kinds = {}; for (const st of marketStalls) kinds[st.kind] = (kinds[st.kind] || 0) + 1;
+  return { markets: markets.map((M) => ({ name: M.name, city: M.city, x: M.x, z: M.z, stalls: M.stalls.length, loos: M.loos.length })), stalls: marketStalls.length, kinds, sheds: hideSpots.filter((S) => S.kind === 'shed').length, ...MK_STATE };
+}
+const marketInternals = { traderAt, fakeTipOff, nickFrom, STALL_GOODS, MK_COSTUME };
 
 // Safehouses: one hideout per town. Get inside without being seen and you can lie low: your profile
 // cools off fast, you heal, there's a stash to raid once a day and a bed to nap in. Get seen going in
@@ -8463,6 +9028,7 @@ function mhRivalCaughtByYou(r, ctx) {
 
 
 
+
 const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
 
 generateWorld();
@@ -8534,6 +9100,7 @@ function conspicuous() {
   if (player.hp < 45) k += 0.15; // looking roughed up
   k += stealthConspic(); // smelling of bins
   k += gigConspic(GJ); // at work: nobody looks twice
+  k += marketConspic(MK); // lost in the market crowd, or hiding behind a bunch of flowers
   return Math.max(0, k);
 }
 const knownFace = () => (0.3 + G.level * 0.55) * (1 - 0.6 * player.disg) * (1 + 2.5 * localSus()) * (1 + (G.day - 1) * 0.015);
@@ -8595,6 +9162,9 @@ class Hunter {
       shirt: cop ? 0x2a3f78 : type === 'runner' ? mpick([0xd6763a, 0xc93030, 0xe0c030]) : type === 'brute' ? mpick([0x333333, 0x4a3a2a, 0x2c3e66]) : mpick(SHIRTS),
       cap: cop ? 0x1a2238 : null, vest: cop ? 0x222222 : null,
     };
+    // townsfolk dress for who they are: office types, pensioners, dock workers in hi-vis...
+    let folkSlow = 1; this.folk = null;
+    if (type === 'civ' && !this.gunner) { const c = cityAt(x, z, 40); const o = dressCivilian(look, c ? c.name : ''); this.folk = o.kind; folkSlow = o.slow; }
     this.p = buildPerson(look); this.g = this.p.group;
     this.g.scale.setScalar(this.T.scale);
     this.marker = new THREE.Sprite(markerMat); this.marker.scale.setScalar(0.55); this.marker.position.y = 2.35; this.marker.visible = false;
@@ -8609,7 +9179,7 @@ class Hunter {
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
     this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
     this.sus = 0; this.huntT = 0; this.panicT = 0; this.thinkAt = G.elapsed; this.home = { x, z };
-    this.spdMul = mr(0.82, 1.1); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
+    this.spdMul = mr(0.82, 1.1) * folkSlow; if (this.folk === 'pensioner') this.role = mpick(['hesitant', 'stalker', 'coward', 'rusher']); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
   }
   alert(delay = 0) {
     if (this.state === 'chase') return;
@@ -8690,7 +9260,8 @@ class Hunter {
       if (this.lastSeen > (this.role === 'coward' ? 4 : 8) && d > 18) { this.state = 'search'; this.wt = null; this.huntT = 20; this.sus = 0.55; }
       let tx = tp.x, tz = tp.z, spdK = 1, hold = 0;
       const crowd = G.hunters.reduce((n, o) => n + (o !== this && !o.dead && o.state === 'chase' && Math.abs(o.x - tp.x) + Math.abs(o.z - tp.z) < 14 ? 1 : 0), 0);
-      if (this.role === 'flanker' && d > 7 && d < 60) { // swing wide and come in from the side
+      if (player.hide && this.checkSpot === player.hide) { /* they watched you climb in: no hanging back, straight over to the lid */ }
+      else if (this.role === 'flanker' && d > 7 && d < 60) { // swing wide and come in from the side
         const px = -dz / (d || 1), pz = dx / (d || 1), off = Math.min(14, d * 0.6) * this.flankSide;
         const fx2 = tp.x + px * off, fz2 = tp.z + pz * off;
         if (!blockedAt(fx2, fz2) && los(this.x, this.z, fx2, fz2)) { tx = fx2; tz = fz2; }
@@ -9247,6 +9818,8 @@ function useAction() {
   const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
   if (atm && WX.blackout && WX.blackout.city === WX.here) { showMsg('CASHPOINT IS DEAD. POWER CUT.', 2); return; }
   if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
+  const stall = !player.car && player.mode === 'move' && !player.hide ? stallNear(player.x, player.y, player.z) : null;
+  if (stall) { if (!marketOpen(G.hour)) { showMsg('THE MARKET\'S SHUT. BACK AT 7', 2); return; } tryOpenShop({ name: stall.name, kind: 'market', blurbs: STALL_BLURBS }, stallMenu(stall, MK)); return; }
   const board = !player.car && player.mode === 'move' ? gigBoardNear(player.x, player.y, player.z) : null;
   if (board) { board.blurbs = boardBlurbs(); tryOpenShop(board, gigMenu(GJ)); return; }
   const lorry = lorryRearNear(GJ);
@@ -9675,9 +10248,30 @@ const GJ = {
   G, player, sfx, get input() { return input; }, isTouch: () => isTouch, showMsg: (t, d) => showMsg(t, d), addCash: (n) => { player.cash += n; },
   leaveShop: () => leaveShop(), enterHide: (S) => enterHide(S, SK), leaveHide: () => leaveHide(SK), hurt: (n) => hurtPlayer(n, player.x, player.z, 2),
   smell: (t) => { SK_STATE.smellT = Math.max(SK_STATE.smellT, t); },
+  // a regular client's thank-you
+  perk: (k) => {
+    if (k === 'cardigan') { if (!CATALOG.costume.some((c) => c.id === 'nana_cardi')) CATALOG.costume.push({ id: 'nana_cardi', slot: 'body', cat: 'gift', name: 'NANA PEG\'S CARDIGAN', price: 0, dg: 0.34, desc: 'Hand knitted. Lumpy. Nobody would ever suspect it.' }); player.outfit.body = 'nana_cardi'; putOnDisguise(); }
+    else if (k === 'pal' || k === 'guard') { const a = new Ally(k, player.x + Math.cos(player.yaw) * 1.4, player.y, player.z - Math.sin(player.yaw) * 1.4); G.allies.push(a); }
+    else if (k === 'discount') { /* the market stalls read GJ_STATE.perks.discount */ }
+    sfx.cheer();
+  },
+};
+// what the markets need from the game
+const STALL_BLURBS = ['"Come on, come on, have a look!"', '"Cash only, love. No cards, no names."', '"Two for one if you stop staring."', '"I\'ve seen your face somewhere. Nah. Couldn\'t be."'];
+const MK = {
+  G, player, sfx, hunters: () => G.hunters, showMsg: (t, d) => showMsg(t, d), say: (h, t) => say(h, t), addHeat: (n) => addHeat(n), bumpLocal: (n) => bumpLocal(n),
+  coolHeat: (n) => { G.heat = Math.max(heatFloor(), G.heat - n); }, addJunk: (k) => { SK_STATE.junk.push(k); },
+  wear: (id) => { const it = CATALOG.costume.find((c) => c.id === id); player.outfit[it.slot] = id; return putOnDisguise(); },
+  canSee: (h) => h.hasLOS, openPoint: (x, z, r0 = 0, r1 = 20) => randomOpenPoint(x, z, r0, r1),
+  vendorOf: (spot) => vendorOf(spot), hideT: () => SK_STATE.hideT,
+  hireTrader: (spot, x, z) => { const p = randomOpenPoint(x, z, 0, 2.5, 8) || { x, z }; const h = new Hunter(p.x, p.z, 'civ', false); G.hunters.push(h); if (hireVendor(h, spot)) lifeStart(h, LIFE); return h; },
+  giveCrowbar: () => { if (player.owned.has('crowbar')) return false; player.owned.add('crowbar'); updateSlots(); return true; },
+  discount: () => (GJ_STATE.perks.discount ? 0.25 : 0),
 };
 const LIFE = {
   say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b, HC),
+  // a dog has smelt you in your hiding place: its owner goes over for a look
+  dogAlert: (h, S) => { if (h.dead || h.state === 'chase') return; if (h.act || h.inside) lifeInterrupt(h); h.wt = { x: S.stand.x, z: S.stand.z }; h.peek = S; h.waitT = 0; h.huntT = Math.max(h.huntT, 8); say(h, mpick(['WHAT IS IT, BOY?', 'WHAT HAVE YOU FOUND?', 'LEAVE IT! ...WAIT, WHAT\'S IN THERE?', 'IS SOMEONE IN THERE?'])); },
   get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
   near: (x, z, r) => Math.abs(x - camera.position.x) < r && Math.abs(z - camera.position.z) < r,
 };
@@ -10403,6 +10997,10 @@ function drawMinimap() {
   mm.fillStyle = '#9affb0'; for (const a of atmSpots) mm.fillRect(a.x - 1.6 / sc, a.z - 1.6 / sc, 3.2 / sc, 3.2 / sc);
   mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
   mm.fillStyle = '#e8c070'; for (const B of gigBoards) mm.fillRect(B.x - 1.6 / sc, B.z - 1.6 / sc, 3.2 / sc, 3.2 / sc); // notice boards
+  for (const M of marketMapMarks(MK)) { // markets (striped squares) and, with the old town map, every hiding place
+    if (M.kind === 'hide') { if (!inR(M.x, M.z, M.x, M.z, 5)) continue; mm.fillStyle = '#b8ffd8'; mm.beginPath(); mm.arc(M.x, M.z, 1.4 / sc * 1.2, 0, Math.PI * 2); mm.fill(); continue; }
+    const k = (big ? 8 : 6) / sc; mm.fillStyle = M.open ? '#ff8a3a' : '#8a6a5a'; mm.fillRect(M.x - k, M.z - k, k * 2, k * 2); mm.fillStyle = '#fff4d0'; mm.fillRect(M.x - k, M.z - k * 0.25, k * 2, k * 0.5);
+  }
   for (const M of gigMapMarks()) if (M.area) { mm.fillStyle = 'rgba(255,154,208,.18)'; mm.strokeStyle = M.color; mm.lineWidth = 1.5 / sc; mm.beginPath(); mm.arc(M.x, M.z, M.area, 0, Math.PI * 2); mm.fill(); mm.stroke(); }
   const dot = Math.max(1.8, 2.2 / sc);
   mm.fillStyle = '#3cff8a'; for (const a of G.allies) if (!a.dead) { mm.beginPath(); mm.arc(a.x, a.z, dot * 1.2, 0, Math.PI * 2); mm.fill(); }
@@ -10537,6 +11135,7 @@ function updateHUD(dt) {
   else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'stash') prompt = G.inSafe.stashDay === G.day ? 'Stash is empty. Back tomorrow' : `${isTouch ? 'Tap USE' : 'Press E'} to raid the stash`;
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
   else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
+  else if (!player.car && player.mode === 'move' && stallNear(player.x, player.y, player.z)) { const st = stallNear(player.x, player.y, player.z); prompt = marketOpen(G.hour) ? `${useK} to buy from the ${st.name.toLowerCase()}` + (marketInternals.traderAt(st, MK) ? '' : ' (nobody\'s minding it)') : 'The market\'s shut. Back at 7'; }
   else if (pboard) prompt = `${useK} to read the ${pboard.name.toLowerCase()}` + (GJ_STATE.gig ? ' (you\'re already on a job)' : '');
   else if (plorry) prompt = `${useK} to hop on the back of the bin lorry`;
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
@@ -10551,7 +11150,7 @@ function updateHUD(dt) {
   hud.crack.classList.toggle('show', !!player.hide);
   hud.crack.classList.toggle('slats', !!player.hide && ['wardrobe', 'cupboard', 'locker'].includes(player.hide.kind));
   hud.crack.classList.toggle('crate', !!player.hide && player.hide.kind === 'crate');
-  { const n = SK_STATE.junk.length, b = SK_STATE.junk.filter((k) => k === 'bottle').length; hud.junk.textContent = n ? `${b ? b + ' BOTTLE' + (b > 1 ? 'S' : '') : ''}${b && n - b ? ' · ' : ''}${n - b ? (n - b) + ' CAN' + (n - b > 1 ? 'S' : '') : ''}${isTouch ? '' : ' (T)'}` : ''; }
+  { const n = SK_STATE.junk.length, cnt = {}; for (const k of SK_STATE.junk) cnt[k] = (cnt[k] || 0) + 1; hud.junk.textContent = n ? Object.keys(cnt).map((k) => `${cnt[k]} ${JUNK_NAMES[k][cnt[k] > 1 ? 1 : 0]}`).join(' · ') + ` · NEXT: ${JUNK_NAMES[SK_STATE.junk[n - 1]][0]}${isTouch ? '' : ' (T)'}` : ''; }
   if (hud.btnThrow) hud.btnThrow.classList.toggle('hidden', !SK_STATE.junk.length || !!player.car || !!player.hide);
   if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || player.hide || GJ_STATE.ride || pboard || plorry || pmark || pjunk || pbin || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
 }
@@ -10654,7 +11253,7 @@ function resetGame() {
   G.lkp = { x: 0, z: 0 };
   for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
   resetManhunt(CFG.days);
-  player.hide = null; resetStealth(SK); resetGigs();
+  player.hide = null; resetStealth(SK); resetGigs(); resetMarkets();
   Object.assign(G, { airGapT: 0, shook: false, safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
   spawnTraffic(84);
   navRecenter(0, 0, true); computeFlow(0, 0);
@@ -11173,7 +11772,7 @@ function simulate(dt, t) {
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
-    updateBikes(dt, BK); updateStreetProps(dt, BK); updateStealth(dt, SK); updateGigs(dt, GJ);
+    updateBikes(dt, BK); updateStreetProps(dt, BK); updateStealth(dt, SK); updateGigs(dt, GJ); updateMarkets(dt, MK);
     for (const a of G.helis) if (!a.dead) a.update(dt);
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
@@ -11209,7 +11808,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>

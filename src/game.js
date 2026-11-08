@@ -14,7 +14,7 @@ import { initAudio, sfx, setAircraftVolume, setZipSound } from './audio.js';
 import { parkourMove, resetParkour, eyeHeight } from './parkour.js';
 import { updateInteriors, zoneAt, undergroundRects, isUnderground, mallShops } from './interiors.js';
 import { links } from './world.js';
-import { walkIns, lifeSpots } from './streets.js';
+import { walkIns, lifeSpots, hideSpots } from './streets.js';
 import { warehouses } from './docks.js';
 import { HERO, resetHero, heroFun, heroMenace, heroPoseCmd, heroOverheard, updateHero, heroPersonPose, heroHolds, heroNews, heroMapMarks, heroHud } from './hero.js';
 import { villains, henchmen, henchClap, resetVillains, updateVillains, villainHit, villainsNear, villainRay, villainMapMarks } from './villains.js';
@@ -22,10 +22,11 @@ import { knockFX, hitFX, updateKnockFX, knockDebug, comicWord } from './knockfx.
 import { bikes, riders, bikeRide, updateBikes, spawnCyclist, playerBikeAction, playerBikeSpeed, bikeNear, riderNear, clearBikes, bikeDebug } from './cyclists.js';
 import { streetPropObjs, geysers, buildStreetProps, updateStreetProps, kickProp, hitHydrant, propInFront, propsNear, rayProps, tidyStreetProps, resetStreetProps, streetPropDebug } from './streetprops.js';
 import { GJ_STATE, gigBoards, gigMenu, gigBoardNear, boardBlurbs, gigConspic, gigMapMarks, gigHud, lorryLogic, lorryRearNear, hopOnLorry, hopOffLorry, gigRidePlayer, updateGigs, resetGigs, gigsDebug, gigInternals } from './gigs.js';
-import { SK_STATE, buildStealth, resetStealth, stealthNewDay, updateStealth, stealthConspic, stealthDebug, hideSpotNear, enterHide, leaveHide, hideName, hideHunterThink, stealthUseTarget, hunterPickPeek, hunterPeekArrive, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, meleeCams, breakCam, flocks, scareFlock, pickMark, pickPocket, junk } from './stealth.js';
-import { assignJob, releaseJob, lifeStart, lifeStep, lifePose, lifeInterrupt, updateCityLife, clearCityLife, cityLifeDebug } from './citylife.js';
+import { SK_STATE, JUNK_NAMES, buildStealth, resetStealth, stealthNewDay, updateStealth, stealthConspic, stealthDebug, hideSpotNear, enterHide, leaveHide, hideName, hideHunterThink, stealthUseTarget, hunterPickPeek, hunterPeekArrive, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, meleeCams, breakCam, flocks, scareFlock, pickMark, pickPocket, junk } from './stealth.js';
+import { assignJob, releaseJob, lifeStart, lifeStep, lifePose, lifeInterrupt, updateCityLife, clearCityLife, cityLifeDebug, hireVendor, vendorOf } from './citylife.js';
+import { MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketConspic, marketAt, updateMarkets, resetMarkets, marketMapMarks, marketsDebug, marketInternals } from './market.js';
 import { emitPuff, updatePuffs, updateAmbientSmoke, spawnTracer, updateTracers } from './fx.js';
-import { buildPerson, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
+import { buildPerson, dressCivilian, lam, SKINS, SHIRTS, PANTS, HAIRS, ragdolls, addRagdoll, setMood } from './people.js';
 import { shopRooms, atmSpots, atmNear, shopSpots, shopNear, openShop, closeShop, shopBuy, CATALOG, spawnShopkeepers, animateShopkeepers } from './shops.js';
 import { Ally } from './allies.js';
 import { safehouses, safeAt, safeDoorNear, safeSpotNear } from './safehouses.js';
@@ -105,6 +106,7 @@ function conspicuous() {
   if (player.hp < 45) k += 0.15; // looking roughed up
   k += stealthConspic(); // smelling of bins
   k += gigConspic(GJ); // at work: nobody looks twice
+  k += marketConspic(MK); // lost in the market crowd, or hiding behind a bunch of flowers
   return Math.max(0, k);
 }
 const knownFace = () => (0.3 + G.level * 0.55) * (1 - 0.6 * player.disg) * (1 + 2.5 * localSus()) * (1 + (G.day - 1) * 0.015);
@@ -166,6 +168,9 @@ class Hunter {
       shirt: cop ? 0x2a3f78 : type === 'runner' ? mpick([0xd6763a, 0xc93030, 0xe0c030]) : type === 'brute' ? mpick([0x333333, 0x4a3a2a, 0x2c3e66]) : mpick(SHIRTS),
       cap: cop ? 0x1a2238 : null, vest: cop ? 0x222222 : null,
     };
+    // townsfolk dress for who they are: office types, pensioners, dock workers in hi-vis...
+    let folkSlow = 1; this.folk = null;
+    if (type === 'civ' && !this.gunner) { const c = cityAt(x, z, 40); const o = dressCivilian(look, c ? c.name : ''); this.folk = o.kind; folkSlow = o.slow; }
     this.p = buildPerson(look); this.g = this.p.group;
     this.g.scale.setScalar(this.T.scale);
     this.marker = new THREE.Sprite(markerMat); this.marker.scale.setScalar(0.55); this.marker.position.y = 2.35; this.marker.visible = false;
@@ -180,7 +185,7 @@ class Hunter {
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
     this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
     this.sus = 0; this.huntT = 0; this.panicT = 0; this.thinkAt = G.elapsed; this.home = { x, z };
-    this.spdMul = mr(0.82, 1.1); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
+    this.spdMul = mr(0.82, 1.1) * folkSlow; if (this.folk === 'pensioner') this.role = mpick(['hesitant', 'stalker', 'coward', 'rusher']); this.noticeT = 0; this.waitT = 0; this.flankSide = Math.random() < 0.5 ? 1 : -1; this.shoutT = 0;
   }
   alert(delay = 0) {
     if (this.state === 'chase') return;
@@ -261,7 +266,8 @@ class Hunter {
       if (this.lastSeen > (this.role === 'coward' ? 4 : 8) && d > 18) { this.state = 'search'; this.wt = null; this.huntT = 20; this.sus = 0.55; }
       let tx = tp.x, tz = tp.z, spdK = 1, hold = 0;
       const crowd = G.hunters.reduce((n, o) => n + (o !== this && !o.dead && o.state === 'chase' && Math.abs(o.x - tp.x) + Math.abs(o.z - tp.z) < 14 ? 1 : 0), 0);
-      if (this.role === 'flanker' && d > 7 && d < 60) { // swing wide and come in from the side
+      if (player.hide && this.checkSpot === player.hide) { /* they watched you climb in: no hanging back, straight over to the lid */ }
+      else if (this.role === 'flanker' && d > 7 && d < 60) { // swing wide and come in from the side
         const px = -dz / (d || 1), pz = dx / (d || 1), off = Math.min(14, d * 0.6) * this.flankSide;
         const fx2 = tp.x + px * off, fz2 = tp.z + pz * off;
         if (!blockedAt(fx2, fz2) && los(this.x, this.z, fx2, fz2)) { tx = fx2; tz = fz2; }
@@ -818,6 +824,8 @@ function useAction() {
   const atm = !player.car && player.mode === 'move' ? atmNear(player.x, player.y, player.z) : null;
   if (atm && WX.blackout && WX.blackout.city === WX.here) { showMsg('CASHPOINT IS DEAD. POWER CUT.', 2); return; }
   if (atm) { tryOpenShop(ATM_SPOT, atmCtx); return; }
+  const stall = !player.car && player.mode === 'move' && !player.hide ? stallNear(player.x, player.y, player.z) : null;
+  if (stall) { if (!marketOpen(G.hour)) { showMsg('THE MARKET\'S SHUT. BACK AT 7', 2); return; } tryOpenShop({ name: stall.name, kind: 'market', blurbs: STALL_BLURBS }, stallMenu(stall, MK)); return; }
   const board = !player.car && player.mode === 'move' ? gigBoardNear(player.x, player.y, player.z) : null;
   if (board) { board.blurbs = boardBlurbs(); tryOpenShop(board, gigMenu(GJ)); return; }
   const lorry = lorryRearNear(GJ);
@@ -1246,9 +1254,30 @@ const GJ = {
   G, player, sfx, get input() { return input; }, isTouch: () => isTouch, showMsg: (t, d) => showMsg(t, d), addCash: (n) => { player.cash += n; },
   leaveShop: () => leaveShop(), enterHide: (S) => enterHide(S, SK), leaveHide: () => leaveHide(SK), hurt: (n) => hurtPlayer(n, player.x, player.z, 2),
   smell: (t) => { SK_STATE.smellT = Math.max(SK_STATE.smellT, t); },
+  // a regular client's thank-you
+  perk: (k) => {
+    if (k === 'cardigan') { if (!CATALOG.costume.some((c) => c.id === 'nana_cardi')) CATALOG.costume.push({ id: 'nana_cardi', slot: 'body', cat: 'gift', name: 'NANA PEG\'S CARDIGAN', price: 0, dg: 0.34, desc: 'Hand knitted. Lumpy. Nobody would ever suspect it.' }); player.outfit.body = 'nana_cardi'; putOnDisguise(); }
+    else if (k === 'pal' || k === 'guard') { const a = new Ally(k, player.x + Math.cos(player.yaw) * 1.4, player.y, player.z - Math.sin(player.yaw) * 1.4); G.allies.push(a); }
+    else if (k === 'discount') { /* the market stalls read GJ_STATE.perks.discount */ }
+    sfx.cheer();
+  },
+};
+// what the markets need from the game
+const STALL_BLURBS = ['"Come on, come on, have a look!"', '"Cash only, love. No cards, no names."', '"Two for one if you stop staring."', '"I\'ve seen your face somewhere. Nah. Couldn\'t be."'];
+const MK = {
+  G, player, sfx, hunters: () => G.hunters, showMsg: (t, d) => showMsg(t, d), say: (h, t) => say(h, t), addHeat: (n) => addHeat(n), bumpLocal: (n) => bumpLocal(n),
+  coolHeat: (n) => { G.heat = Math.max(heatFloor(), G.heat - n); }, addJunk: (k) => { SK_STATE.junk.push(k); },
+  wear: (id) => { const it = CATALOG.costume.find((c) => c.id === id); player.outfit[it.slot] = id; return putOnDisguise(); },
+  canSee: (h) => h.hasLOS, openPoint: (x, z, r0 = 0, r1 = 20) => randomOpenPoint(x, z, r0, r1),
+  vendorOf: (spot) => vendorOf(spot), hideT: () => SK_STATE.hideT,
+  hireTrader: (spot, x, z) => { const p = randomOpenPoint(x, z, 0, 2.5, 8) || { x, z }; const h = new Hunter(p.x, p.z, 'civ', false); G.hunters.push(h); if (hireVendor(h, spot)) lifeStart(h, LIFE); return h; },
+  giveCrowbar: () => { if (player.owned.has('crowbar')) return false; player.owned.add('crowbar'); updateSlots(); return true; },
+  discount: () => (GJ_STATE.perks.discount ? 0.25 : 0),
 };
 const LIFE = {
   say: (h, t) => say(h, t), critic: (a, b) => heroOverheard(a, b, HC),
+  // a dog has smelt you in your hiding place: its owner goes over for a look
+  dogAlert: (h, S) => { if (h.dead || h.state === 'chase') return; if (h.act || h.inside) lifeInterrupt(h); h.wt = { x: S.stand.x, z: S.stand.z }; h.peek = S; h.waitT = 0; h.huntT = Math.max(h.huntT, 8); say(h, mpick(['WHAT IS IT, BOY?', 'WHAT HAVE YOU FOUND?', 'LEAVE IT! ...WAIT, WHAT\'S IN THERE?', 'IS SOMEONE IN THERE?'])); },
   get hour() { return G.hour; }, get superMode() { return G.super; }, get hunters() { return G.hunters; }, get time() { return G.elapsed; },
   near: (x, z, r) => Math.abs(x - camera.position.x) < r && Math.abs(z - camera.position.z) < r,
 };
@@ -1974,6 +2003,10 @@ function drawMinimap() {
   mm.fillStyle = '#9affb0'; for (const a of atmSpots) mm.fillRect(a.x - 1.6 / sc, a.z - 1.6 / sc, 3.2 / sc, 3.2 / sc);
   mm.fillStyle = '#5fd06a'; for (const D of G.drops) mm.fillRect(D.x - 1, D.z - 1, 2, 2);
   mm.fillStyle = '#e8c070'; for (const B of gigBoards) mm.fillRect(B.x - 1.6 / sc, B.z - 1.6 / sc, 3.2 / sc, 3.2 / sc); // notice boards
+  for (const M of marketMapMarks(MK)) { // markets (striped squares) and, with the old town map, every hiding place
+    if (M.kind === 'hide') { if (!inR(M.x, M.z, M.x, M.z, 5)) continue; mm.fillStyle = '#b8ffd8'; mm.beginPath(); mm.arc(M.x, M.z, 1.4 / sc * 1.2, 0, Math.PI * 2); mm.fill(); continue; }
+    const k = (big ? 8 : 6) / sc; mm.fillStyle = M.open ? '#ff8a3a' : '#8a6a5a'; mm.fillRect(M.x - k, M.z - k, k * 2, k * 2); mm.fillStyle = '#fff4d0'; mm.fillRect(M.x - k, M.z - k * 0.25, k * 2, k * 0.5);
+  }
   for (const M of gigMapMarks()) if (M.area) { mm.fillStyle = 'rgba(255,154,208,.18)'; mm.strokeStyle = M.color; mm.lineWidth = 1.5 / sc; mm.beginPath(); mm.arc(M.x, M.z, M.area, 0, Math.PI * 2); mm.fill(); mm.stroke(); }
   const dot = Math.max(1.8, 2.2 / sc);
   mm.fillStyle = '#3cff8a'; for (const a of G.allies) if (!a.dead) { mm.beginPath(); mm.arc(a.x, a.z, dot * 1.2, 0, Math.PI * 2); mm.fill(); }
@@ -2108,6 +2141,7 @@ function updateHUD(dt) {
   else if (G.inSafe && G.inSafe.owned && safeSpotNear(G.inSafe, player.x, player.z) === 'stash') prompt = G.inSafe.stashDay === G.day ? 'Stash is empty. Back tomorrow' : `${isTouch ? 'Tap USE' : 'Press E'} to raid the stash`;
   else if (shopNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE to shop at ' : 'Press E to shop at ') + shopNear(player.x, player.y, player.z).name;
   else if (atmNear(player.x, player.y, player.z)) prompt = (isTouch ? 'Tap USE' : 'Press E') + (G.contract ? ' to check the cashpoint' : ' for contracts at the cashpoint');
+  else if (!player.car && player.mode === 'move' && stallNear(player.x, player.y, player.z)) { const st = stallNear(player.x, player.y, player.z); prompt = marketOpen(G.hour) ? `${useK} to buy from the ${st.name.toLowerCase()}` + (marketInternals.traderAt(st, MK) ? '' : ' (nobody\'s minding it)') : 'The market\'s shut. Back at 7'; }
   else if (pboard) prompt = `${useK} to read the ${pboard.name.toLowerCase()}` + (GJ_STATE.gig ? ' (you\'re already on a job)' : '');
   else if (plorry) prompt = `${useK} to hop on the back of the bin lorry`;
   else if (zipStartNear()) prompt = isTouch ? 'Tap USE to ride the zipline' : 'Press E to ride the zipline';
@@ -2122,7 +2156,7 @@ function updateHUD(dt) {
   hud.crack.classList.toggle('show', !!player.hide);
   hud.crack.classList.toggle('slats', !!player.hide && ['wardrobe', 'cupboard', 'locker'].includes(player.hide.kind));
   hud.crack.classList.toggle('crate', !!player.hide && player.hide.kind === 'crate');
-  { const n = SK_STATE.junk.length, b = SK_STATE.junk.filter((k) => k === 'bottle').length; hud.junk.textContent = n ? `${b ? b + ' BOTTLE' + (b > 1 ? 'S' : '') : ''}${b && n - b ? ' · ' : ''}${n - b ? (n - b) + ' CAN' + (n - b > 1 ? 'S' : '') : ''}${isTouch ? '' : ' (T)'}` : ''; }
+  { const n = SK_STATE.junk.length, cnt = {}; for (const k of SK_STATE.junk) cnt[k] = (cnt[k] || 0) + 1; hud.junk.textContent = n ? Object.keys(cnt).map((k) => `${cnt[k]} ${JUNK_NAMES[k][cnt[k] > 1 ? 1 : 0]}`).join(' · ') + ` · NEXT: ${JUNK_NAMES[SK_STATE.junk[n - 1]][0]}${isTouch ? '' : ' (T)'}` : ''; }
   if (hud.btnThrow) hud.btnThrow.classList.toggle('hidden', !SK_STATE.junk.length || !!player.car || !!player.hide);
   if (hud.btnCar) hud.btnCar.classList.toggle('hidden', !(safeDoorNear(player.x, player.y, player.z) || (G.inSafe && safeSpotNear(G.inSafe, player.x, player.z)) || player.car || player.hide || GJ_STATE.ride || pboard || plorry || pmark || pjunk || pbin || nearestCar(3.6) || zipStartNear() || player.mode === 'zip' || shopNear(player.x, player.y, player.z) || atmNear(player.x, player.y, player.z)));
 }
@@ -2225,7 +2259,7 @@ function resetGame() {
   G.lkp = { x: 0, z: 0 };
   for (const S of safehouses) Object.assign(S, { owned: S.price === 0, burnedDay: 0, stashDay: 0 });
   resetManhunt(CFG.days);
-  player.hide = null; resetStealth(SK); resetGigs();
+  player.hide = null; resetStealth(SK); resetGigs(); resetMarkets();
   Object.assign(G, { airGapT: 0, shook: false, safe: null, inSafe: null, napDay: 0, sleepT: 0, localSus: {}, unseenT: 99, stareT: 0 }); player.drawnT = 99;
   spawnTraffic(84);
   navRecenter(0, 0, true); computeFlow(0, 0);
@@ -2744,7 +2778,7 @@ function simulate(dt, t) {
     if (G.super) { updateHero(dt, HC); updateVillains(dt, HC); }
     for (const c of G.cars) c.update(dt);
     carInteractions();
-    updateBikes(dt, BK); updateStreetProps(dt, BK); updateStealth(dt, SK); updateGigs(dt, GJ);
+    updateBikes(dt, BK); updateStreetProps(dt, BK); updateStealth(dt, SK); updateGigs(dt, GJ); updateMarkets(dt, MK);
     for (const a of G.helis) if (!a.dead) a.update(dt);
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
@@ -2780,4 +2814,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };

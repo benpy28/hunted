@@ -8,6 +8,7 @@ import { lifeSpots, walkIns } from './streets.js';
 import { warehouses } from './docks.js';
 import { lam } from './people.js';
 import { emitPuff } from './fx.js';
+import { sniffHide } from './stealth.js';
 
 export const JOBS = ['vendor', 'sweeper', 'busker', 'courier', 'jogger', 'tourist', 'dogwalker'];
 const LIFE_JOB_LINES = {
@@ -66,6 +67,7 @@ function giveLifeJobProps(h) {
 // lifeDogs
 // ---------------------------------------------------------------------
 const lifeDogs = [];
+const LIFE_DOG_STATS = { alerts: 0 };
 const LIFE_DOG_COLS = [0x8a5a2a, 0xe0d0b0, 0x2a2a2a, 0xc0a070, 0xf0f0f0, 0x6a4a3a];
 function makeLifeDog(owner) {
   const g = new THREE.Group(), c = mpick(LIFE_DOG_COLS), s = mr(0.7, 1.15);
@@ -88,6 +90,14 @@ function updateLifeDogs(dt, C) {
     } else {
       const fx = Math.sin(O.face), fz = Math.cos(O.face);
       tx = O.x - fx * 0.4 + fz * 0.9; tz = O.z - fz * 0.4 - fx * 0.9;
+      // that nose: a dog that passes your hiding place smells you, strains at the lead and barks until its owner looks
+      D.sniffT = (D.sniffT || 0) - dt;
+      if (D.sniffT <= 0) { D.sniffT = 0.4; const S = sniffHide(D.x, D.z, 5); if (S && D.onto !== S) { D.onto = S; D.ontoT = 0; D.told = false; } else if (!S) D.onto = null; }
+      if (D.onto && D.onto.stand) {
+        D.ontoT += dt; tx = D.onto.stand.x; tz = D.onto.stand.z;
+        if (D.ontoT > 0.6 && Math.floor(D.ontoT / 0.7) !== Math.floor((D.ontoT - dt) / 0.7)) C.say(O, mpick(['WOOF!', 'WOOF WOOF!', 'GRRR... WOOF!', 'ARF! ARF!']));
+        if (D.ontoT > 2.2 && !D.told) { D.told = true; LIFE_DOG_STATS.alerts++; if (C.dogAlert) C.dogAlert(O, D.onto); }
+      }
       const d = Math.hypot(tx - D.x, tz - D.z); spd = d > 6 ? 7 : d > 0.4 ? Math.min(4.5, d * 2.2) : 0;
       if (d > 25) { D.x = tx; D.z = tz; spd = 0; }
     }
@@ -109,6 +119,13 @@ export function clearCityLife() { for (const D of lifeDogs) scene.remove(D.g); l
 // jobs and activities
 // ---------------------------------------------------------------------
 const lifeVendorCarts = new Map(); // cart spot -> vendor
+// put someone behind a market stall (or any cart) as its trader
+export function hireVendor(h, spot) {
+  if (lifeVendorCarts.has(spot) || h.job) return false;
+  lifeVendorCarts.set(spot, h); h.cart = spot; h.job = 'vendor'; giveLifeJobProps(h);
+  return true;
+}
+export const vendorOf = (spot) => lifeVendorCarts.get(spot) || null;
 // called once when someone is spawned: maybe give them a job
 export function assignJob(h, C) {
   if (h.type === 'cop' || h.type === 'brute' || h.contract || h.rival || h.guard) return;
@@ -137,7 +154,7 @@ function nearestLifeSpot(h, kind, maxD) {
   return best;
 }
 function lifeCartSides(s) { // the two long sides of a cart: one for the vendor, one for customers
-  const px = s.alongX ? 0 : 1, pz = s.alongX ? 1 : 0, off = s.alongX ? 1.15 : 1.15;
+  const sg = s.flip ? -1 : 1, px = s.alongX ? 0 : sg, pz = s.alongX ? sg : 0, off = 1.15; // flip: a market stall with its customers on the other side
   return [{ x: s.x + px * off, z: s.z + pz * off, face: Math.atan2(-px, -pz) }, { x: s.x - px * off, z: s.z - pz * off, face: Math.atan2(px, pz) }].filter((q) => !blockedAt(q.x, q.z));
 }
 function lifeBegin(h, kind, tx, tz, face, dur, extra) {
@@ -220,6 +237,7 @@ export function routineVisit(h, want, C) {
 export function lifeStart(h, C) {
   if (h.act || h.state === 'chase' || h.huntT > 0 || Math.abs(h.y) > 1 || h.contract || h.rival || h.guard) return false;
   const hr = C.hour, night = hr < 6 || hr > 22.5, J = h.job;
+  if (J === 'vendor' && h.cart && h.cart.stall) { const B = h.cart.stall.back, F = h.cart.stall.front; return lifeBegin(h, 'vend', B.x, B.z, Math.atan2(F.x - B.x, F.z - B.z), night ? 20 : mr(240, 480)); } // market traders stay put
   if (J === 'vendor' && h.cart) { const sd = lifeCartSides(h.cart)[0]; if (sd) return lifeBegin(h, 'vend', sd.x, sd.z, sd.face, night ? 20 : mr(60, 140)); }
   if (J === 'busker' && Math.random() < 0.8) return lifeBegin(h, 'busk', h.x, h.z, h.face, mr(40, 90));
   if (J === 'tourist' && Math.random() < 0.6) return lifeBegin(h, 'photo', h.x, h.z, h.face + mr(-1.5, 1.5), mr(3, 6));
@@ -237,7 +255,7 @@ export function lifeStart(h, C) {
   if (r < 0.32) { const s = nearestLifeSpot(h, 'bench', 45); if (s) { s.taken = h; return lifeBegin(h, 'sit', s.x, s.z, s.face, mr(10, 30), { spot: s }); } }
   if (r < (lunch ? 0.6 : 0.42)) {
     let best = null, bd = 50; for (const s of lifeSpots) if (s.kind === 'cart' && lifeVendorCarts.has(s)) { const d = Math.abs(s.x - h.x) + Math.abs(s.z - h.z); if (d < bd) { bd = d; best = s; } }
-    if (best) { const sd = lifeCartSides(best); const q = sd[1] || sd[0]; if (q) { const n = (best.queue = (best.queue || 0) + 1) - 1, ux = Math.sin(q.face), uz = Math.cos(q.face); return lifeBegin(h, 'queue', q.x - ux * n * 0.9, q.z - uz * n * 0.9, q.face, mr(6, 12), { cart: best }); } }
+    if (best) { const sd = lifeCartSides(best); const q = best.stall ? { x: best.stall.front.x, z: best.stall.front.z, face: Math.atan2(best.stall.back.x - best.stall.front.x, best.stall.back.z - best.stall.front.z) } : sd[1] || sd[0]; if (q) { const n = (best.queue = (best.queue || 0) + 1) - 1, ux = Math.sin(q.face), uz = Math.cos(q.face); return lifeBegin(h, 'queue', q.x - ux * n * 0.9, q.z - uz * n * 0.9, q.face, mr(6, 12), { cart: best }); } }
   }
   if (r < 0.62) { // find someone to talk to
     let best = null, bd = 14;
@@ -323,7 +341,7 @@ export function lifeStep(h, dt, C) {
     }
   } else if (A.lineT <= 0) {
     A.lineT = mr(5, 11);
-    const lines = VISIT_LINES[A.kind] && A.kind !== 'home' ? VISIT_LINES[A.kind] : A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
+    const lines = VISIT_LINES[A.kind] && A.kind !== 'home' ? VISIT_LINES[A.kind] : A.kind === 'phone' ? LIFE_PHONE_LINES : A.kind === 'vend' ? (h.cart && h.cart.lines) || LIFE_JOB_LINES.vendor : A.kind === 'busk' ? LIFE_JOB_LINES.busker : A.kind === 'deliver' ? LIFE_JOB_LINES.courier : A.kind === 'photo' ? LIFE_JOB_LINES.tourist : A.kind === 'sweep' ? LIFE_JOB_LINES.sweeper : A.kind === 'sniff' ? LIFE_JOB_LINES.dogwalker : null;
     if (lines && heard && Math.random() < 0.6) C.say(h, mpick(lines));
   }
   if (A.kind === 'photo' && A.phase === 'do' && !A.flashed && A.t > 1.2) { A.flashed = true; const fx = Math.sin(h.face), fz = Math.cos(h.face); emitPuff(h.x + fx * 0.5, h.y + 1.6, h.z + fz * 0.5, { life: 0.15, size0: 0.5, size1: 1.2, alpha: 0.9, color: 0xffffff }); }
@@ -379,4 +397,4 @@ export function lifePose(h, dt, C) {
   else if (A.kind === 'deliver') { p.armL.rotation.x = p.armR.rotation.x = -1.25; }
 }
 export function updateCityLife(dt, C) { updateLifeDogs(dt, C); }
-export const cityLifeDebug = { dogs: lifeDogs, vendorCarts: lifeVendorCarts, routineWants, routineVisit };
+export const cityLifeDebug = { dogs: lifeDogs, dogStats: LIFE_DOG_STATS, makeLifeDog: (h) => makeLifeDog(h), vendorCarts: lifeVendorCarts, routineWants, routineVisit };

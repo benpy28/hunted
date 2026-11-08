@@ -17,8 +17,9 @@ import { warehouses } from './docks.js';
 import { streetPropObjs } from './streetprops.js';
 import { emitPuff } from './fx.js';
 import { comicWord } from './knockfx.js';
+import { MK_STATE, marketStalls, STALL_KINDS } from './market.js';
 
-export const GJ_STATE = { gig: null, ride: null, rep: 0, done: 0, earned: 0, failed: 0, binsEmptied: 0, hopperRides: 0, msgT: 0 };
+export const GJ_STATE = { gig: null, ride: null, rep: 0, done: 0, earned: 0, failed: 0, binsEmptied: 0, hopperRides: 0, msgT: 0, regulars: {}, perks: {} };
 export const gigBoards = []; // {x, z, face, city, name, offers, day}
 // a repeatable 0..1 from a position (the world's seeded random stream must not shift when things are added)
 const gjHash = (x, z, k = 0) => { const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return s - Math.floor(s); };
@@ -247,6 +248,8 @@ const GIG_KINDS = {
   litter: { label: 'LITTER PICK', color: '#9aff7a', hex: 0x9aff7a },
   pet: { label: 'LOST CAT', color: '#ff9ad0', hex: 0xff9ad0 },
   bincrew: { label: 'BIN CREW', color: '#c8ff4a', hex: 0xc8ff4a },
+  errand: { label: 'MARKET ERRAND', color: '#ff8a3a', hex: 0xff8a3a },
+  lookout: { label: 'LOOKOUT', color: '#d8a0ff', hex: 0xd8a0ff },
 };
 const CAT_NAMES = ['BISCUIT', 'MR WHISKERS', 'NOODLE', 'DUCHESS', 'PICKLE', 'SIR PURRSALOT', 'MARMALADE', 'TOFFEE', 'PRINCESS FLUFFBALL', 'GERALD'];
 const CLIENTS = ['MRS OKAFOR AT NUMBER 12', 'A MAN CALLED DES', 'THE CORNER SHOP', 'A VERY ANXIOUS LANDLORD', 'THE RESIDENTS\' COMMITTEE', 'SOMEONE WHO SIGNED IT "X"', 'NANA PEG', 'THE CHURCH HALL', 'A STRESSED CAFE OWNER', 'THE ALLOTMENT SOCIETY'];
@@ -256,39 +259,114 @@ const BOARD_BLURBS = ['"Reliable person wanted. Cash in hand. No questions asked
 const payMul = (K) => (1 + GJ_STATE.rep * 0.06) * (1 + (K.G.day - 1) * 0.02);
 const round5 = (n) => Math.max(5, Math.round(n / 5) * 5);
 function nearWalkIns(x, z, r0, r1, filter = () => true) { return walkIns.filter((W) => { const d = Math.hypot(W.x - x, W.z - z); return d > r0 && d < r1 && filter(W); }); }
+// one job of a given kind, posted on board B (null if there's nothing suitable round here)
+function buildOffer(kind, B, K) {
+  const O = { id: `${kind}-${Math.random().toString(36).slice(2, 7)}`, kind, client: mpick(CLIENTS), board: B };
+  if (kind === 'delivery') {
+    const from = mpick(nearWalkIns(B.x, B.z, 20, 160, (W) => !W.home)) || mpick(nearWalkIns(B.x, B.z, 10, 220));
+    if (!from) return null;
+    const to = mpick(nearWalkIns(from.x, from.z, 80, 260, (W) => W.home)) || mpick(nearWalkIns(from.x, from.z, 70, 260));
+    if (!to) return null;
+    O.from = from; O.to = to; O.what = mpick(PARCELS);
+    const d = Math.hypot(to.x - from.x, to.z - from.z);
+    O.pay = round5((18 + d * 0.12) * payMul(K)); O.time = Math.round(120 + d / 3);
+    O.desc = `Collect ${O.what} from ${from.name} and drop it at ${to.name}, ${Math.round(d)} m away. Don't get it knocked about.`;
+  } else if (kind === 'leaflets') {
+    const doors = nearWalkIns(B.x, B.z, 15, 170).sort(() => Math.random() - 0.5).slice(0, 5);
+    if (doors.length < 3) return null;
+    O.doors = doors; O.what = mpick(LEAFLETS);
+    O.pay = round5((10 + doors.length * 5) * payMul(K)); O.time = 200;
+    O.desc = `Push leaflets for ${O.what} through ${doors.length} doors round here. Walk up to each door.`;
+  } else if (kind === 'litter') {
+    O.pay = round5(32 * payMul(K)); O.time = 160; O.bags = 7;
+    O.desc = 'Seven bags of rubbish dumped on a patch of pavement. Clear the lot. Nobody looks at the person picking up litter.';
+  } else if (kind === 'pet') {
+    O.what = mpick(CAT_NAMES); O.pay = round5(mr(40, 60) * payMul(K)); O.time = 240;
+    O.desc = `${O.what} hasn't come home. Search the marked area, creep up slowly (crouch, they spook easily) and bring them back here.`;
+  } else if (kind === 'errand') { // pop to the market for something and bring it round
+    const st = nearestStall(B.x, B.z, mpick(['fruit', 'bakery', 'flowers'])); const to = mpick(nearWalkIns(B.x, B.z, 10, 200, (W) => W.home)) || mpick(nearWalkIns(B.x, B.z, 10, 220));
+    if (!st || !to) return null;
+    O.stall = st; O.to = to; O.what = ERRAND_WHAT[st.kind];
+    const d = Math.hypot(st.x - B.x, st.z - B.z) + Math.hypot(to.x - st.x, to.z - st.z);
+    O.pay = round5((22 + d * 0.08) * payMul(K)); O.time = Math.round(200 + d / 2.5);
+    O.desc = `Buy ${O.what} at the ${st.market.name} (the ${STALL_KINDS[st.kind].name.toLowerCase()} stall) and take it round to ${to.name}. Pays your money back and then some.`;
+  } else if (kind === 'lookout') { // stand on a corner and watch the street, without getting spotted
+    const p = randomOpenPoint(B.x, B.z, 25, 80) || randomOpenPoint(B.x, B.z, 15, 60);
+    if (!p) return null;
+    O.at = p; O.need = 40; O.pay = round5(38 * payMul(K)); O.time = 240;
+    O.desc = `Stand on the marked corner and keep an eye out for ${mpick(LOOKOUT_FOR)}. 40 seconds, and nobody can clock you while you're at it.`;
+  } else {
+    O.pay = round5(35 * payMul(K)); O.time = 220; O.need = 45;
+    O.desc = 'The council\'s short-handed. Find a bin lorry and ride the back step for 45 seconds. Hi-vis provided, in spirit.';
+  }
+  O.label = GIG_KINDS[kind].label;
+  return O;
+}
 function gjMakeOffers(B, K) {
   B.offers = []; B.day = K.G.day;
-  const kinds = ['delivery', 'leaflets', 'litter', 'pet', 'bincrew'].sort(() => Math.random() - 0.5).slice(0, 3);
-  for (const kind of kinds) {
-    const O = { id: `${kind}-${Math.random().toString(36).slice(2, 7)}`, kind, client: mpick(CLIENTS), board: B };
-    if (kind === 'delivery') {
-      const from = mpick(nearWalkIns(B.x, B.z, 20, 160, (W) => !W.home)) || mpick(nearWalkIns(B.x, B.z, 10, 220));
-      if (!from) continue;
-      const to = mpick(nearWalkIns(from.x, from.z, 80, 260, (W) => W.home)) || mpick(nearWalkIns(from.x, from.z, 70, 260));
-      if (!to) continue;
-      O.from = from; O.to = to; O.what = mpick(PARCELS);
-      const d = Math.hypot(to.x - from.x, to.z - from.z);
-      O.pay = round5((18 + d * 0.12) * payMul(K)); O.time = Math.round(120 + d / 3);
-      O.desc = `Collect ${O.what} from ${from.name} and drop it at ${to.name}, ${Math.round(d)} m away. Don't get it knocked about.`;
-    } else if (kind === 'leaflets') {
-      const doors = nearWalkIns(B.x, B.z, 15, 170).sort(() => Math.random() - 0.5).slice(0, 5);
-      if (doors.length < 3) continue;
-      O.doors = doors; O.what = mpick(LEAFLETS);
-      O.pay = round5((10 + doors.length * 5) * payMul(K)); O.time = 200;
-      O.desc = `Push leaflets for ${O.what} through ${doors.length} doors round here. Walk up to each door.`;
-    } else if (kind === 'litter') {
-      O.pay = round5(32 * payMul(K)); O.time = 160; O.bags = 7;
-      O.desc = 'Seven bags of rubbish dumped on a patch of pavement. Clear the lot. Nobody looks at the person picking up litter.';
-    } else if (kind === 'pet') {
-      O.what = mpick(CAT_NAMES); O.pay = round5(mr(40, 60) * payMul(K)); O.time = 240;
-      O.desc = `${O.what} hasn't come home. Search the marked area, creep up slowly (crouch, they spook easily) and bring them back here.`;
-    } else {
-      O.pay = round5(35 * payMul(K)); O.time = 220; O.need = 45;
-      O.desc = 'The council\'s short-handed. Find a bin lorry and ride the back step for 45 seconds. Hi-vis provided, in spirit.';
-    }
-    O.label = GIG_KINDS[kind].label;
-    B.offers.push(O);
-  }
+  const kinds = ['delivery', 'leaflets', 'litter', 'pet', 'bincrew', 'errand', 'lookout'].sort(() => Math.random() - 0.5).slice(0, 3);
+  for (const kind of kinds) { const O = buildOffer(kind, B, K); if (O) B.offers.push(O); }
+  // a regular client with more work for you puts their next job up first
+  const R = nextRegularFor(B, K); if (R) B.offers.unshift(R);
+}
+// ---------------------------------------------------------------------
+// regular clients: do one of their jobs and they come back with the next part of the story. Finish the
+// whole run and they do something for you in return.
+// ---------------------------------------------------------------------
+const ERRAND_WHAT = { fruit: 'A BAG OF APPLES', bakery: 'A SAUSAGE ROLL', flowers: 'A BUNCH OF FLOWERS', fish: 'SOME CHIPS' };
+const LOOKOUT_FOR = ['the bailiffs', 'a traffic warden with a grudge', 'my ex', 'the landlord', 'a man in a brown hat', 'anyone from the council'];
+export const REGULARS = {
+  peg: { name: 'NANA PEG', town: 'ASHFORD', perk: 'cardigan', perkText: 'NANA PEG KNITTED YOU A CARDIGAN. NOBODY SUSPECTS A CARDIGAN',
+    steps: [
+      { kind: 'pet', intro: 'Nana Peg\'s cat has gone walkabout again.' },
+      { kind: 'errand', intro: 'She wants to say thank you. Well, she wants you to fetch her shopping first.' },
+      { kind: 'delivery', intro: 'A steak pie for her sister across town. Still warm. Do NOT drop it.', what: 'A STEAK PIE IN A TIN' },
+      { kind: 'lookout', intro: 'The man from the council is coming about her hedge. Watch for him.' },
+    ] },
+  des: { name: 'A MAN CALLED DES', town: 'PORT HALDEN', perk: 'pal', perkText: 'DES SAYS HIS COUSIN WILL LOOK AFTER YOU. HIS COUSIN IS LARGE',
+    steps: [
+      { kind: 'delivery', intro: 'Des has a box. Des would like it moved. Des will not say what is in it.' },
+      { kind: 'leaflets', intro: 'Des is launching a business. The leaflets have three spelling mistakes.' },
+      { kind: 'lookout', intro: 'Des needs someone to "keep an eye out" while he "sorts something".' },
+      { kind: 'delivery', intro: 'One last box for Des. Heavier. It ticks. Don\'t ask.', what: 'A TICKING BOX (IT\'S A CLOCK. PROBABLY)' },
+    ] },
+  shop: { name: 'THE CORNER SHOP', town: null, perk: 'discount', perkText: 'THE CORNER SHOP PUT A WORD IN. MARKET TRADERS GIVE YOU A QUARTER OFF',
+    steps: [
+      { kind: 'litter', intro: 'Someone keeps dumping bags outside the corner shop.' },
+      { kind: 'leaflets', intro: 'The corner shop has a meal deal to shout about.' },
+      { kind: 'errand', intro: 'They\'ve run out of stock. Pop to the market for them.' },
+    ] },
+  harbour: { name: 'THE HARBOUR MASTER', town: 'SALTMARSH DOCKS', perk: 'guard', perkText: 'THE HARBOUR MASTER SENT A DOCKER TO WATCH YOUR BACK',
+    steps: [
+      { kind: 'bincrew', intro: 'The harbour master wants the quay cleaned up before an inspection.' },
+      { kind: 'delivery', intro: 'Paperwork for a ship\'s captain. Very important. Smells of fish.' },
+      { kind: 'lookout', intro: 'Watch the gate for the inspector. Whistle if you see a clipboard.' },
+    ] },
+};
+function nextRegularFor(B, K) {
+  const ids = Object.keys(REGULARS).filter((id) => { const R = REGULARS[id], st = GJ_STATE.regulars[id] || 0; return st < R.steps.length && (!R.town || R.town === B.city); });
+  if (!ids.length) return null;
+  // the one you've done most for comes first; a new regular only once you've done a couple of odd jobs
+  ids.sort((a, b) => (GJ_STATE.regulars[b] || 0) - (GJ_STATE.regulars[a] || 0));
+  const id = ids[0], R = REGULARS[id], i = GJ_STATE.regulars[id] || 0;
+  if (i === 0 && GJ_STATE.done < 1) return null;
+  const step = R.steps[i];
+  const O = buildOffer(step.kind, B, K); if (!O) return null;
+  O.regular = id; O.step = i; O.client = R.name; if (step.what) O.what = step.what;
+  if (step.what && O.kind === 'delivery') O.desc = O.desc.replace(/^Collect .*? from/, `Collect ${step.what} from`);
+  O.pay = round5(O.pay * (1.4 + i * 0.25));
+  O.desc = `${step.intro} ${O.desc} (Part ${i + 1} of ${R.steps.length}.)`;
+  O.label = `★ ${O.label}`;
+  return O;
+}
+const nearestStall = (x, z, kind) => { let b = null, bd = 1e9; for (const st of marketStalls) { if (kind && st.kind !== kind) continue; const d = Math.hypot(st.x - x, st.z - z); if (d < bd) { bd = d; b = st; } } return b; };
+function regularDone(O, K) {
+  const id = O.regular, R = REGULARS[id];
+  GJ_STATE.regulars[id] = Math.max(GJ_STATE.regulars[id] || 0, O.step + 1);
+  if (GJ_STATE.regulars[id] < R.steps.length) { K.showMsg(`${R.name} WILL HAVE MORE WORK FOR YOU. CHECK THE BOARDS`, 2.6); return; }
+  GJ_STATE.perks[R.perk] = true;
+  K.perk(R.perk);
+  K.showMsg(R.perkText, 3.5);
 }
 // the notice board menu (uses the same panel as the shops)
 export function gigMenu(K) {
@@ -365,6 +443,8 @@ function startGig(O, K) {
     g.area = { x: p.x + mr(-14, 14), z: p.z + mr(-14, 14), r: 24 };
     g.targets = [{ x: g.area.x, z: g.area.z, label: 'SEARCH', area: true }];
   } else if (O.kind === 'bincrew') { g.rode = 0; g.targets = []; }
+  else if (O.kind === 'errand') { g.bought0 = MK_STATE.bought + MK_STATE.nicked; g.targets = [{ x: O.stall.front.x, z: O.stall.front.z, label: 'STALL' }]; }
+  else if (O.kind === 'lookout') { g.watch = 0; g.targets = [{ x: O.at.x, z: O.at.z, label: 'CORNER' }]; }
   GJ_STATE.gig = g;
   K.sfx.pickup();
 }
@@ -377,6 +457,7 @@ function endGig(K, ok, msg) {
     if (g.kind === 'delivery' && g.bumps > 0) pay = round5(pay * Math.max(0.4, 1 - g.bumps * 0.25));
     K.addCash(pay); K.sfx.cash(); GJ_STATE.done++; GJ_STATE.earned += pay; GJ_STATE.rep = Math.min(10, GJ_STATE.rep + 1);
     K.showMsg(`${msg} +$${pay}`, 2.6);
+    if (g.offer.regular) setTimeout(() => regularDone(g.offer, K), 2700);
   } else {
     if (msg) K.showMsg(msg, 2.4);
     GJ_STATE.failed++; GJ_STATE.rep = Math.max(0, GJ_STATE.rep - 1);
@@ -386,7 +467,7 @@ function endGig(K, ok, msg) {
 export function gigConspic(K) {
   const g = GJ_STATE.gig, R = GJ_STATE.ride;
   let k = 0;
-  if (g && (g.carry || g.kind === 'litter' || g.kind === 'leaflets')) k -= 0.12;
+  if (g && (g.carry || g.kind === 'litter' || g.kind === 'leaflets' || g.kind === 'errand')) k -= 0.12;
   if (R && R.mode === 'step') k -= 0.15;
   if (k && K.player.outfit && K.player.outfit.body === 'hivis') k -= 0.1;
   return k;
@@ -413,6 +494,15 @@ function updateGig(dt, K) {
     for (const T of g.targets) if (!T.done && near(T.x, T.z, 1.5) && !P.car) { T.done = true; T.mesh.visible = false; K.sfx.paper(); }
     if (g.targets.every((T) => T.done)) endGig(K, true, 'PAVEMENT SPOTLESS');
   } else if (g.kind === 'pet') updateCat(g, dt, K, near);
+  else if (g.kind === 'errand') {
+    if (!g.carry && MK_STATE.bought + MK_STATE.nicked > g.bought0 && MK_STATE.lastStall === g.offer.stall.kind) { g.carry = 'shopping'; K.showMsg(`GOT ${g.offer.what}. NOW ROUND TO ${g.offer.to.name}`, 2.4); g.targets = [{ x: g.offer.to.x, z: g.offer.to.z, label: 'DROP' }]; }
+    else if (g.carry && near(g.offer.to.x, g.offer.to.z, 2.2) && !P.car) { g.carry = null; endGig(K, true, 'SHOPPING DROPPED OFF. THEY SAY YOU\'RE A STAR'); }
+  } else if (g.kind === 'lookout') {
+    const at = g.offer.at, on = near(at.x, at.z, 6) && !P.car;
+    if (on && K.G.lastSeenT > 2) { const was = g.watch; g.watch += dt; if (Math.floor(was / 10) !== Math.floor(g.watch / 10) && g.watch < g.offer.need) K.showMsg(`WATCHING... ${Math.ceil(g.offer.need - g.watch)} s`, 1); }
+    else if (on && K.G.lastSeenT <= 2 && g.watch > 0) { g.watch = Math.max(0, g.watch - dt * 3); }
+    if (g.watch >= g.offer.need) endGig(K, true, 'ALL CLEAR. NOBODY CAME. NOBODY SAW YOU');
+  }
   else if (g.kind === 'bincrew') {
     if (GJ_STATE.ride && GJ_STATE.ride.mode === 'step') { g.rode += dt; if (g.rode >= g.offer.need) endGig(K, true, 'SHIFT DONE. THE CREW SAYS YOU\'RE ALRIGHT'); }
     const L = nearestLorry(K, P.x, P.z); g.targets = L ? [{ x: L.x, z: L.z, label: 'LORRY' }] : [];
@@ -461,9 +551,11 @@ export function gigHud(K) {
   if (g.kind === 'delivery') what = g.carry ? `TAKE IT TO ${g.offer.to.name}` : `COLLECT FROM ${g.offer.from.name}`;
   else if (g.kind === 'leaflets') what = `${open.length} DOORS LEFT`;
   else if (g.kind === 'litter') what = `${open.length} BAGS LEFT`;
+  else if (g.kind === 'errand') what = g.carry ? `TAKE ${g.offer.what} TO ${g.offer.to.name}` : `BUY ${g.offer.what} AT THE MARKET`;
+  else if (g.kind === 'lookout') what = `WATCH THE CORNER · ${Math.floor(g.watch)} / ${g.offer.need} s (DON'T GET SEEN)`;
   else if (g.kind === 'pet') what = g.carry === 'cat' ? `${g.offer.what} BACK TO THE BOARD` : g.cat.seen ? `CATCH ${g.offer.what} (CROUCH)` : `FIND ${g.offer.what} IN THE PINK AREA`;
   else what = GJ_STATE.ride && GJ_STATE.ride.mode === 'step' ? `RIDING · ${Math.ceil(g.offer.need - g.rode)} s TO GO` : 'FIND A BIN LORRY, HOP ON THE BACK';
-  return `<b style="color:${GIG_KINDS[g.kind].color}">${GIG_KINDS[g.kind].label}</b> ${what}<br>${dist}${t} left · pays $${g.pay}`;
+  return `<b style="color:${GIG_KINDS[g.kind].color}">${g.offer.regular ? '★ ' : ''}${GIG_KINDS[g.kind].label}</b> ${what}<br>${dist}${t} left · pays $${g.pay}`;
 }
 
 // =====================================================================
@@ -563,6 +655,7 @@ export function updateGigs(dt, K) {
   for (let i = n; i < beams.length; i++) beams[i].visible = false;
 }
 export function resetGigs() {
+  GJ_STATE.regulars = {}; GJ_STATE.perks = {};
   GJ_STATE.gig = null; GJ_STATE.ride = null; GJ_STATE.rep = 0; GJ_STATE.done = 0; GJ_STATE.earned = 0; GJ_STATE.failed = 0; GJ_STATE.binsEmptied = 0; GJ_STATE.hopperRides = 0;
   clearGigMeshes(); for (const m of beams) if (m) m.visible = false;
   for (const B of gigBoards) { B.offers = []; B.day = 0; }
@@ -571,4 +664,4 @@ export function gigsDebug() {
   const kinds = {}; for (const S of hideSpots) kinds[S.kind] = (kinds[S.kind] || 0) + 1;
   return { boards: gigBoards.length, clutter: gjClutter, terraceMiss: gjTerraceMiss, terraceSeats: terraceSeats.length, hideKinds: kinds, gig: GJ_STATE.gig ? { kind: GJ_STATE.gig.kind, targets: GJ_STATE.gig.targets.length, carry: GJ_STATE.gig.carry, t: GJ_STATE.gig.t } : null, ride: GJ_STATE.ride ? GJ_STATE.ride.mode : null, rep: GJ_STATE.rep, done: GJ_STATE.done, earned: GJ_STATE.earned, binsEmptied: GJ_STATE.binsEmptied };
 }
-export const gigInternals = { startGig, endGig, gjMakeOffers, rearOf, nearestLorry, clamp };
+export const gigInternals = { startGig, endGig, gjMakeOffers, buildOffer, nextRegularFor, regularDone, rearOf, nearestLorry, clamp };
