@@ -11336,6 +11336,220 @@ function resetDeliveries() { DL_STATE.ride = null; DL_STATE.drops = 0; DL_STATE.
 const deliveriesDebug = (K) => ({ trucks: K ? dlTrucks(K).length : 0, stopped: K ? dlTrucks(K).filter((L) => L.dl && L.dl.phase).length : 0, ride: DL_STATE.ride ? { t: DL_STATE.ride.t, x: DL_STATE.ride.car.x, z: DL_STATE.ride.car.z } : null, ...DL_STATE, rideObj: undefined });
 const dlInternals = { dlStart, dlHopOff, dlRear, dlTrucks };
 
+// Container lorries at the SALTMARSH DOCKS warehouses: through the working day, a lorry with a container on
+// the back pulls up at the kerb outside one of the sheds near you, the doors swing open, and two dockers in
+// hi-vis carry the cartons inside while the foreman ticks them off his clipboard.
+//  - LEND A HAND: E at the back of the container and you're carrying a carton. Take it in to the stack inside
+//    the shed and the foreman gives you $2, cash in hand, no questions. With a box on your shoulder you look
+//    like you work here.
+//  - HELP YOURSELF: crouch at the back and E to open a carton and pocket what's in it. If the foreman or a
+//    docker is close, they'll see.
+//  - CLIMB IN: hide at the back of the container among the cartons. When they've finished, they might find
+//    you. Or they shut the doors and the lorry drives off up the road with you inside.
+
+
+
+
+
+const DW_STATE = { jobs: [], carried: 0, earned: 0, nicked: 0, caught: 0, hides: 0, found: 0, rides: 0, arrivals: 0, carry: null, msgT: 0, coolT: 4 };
+const DW_SHIFT = (hr) => hr >= 6 && hr < 19;
+const DW_LOOT = [['A CARTON OF TINNED PEACHES', 0], ['TWENTY PAIRS OF SOCKS', 4], ['A BOX OF CHEAP WATCHES', 12], ['FOUR HUNDRED RUBBER DUCKS', 0], ['A CRATE OF MOBILE PHONE CASES', 6], ['ENVELOPES OF CASH. SOMEBODY\'S WAGES', 20], ['FLAT-PACK SHELVES', 0], ['TRAINERS, ALL LEFT FEET', 2]];
+
+// =====================================================================
+// The lorry: a cab, a chassis, a container with its doors swung open, cartons inside
+// =====================================================================
+const dwBoxGeo = new THREE.BoxGeometry(0.62, 0.5, 0.55), dwBoxMat = lam(0xb89060);
+function dwMakeLorry() {
+  const g = new THREE.Group(), col = mpick([0xb0302a, 0x2a5aa0, 0x2a8a4a, 0xd0902a, 0x6a6a70, 0xc85a1a]);
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
+  add(new THREE.BoxGeometry(9.6, 0.4, 2.3), lam(0x1a1a1e), -0.4, 0.8, 0); // chassis
+  for (const x of [-3.6, -2.4, 3.2]) for (const s of [-1, 1]) { const w = add(new THREE.CylinderGeometry(0.5, 0.5, 0.35, 12), lam(0x111111), x, 0.5, s * 1.05); w.rotation.x = Math.PI / 2; }
+  add(new THREE.BoxGeometry(2.6, 2.4, 2.4), lam(mpick([0xf0f0f0, 0x2a3a6a, 0xd02a2a])), 3.3, 2.0, 0); // cab
+  add(new THREE.BoxGeometry(0.05, 0.9, 2.1), new THREE.MeshLambertMaterial({ color: 0x2a3a4a }), 4.62, 2.5, 0);
+  // the container, open at the back (x = -5)
+  const cm = new THREE.MeshLambertMaterial({ color: col, side: THREE.DoubleSide });
+  const L = 6.0, x0 = -5, cx = x0 + L / 2;
+  add(new THREE.BoxGeometry(L, 0.06, 2.44), cm, cx, 1.03, 0); add(new THREE.BoxGeometry(L, 0.06, 2.44), cm, cx, 3.6, 0);
+  for (const s of [-1, 1]) add(new THREE.BoxGeometry(L, 2.6, 0.06), cm, cx, 2.3, s * 1.22);
+  add(new THREE.BoxGeometry(0.06, 2.6, 2.44), cm, x0 + L, 2.3, 0);
+  for (let k = 0; k < 8; k++) add(new THREE.BoxGeometry(L - 0.2, 0.05, 0.03), lam(0x1a1a1a), cx, 1.2 + k * 0.32, 1.255);
+  const doors = [];
+  for (const s of [-1, 1]) { const pv = new THREE.Group(); pv.position.set(x0, 2.3, s * 1.22); g.add(pv); const d = new THREE.Mesh(new THREE.BoxGeometry(0.05, 2.5, 1.2), cm); d.position.set(0, 0, -s * 0.6); pv.add(d); doors.push({ pv, s }); }
+  const boxes = [];
+  for (let i = 0; i < 12; i++) { const lay = Math.floor(i / 6), r = i % 6, col2 = r % 2, row = Math.floor(r / 2); const m = add(dwBoxGeo, dwBoxMat, x0 + 0.5 + row * 0.7 + lay * 2.4, 1.31 + (i % 4 < 2 ? 0 : 0.52), (col2 ? 0.45 : -0.45)); boxes.push(m); }
+  // more boxes further in (a full container): just one block of cartons at the front end
+  add(new THREE.BoxGeometry(2.0, 2.2, 2.2), dwBoxMat, x0 + L - 1.1, 2.15, 0);
+  g.visible = false; scene.add(g);
+  return { g, doors, boxes };
+}
+function dwSetDoors(J, open) { for (const d of J.mesh.doors) d.pv.rotation.y = open ? d.s * (Math.PI / 2 + 0.25) : 0; J.open = open; }
+function dwShowBoxes(J) { J.mesh.boxes.forEach((m, i) => { m.visible = i < J.boxes; }); }
+
+// =====================================================================
+// The job: where the lorry stops, who works it
+// =====================================================================
+// the kerb outside a warehouse's front door, worked out from the door's inside and outside points
+function dwSite(W) {
+  const D = W.doors.find((d) => d.side === W.side) || W.doors[0]; if (!D) return null;
+  const nl = Math.hypot(D.ox - D.x, D.oz - D.z), n = { x: (D.ox - D.x) / nl, z: (D.oz - D.z) / nl }, t = { x: n.z, z: -n.x };
+  const front = { x: D.x + n.x * 1.5, z: D.z + n.z * 1.5 }; // the door line
+  const at = (ta, nb) => ({ x: front.x + t.x * ta + n.x * nb, z: front.z + t.z * ta + n.z * nb });
+  return { W, D, n, t, front, at, centre: at(4.5, 4.35), rear: at(-1.1, 4.35), stand: at(-1.6, 4.35), doorOut: at(0, 1.4), doorIn: at(0, -1.5), stack: at(1.8, -3.4), foreman: at(-2.6, 1.6), yaw: Math.atan2(-t.z, t.x) };
+}
+function dwWorker(shirt) { const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt, pants: 0x2a2a3a }); p.group.visible = false; scene.add(p.group); const box = new THREE.Mesh(dwBoxGeo, dwBoxMat); box.position.set(0, 1.25, 0.32); box.visible = false; p.group.add(box); return { p, box, carrying: false, leg: 0, wp: null, x: 0, z: 0 }; }
+function dwNewJob(W, K) {
+  const S = dwSite(W); if (!S) return null;
+  const J = { S, W, mesh: dwMakeLorry(), state: 'arrive', drive: -45, boxes: 12, stack: 0, workers: [dwWorker(0xe8e020), dwWorker(0xe8e020)], foreman: dwWorker(0xe06a1a), stackMeshes: [], hide: null, t: 0, open: false };
+  J.mesh.g.rotation.y = S.yaw; dwPlace(J);
+  J.workers.forEach((w, i) => { const p = S.at(-2 - i, 1.0); w.x = p.x; w.z = p.z; w.leg = i; });
+  J.foreman.x = S.foreman.x; J.foreman.z = S.foreman.z;
+  DW_STATE.arrivals++;
+  return J;
+}
+function dwPlace(J) { const S = J.S, c = S.centre; J.mesh.g.position.set(c.x + S.t.x * J.drive, 0, c.z + S.t.z * J.drive); J.mesh.g.visible = true; }
+function dwEndJob(J) {
+  scene.remove(J.mesh.g);
+  for (const w of [...J.workers, J.foreman]) scene.remove(w.p.group);
+  for (const m of J.stackMeshes) scene.remove(m);
+  DW_STATE.jobs.splice(DW_STATE.jobs.indexOf(J), 1);
+}
+// a docker walks: lorry -> door -> stack and back again, carrying a carton one way
+function dwWalk(w, path, dt) {
+  if (!w.wp) w.wp = 0;
+  const p = path[w.wp]; const dx = p.x - w.x, dz = p.z - w.z, d = Math.hypot(dx, dz), sp = 1.5 * dt;
+  if (d < sp + 0.02) { w.x = p.x; w.z = p.z; w.wp++; return w.wp >= path.length; }
+  w.x += dx / d * sp; w.z += dz / d * sp; w.face = Math.atan2(dx, dz); w.ph = (w.ph || 0) + dt * 7;
+  return false;
+}
+function dwPose(w) {
+  const g = w.p.group; g.visible = true; g.position.set(w.x, 0, w.z); if (w.face != null) g.rotation.y = w.face;
+  const k = Math.sin(w.ph || 0) * 0.5; w.p.legL.rotation.x = k; w.p.legR.rotation.x = -k;
+  w.p.armL.rotation.x = w.p.armR.rotation.x = w.carrying ? -1.5 : -k * 0.6; w.box.visible = w.carrying;
+}
+function dwAddStack(J) {
+  const S = J.S, i = J.stack++, p = S.at(1.4 + (i % 3) * 0.66, -3.4 - Math.floor(i / 6) * 0.6);
+  const m = new THREE.Mesh(dwBoxGeo, dwBoxMat); m.position.set(p.x, 0.45 + Math.floor((i % 6) / 3) * 0.5, p.z); m.rotation.y = J.S.yaw; scene.add(m); J.stackMeshes.push(m);
+}
+function dwStepJob(J, dt, K) {
+  const S = J.S, P = K.player; J.t += dt;
+  if (J.state === 'arrive') { J.drive = Math.min(0, J.drive + dt * Math.max(1.2, -J.drive * 0.35)); dwPlace(J); if (J.drive >= 0) { J.state = 'work'; dwSetDoors(J, true); dwShowBoxes(J); if (K.near(S.centre.x, S.centre.z, 50)) K.sfx.thunk && K.sfx.thunk(); } }
+  else if (J.state === 'work') {
+    for (const w of J.workers) {
+      if (w.wait > 0) { w.wait -= dt; continue; }
+      if (!w.carrying) { if (dwWalk(w, [S.doorIn, S.doorOut, S.stand], dt)) { w.wp = 0; if (J.boxes > 0) { J.boxes--; w.carrying = true; dwShowBoxes(J); w.wait = 0.8; } else w.done = true; } }
+      else if (dwWalk(w, [S.doorOut, S.doorIn, S.stack], dt)) { w.wp = 0; w.carrying = false; dwAddStack(J); w.wait = 0.6; }
+    }
+    if (J.boxes <= 0 && J.workers.every((w) => !w.carrying) && !(DW_STATE.carry && DW_STATE.carry.J === J)) {
+      J.state = 'shut'; J.shutT = 2;
+      // anyone in the back?
+      if (J.hide && P.hide !== J.hide) J.hide = null;
+      if (J.hide && P.hide === J.hide) {
+        if (Math.random() < 0.5) { DW_STATE.found++; K.leaveHide(); J.hide = null; K.say({ g: J.foreman.p.group }, 'OI! WHAT ARE YOU DOING IN THERE?'); K.bumpLocal(0.06); K.showMsg('THE DOCKERS FOUND YOU IN THE CONTAINER. THEY TURF YOU OUT', 2.2); }
+        else { J.riding = true; DW_STATE.rides++; K.showMsg('THE DOORS SLAM SHUT. DARKNESS. THE ENGINE STARTS...', 2.4); }
+      }
+    }
+  } else if (J.state === 'shut') { J.shutT -= dt; if (J.shutT <= 0) { dwSetDoors(J, false); J.state = 'leave'; if (K.near(S.centre.x, S.centre.z, 60)) K.sfx.horn(); } }
+  else if (J.state === 'leave') {
+    J.drive += dt * Math.min(9, 1.5 + J.drive * 0.4); dwPlace(J);
+    if (J.riding && P.hide === J.hide) { const r = dwRear(J); Object.assign(J.hide, { x: r.x, z: r.z }); J.hide.eye.x = r.x + S.t.x * 1.2; J.hide.eye.z = r.z + S.t.z * 1.2; J.hide.stand.x = r.x - S.t.x * 1.2; J.hide.stand.z = r.z - S.t.z * 1.2; }
+    if (J.riding && J.drive > 40) { J.riding = false; if (P.hide === J.hide) { K.leaveHide(); K.showMsg('THE LORRY STOPS. THE DRIVER GOES FOR A PASTY. YOU SLIP OUT OF THE BACK', 2.4); } J.hide = null; }
+    if (J.drive > 46) { dwEndJob(J); return; }
+  }
+  // the people
+  for (const w of J.workers) { if (J.state === 'leave') { w.p.group.visible = false; continue; } dwPose(w); }
+  const F = J.foreman; F.face = Math.atan2(P.x - F.x, P.z - F.z) * (K.near(F.x, F.z, 12) ? 1 : 0) + (K.near(F.x, F.z, 12) ? 0 : S.yaw); dwPose(F); F.p.armR.rotation.x = -0.9;
+  // you can't walk through the lorry
+  if (!P.hide && !P.car && J.state !== 'leave') {
+    const c = J.mesh.g.position, rx = P.x - c.x, rz = P.z - c.z, a = rx * S.t.x + rz * S.t.z, b = rx * S.n.x + rz * S.n.z;
+    if (Math.abs(a + 0.4) < 5.3 && Math.abs(b) < 1.55 && P.y < 3.8) { const nb = b < 0 ? -1.55 : 1.55; P.x = c.x + S.t.x * a + S.n.x * nb; P.z = c.z + S.t.z * a + S.n.z * nb; }
+  }
+}
+const dwRear = (J) => { const c = J.mesh.g.position, S = J.S; return { x: c.x - S.t.x * 4.4, z: c.z - S.t.z * 4.4 }; };
+
+// =====================================================================
+// You: carry, nick, hide
+// =====================================================================
+function dwAtRear(K) {
+  const P = K.player; if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
+  for (const J of DW_STATE.jobs) if (J.state === 'work' && Math.hypot(P.x - J.S.stand.x, P.z - J.S.stand.z) < 1.8) return J;
+  return null;
+}
+const dwWatched = (J, K) => [...J.workers, J.foreman].some((w) => Math.hypot(w.x - K.player.x, w.z - K.player.z) < 7 && !w.carrying) && Math.random() < 0.7;
+function dwUseTarget(K) {
+  const C = DW_STATE.carry, P = K.player;
+  if (C) return Math.hypot(P.x - C.J.S.stack.x, P.z - C.J.S.stack.z) < 2.6 ? { kind: 'drop', first: true } : null;
+  const J = dwAtRear(K); if (!J) return null;
+  if (J.boxes <= 0) return { kind: 'empty', J };
+  if (P.crouch > 0.5) return { kind: 'nick', J };
+  return { kind: 'carry', J };
+}
+function dwUsePrompt(T, K, useK) {
+  if (T.kind === 'drop') return `${useK} to put the carton on the stack`;
+  if (T.kind === 'empty') return 'Empty. They\'re shutting up';
+  if (T.kind === 'nick') return `${useK} to open a carton and help yourself · or stand up to lend a hand`;
+  if (T.kind === 'carry') return `${useK} to lend a hand ($2 a carton) · crouch and ${useK} to help yourself${T.J.boxes >= 3 ? ' · JUMP to climb in the back' : ''}`;
+  return '';
+}
+function dwUse(T, K) {
+  const P = K.player;
+  if (T.kind === 'drop') { const C = DW_STATE.carry; DW_STATE.carry = null; dwAddStack(C.J); C.mesh.visible = false; scene.remove(C.mesh); P.cash += 2; DW_STATE.carried++; DW_STATE.earned += 2; K.sfx.cash(); K.say({ g: C.J.foreman.p.group }, mpick(['CHEERS, MATE', 'GOOD LAD. HERE.', 'CASH IN HAND, RIGHT?', 'ANOTHER ONE, IF YOU WANT IT'])); K.showMsg('$2 FROM THE FOREMAN. "SAME AGAIN?"', 1.6); return; }
+  if (T.kind === 'carry') {
+    const J = T.J; J.boxes--; dwShowBoxes(J);
+    const m = new THREE.Mesh(dwBoxGeo, dwBoxMat); scene.add(m);
+    DW_STATE.carry = { J, mesh: m }; K.showMsg('A CARTON ON YOUR SHOULDER. TAKE IT IN TO THE STACK', 1.8); return;
+  }
+  if (T.kind === 'nick') {
+    const J = T.J; J.boxes--; dwShowBoxes(J); DW_STATE.nicked++;
+    const [what, cash] = mpick(DW_LOOT);
+    if (dwWatched(J, K)) { DW_STATE.caught++; K.say({ g: J.foreman.p.group }, 'OI! THIEF! PUT THAT BACK!'); K.addHeat(4); K.report(); K.bumpLocal(0.08); K.showMsg('THE FOREMAN SAW YOU. HE\'S SHOUTING FOR HELP', 2.2); return; }
+    if (cash) P.cash += cash;
+    K.showMsg(`${what}${cash ? `. YOU FLOG SOME ON: +$${cash}` : '. NOT WORTH TAKING'}`, 2.2); return;
+  }
+}
+function dwHop(J, K) {
+  const r = dwRear(J), S = J.S;
+  const H = { kind: 'lorryback', x: r.x, z: r.z, lx: 1.1, lz: 1.1, top: 3.4, eye: { x: r.x + S.t.x * 1.2, y: 1.9, z: r.z + S.t.z * 1.2 }, stand: { x: S.stand.x, z: S.stand.z, ux: -S.t.x, uz: -S.t.z } };
+  J.hide = H; DW_STATE.hides++;
+  K.enterHide(H); K.showMsg(`IN THE CONTAINER, BEHIND THE CARTONS. ${K.isTouch ? 'USE' : 'E'} TO CLIMB OUT`, 2.2);
+}
+
+// =====================================================================
+// Each frame
+// =====================================================================
+function dwUpdate(dt, K) {
+  const P = K.player, hr = K.hour;
+  DW_STATE.msgT = Math.max(0, DW_STATE.msgT - dt);
+  // a new lorry for a shed near you, now and then
+  DW_STATE.coolT -= dt;
+  if (DW_STATE.coolT <= 0 && DW_SHIFT(hr) && DW_STATE.jobs.length < 2) {
+    DW_STATE.coolT = mr(25, 50);
+    const near = warehouses.filter((W) => W.kind !== 'disused' && K.near((W.rect.x0 + W.rect.x1) / 2, (W.rect.z0 + W.rect.z1) / 2, 130) && !DW_STATE.jobs.some((J) => J.W === W) && W.lastDelivery !== K.G.day);
+    if (near.length) { const W = mpick(near); W.lastDelivery = K.G.day; const J = dwNewJob(W, K); if (J) DW_STATE.jobs.push(J); }
+  }
+  for (const J of [...DW_STATE.jobs]) {
+    const far = !K.near(J.S.centre.x, J.S.centre.z, 220);
+    if (far && !J.riding) { if (P.hide === J.hide && J.hide) K.leaveHide(); dwEndJob(J); continue; }
+    dwStepJob(J, dt, K);
+  }
+  // the carton you're carrying
+  const C = DW_STATE.carry;
+  if (C) {
+    if (!DW_STATE.jobs.includes(C.J) || P.car || P.hide || !P.alive || P.mode !== 'move') { scene.remove(C.mesh); DW_STATE.carry = null; }
+    else { const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw); C.mesh.position.set(P.x + fx * 0.55, P.y + 1.15, P.z + fz * 0.55); C.mesh.rotation.y = P.yaw; P.sprinting = false; K.input.sprint = false; }
+  }
+}
+const dockWork = {
+  name: 'dockwork', roofs: [],
+  useTarget: dwUseTarget, usePrompt: dwUsePrompt, use: dwUse,
+  conspic: (K) => (DW_STATE.carry ? -0.32 : DW_STATE.jobs.some((J) => J.state === 'work' && K.near(J.S.centre.x, J.S.centre.z, 6)) ? -0.08 : 0),
+  update: dwUpdate, plan: () => false,
+  ride(dt, K) { const J = K.input.jumpEdge && !DW_STATE.carry ? dwAtRear(K) : null; if (J && J.boxes >= 3) { K.input.jumpEdge = false; dwHop(J, K); } return false; }, // (jump at the back of the container to climb in)
+  reset() { for (const J of [...DW_STATE.jobs]) dwEndJob(J); if (DW_STATE.carry) scene.remove(DW_STATE.carry.mesh); Object.assign(DW_STATE, { jobs: [], carried: 0, earned: 0, nicked: 0, caught: 0, hides: 0, found: 0, rides: 0, arrivals: 0, carry: null, msgT: 0, coolT: 4 }); for (const W of warehouses) W.lastDelivery = 0; },
+  diary: () => (DW_STATE.carried ? [`UNLOADED ${DW_STATE.carried} CARTON${DW_STATE.carried > 1 ? 'S' : ''} AT THE DOCKS ($${DW_STATE.earned})`] : []),
+  debug: () => ({ ...DW_STATE, jobs: DW_STATE.jobs.map((J) => ({ name: J.W.name, state: J.state, boxes: J.boxes, stack: J.stack })), carry: !!DW_STATE.carry }),
+  DW_STATE, dwNewJob, dwSite, dwHop, dwEndJob, dwAtRear,
+};
+
 // The telly in the pub: every pub in the three towns has a big TV over the bar, and when there's football
 // on, the whole room is watching it.
 //  - The Harriers live from the ground (the same goals, at the same minute, as the match up on Route 9),
@@ -11561,6 +11775,348 @@ const pubTV = {
   diary(K) { const T = tvNow(K.G.day, K.hour); return T && T.phase !== 'post' ? [`ON THE PUB TELLY: ${T.home.n} v ${T.away.n}`] : []; },
   debug: (K) => ({ pubs: pubs.length, spots: pubs.reduce((s, Q) => s + Q.spots.length, 0), tv: K ? tvNow(K.G.day, K.hour) : null, ...PTV_STATE }),
   tvNow, footballOn, pubAt, pubs, PT_SLOTS, ptGame, PTV_STATE, ptMat,
+};
+
+// Pub games: every pub has a dartboard on the side wall, and the bigger ones have a pool table you can play.
+//  - DARTS: stand on the oche and press E. $3 on it against one of the regulars: three visits of three darts
+//    each, highest total takes the pot. Aim with the crosshair; your hand drifts (more when you're wanted,
+//    or out of breath). E throws. Treble 20 is up top. A 180 brings the house down.
+//  - POOL: E at the table. $2 a game, reds and yellows: you're reds. Turn to aim from behind the white, and
+//    E strikes it at whatever the power bar says. Pot one of yours and you go again. Pot the white and it's
+//    their go. Clear your reds and then sink the black to win; the black early and you lose.
+//  - Either way, while you're playing you're just another punter, and the regulars stop looking at the door.
+
+
+
+
+
+
+
+const PG_STATE = { darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0, msgT: 0 };
+const pgPubs = []; // {W, F, board:{x,y,z,n,right}, oche:{x,z}, table?:{ac,bc}}
+const PG_NAMES = ['BIG DEREK', 'SHEILA', 'TWO-DARTS TEL', 'MAUREEN', 'YOUNG KEV', 'OLD WALLY', 'PAULINE', 'THE PROFESSOR', 'GAZ', 'DOT'];
+
+// =====================================================================
+// Building: the cushions and pockets on the pool tables (part of the town), dartboards (meshes)
+// =====================================================================
+const pgHasTable = (F) => F.A1 - F.A0 > 8;
+function pgWorldBox(F, a0, a1, b0, b1, y0, y1, col) { const [xa, za] = F.toXZ(a0, b0), [xb, zb] = F.toXZ(a1, b1); propBuf.box(Math.min(xa, xb), Math.max(xa, xb), y0, y1, Math.min(za, zb), Math.max(za, zb), col); }
+worldHooks.beforeBake.push(() => {
+  for (const W of walkIns) {
+    if (W.kind !== 'bar' || W.home) continue;
+    const F = lnFrame(W); if (!pgHasTable(F)) continue;
+    const ac = F.A1 - 2.4, bc = F.D / 2;
+    // cushions round the edge, and the six pockets
+    for (const s of [-1, 1]) { pgWorldBox(F, ac + s * 0.6, ac + s * 0.66, bc - 1.2, bc + 1.2, 0.88, 0.93, 0x1a5a2a); pgWorldBox(F, ac - 0.66, ac + 0.66, bc + s * 1.15, bc + s * 1.21, 0.88, 0.93, 0x1a5a2a); }
+    for (const sa of [-1, 1]) for (const sb of [-1, 0, 1]) pgWorldBox(F, ac + sa * 0.6 - 0.05, ac + sa * 0.6 + 0.05, bc + sb * 1.15 - 0.05, bc + sb * 1.15 + 0.05, 0.882, 0.935, 0x0a0a0a);
+  }
+});
+const PG_SEG = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+const PG_R = { bull: 0.0064, outer: 0.016, t0: 0.099, t1: 0.107, d0: 0.162, d1: 0.170, edge: 0.225 };
+const pgBoardTex = (() => {
+  const c = document.createElement('canvas'), S = 256, x = c.getContext('2d'), k = S / 2 / 0.23; c.width = c.height = S;
+  x.fillStyle = '#1a1a1a'; x.beginPath(); x.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); x.fill();
+  const seg = (r0, r1, i, col) => { const a0 = -Math.PI / 2 + (i - 0.5) * Math.PI / 10, a1 = a0 + Math.PI / 10; x.fillStyle = col; x.beginPath(); x.arc(S / 2, S / 2, r1 * k, a0, a1); x.arc(S / 2, S / 2, r0 * k, a1, a0, true); x.closePath(); x.fill(); };
+  for (let i = 0; i < 20; i++) {
+    const dark = i % 2 === 0; seg(PG_R.outer, PG_R.d1, i, dark ? '#141414' : '#efe2c0');
+    seg(PG_R.t0, PG_R.t1, i, dark ? '#c0202a' : '#1a8a3a'); seg(PG_R.d0, PG_R.d1, i, dark ? '#c0202a' : '#1a8a3a');
+  }
+  x.fillStyle = '#1a8a3a'; x.beginPath(); x.arc(S / 2, S / 2, PG_R.outer * k, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#c0202a'; x.beginPath(); x.arc(S / 2, S / 2, PG_R.bull * k, 0, Math.PI * 2); x.fill();
+  x.fillStyle = '#f0f0f0'; x.font = 'bold 15px Arial'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  for (let i = 0; i < 20; i++) { const a = -Math.PI / 2 + i * Math.PI / 10, r = 0.198 * k; x.fillText(String(PG_SEG[i]), S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const pgBoardMat = new THREE.MeshBasicMaterial({ map: pgBoardTex, transparent: true, color: 0xd8d8d8 });
+function buildPubGames() {
+  if (pgPubs.length) return;
+  for (const W of walkIns) {
+    if (W.kind !== 'bar' || W.home) continue;
+    const F = lnFrame(W); if (F.D < 6.5) continue;
+    const bd = F.D - 1.2, ba = F.A1 - 0.27, face = F.plusA + Math.PI;
+    const [x, z] = F.toXZ(ba, bd), n = { x: Math.sin(face), z: Math.cos(face) };
+    const m = new THREE.Mesh(new THREE.CircleGeometry(0.23, 32), pgBoardMat); m.position.set(x, 1.73, z); m.rotation.y = face; scene.add(m);
+    const [ox, oz] = F.toXZ(ba - 2.37, bd);
+    const Q = { W, F, rect: W.rect, board: { x, y: 1.73, z, n, right: { x: n.z, z: -n.x }, face, mesh: m }, oche: { x: ox, z: oz } };
+    if (pgHasTable(F)) Q.table = { ac: F.A1 - 2.4, bc: F.D / 2 };
+    pgPubs.push(Q);
+  }
+}
+worldHooks.afterBake.push(buildPubGames);
+const pgPubAt = (x, z) => pgPubs.find((Q) => x > Q.rect.x0 && x < Q.rect.x1 && z > Q.rect.z0 && z < Q.rect.z1) || null;
+
+// =====================================================================
+// Darts
+// =====================================================================
+function dartScore(rx, ry) { // offsets on the board in metres (right, up) -> {pts, label}
+  const r = Math.hypot(rx, ry);
+  if (r <= PG_R.bull) return { pts: 50, label: 'BULL' };
+  if (r <= PG_R.outer) return { pts: 25, label: '25' };
+  if (r > PG_R.d1) return { pts: 0, label: 'MISS' };
+  let th = Math.atan2(rx, ry); if (th < 0) th += Math.PI * 2;
+  const n = PG_SEG[Math.round(th / (Math.PI / 10)) % 20];
+  if (r >= PG_R.t0 && r <= PG_R.t1) return { pts: n * 3, label: `T${n}` };
+  if (r >= PG_R.d0) return { pts: n * 2, label: `D${n}` };
+  return { pts: n, label: String(n) };
+}
+const pgDartGeo = new THREE.CylinderGeometry(0.004, 0.006, 0.13, 5); pgDartGeo.rotateX(Math.PI / 2); pgDartGeo.translate(0, 0, 0.065);
+const pgFlightGeo = new THREE.PlaneGeometry(0.035, 0.03); pgFlightGeo.translate(0, 0, 0.12);
+function pgDartMesh(col) { const g = new THREE.Group(); g.add(new THREE.Mesh(pgDartGeo, new THREE.MeshLambertMaterial({ color: 0x9a9aa0 }))); const f = new THREE.Mesh(pgFlightGeo, new THREE.MeshLambertMaterial({ color: col, side: THREE.DoubleSide })); g.add(f); const f2 = f.clone(); f2.rotation.z = Math.PI / 2; g.add(f2); scene.add(g); return g; }
+function pgStick(Q, rx, ry, col) {
+  const B = Q.board, g = pgDartMesh(col);
+  g.position.set(B.x + B.right.x * rx, B.y + ry, B.z + B.right.z * rx);
+  g.lookAt(g.position.x + B.n.x, g.position.y + mr(-0.15, 0.1), g.position.z + B.n.z);
+  return g;
+}
+function pgClearDarts(D) { for (const g of D.stuck) scene.remove(g); D.stuck.length = 0; }
+function pgStartDarts(Q, K) {
+  const P = K.player;
+  if (P.cash < 3) { K.showMsg('$3 ON THE DARTS, AND YOU HAVEN\'T GOT IT', 1.6); return; }
+  P.cash -= 3; K.sfx.cash();
+  const foe = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: mpick(SHIRTS), pants: mpick(PANTS) });
+  const [fx, fz] = Q.F.toXZ(Q.F.A1 - 3.3, Q.F.D - 2.4); foe.group.position.set(fx, 0.21, fz); foe.group.rotation.y = Q.board.face + Math.PI; scene.add(foe.group);
+  PG_STATE.darts = { Q, name: mpick(PG_NAMES), skill: mr(0.018, 0.04), you: [], them: [], visit: [], turn: 'you', t: 0, stuck: [], foe, waitT: 0, swayT: Math.random() * 10, sway: { y: 0, p: 0 } };
+  PG_STATE.dartsGames++;
+  K.showMsg(`$3 ON IT. YOU AGAINST ${PG_STATE.darts.name}: THREE VISITS EACH, HIGHEST TOTAL WINS. ${K.isTouch ? 'USE' : 'E'} TO THROW`, 3);
+}
+function pgDartsSum(a) { return a.reduce((s, v) => s + v.reduce((t, d) => t + d.pts, 0), 0); }
+function pgThrow(K) {
+  const D = PG_STATE.darts, Q = D.Q, B = Q.board;
+  if (D.turn !== 'you' || D.waitT > 0) return;
+  const P = K.player, cp = Math.cos(P.pitch), o = { x: P.x, y: P.y + 1.65, z: P.z }, d = { x: -Math.sin(P.yaw) * cp, y: Math.sin(P.pitch), z: -Math.cos(P.yaw) * cp }; // (along the crosshair)
+  const den = d.x * B.n.x + d.z * B.n.z;
+  let rx = 9, ry = 9;
+  if (den < -0.05) { const t = ((B.x - o.x) * B.n.x + (B.z - o.z) * B.n.z) / den; const hx = o.x + d.x * t, hy = o.y + d.y * t, hz = o.z + d.z * t; rx = (hx - B.x) * B.right.x + (hz - B.z) * B.right.z; ry = hy - B.y; }
+  rx += mr(-0.006, 0.006); ry += mr(-0.006, 0.006) - 0.004; // (and a little drop)
+  const sc = dartScore(rx, ry); D.visit.push(sc); PG_STATE.thrown++;
+  if (Math.hypot(rx, ry) < PG_R.edge) D.stuck.push(pgStick(Q, rx, ry, 0xd02a2a)); else K.sfx.thud();
+  K.sfx.thunk && K.sfx.thunk();
+  if (D.visit.length >= 3) {
+    const tot = D.visit.reduce((s, q) => s + q.pts, 0); D.you.push(D.visit); D.visit = [];
+    PG_STATE.best = Math.max(PG_STATE.best, tot);
+    if (tot === 180) { PG_STATE.ton80++; K.sfx.cheer && K.sfx.cheer(); K.showMsg('ONE HUNDRED AND EIGHTYYYY! THE WHOLE PUB ROARS', 3); }
+    else K.showMsg(`${D.you[D.you.length - 1].map((q) => q.label).join(' · ')} = ${tot}${tot >= 100 ? '. TON!' : ''}`, 2);
+    D.turn = 'them'; D.waitT = 2.2;
+  } else K.showMsg(`${sc.label}${sc.pts ? ' (' + sc.pts + ')' : ''}`, 0.9);
+}
+function pgTheirVisit(K) {
+  const D = PG_STATE.darts, visit = [];
+  pgClearDarts(D);
+  for (let k = 0; k < 3; k++) {
+    const aimR = 0.103, gx = (Math.random() + Math.random() + Math.random() - 1.5) * D.skill * 1.4, gy = (Math.random() + Math.random() + Math.random() - 1.5) * D.skill * 1.4;
+    const rx = gx, ry = aimR + gy, sc = dartScore(rx, ry); visit.push(sc);
+    if (Math.hypot(rx, ry) < PG_R.edge) D.stuck.push(pgStick(D.Q, rx, ry, 0x2a5ad0));
+  }
+  D.them.push(visit);
+  const tot = visit.reduce((s, q) => s + q.pts, 0);
+  K.say({ g: D.foe.group }, tot === 180 ? 'ONE-EIGHTY!' : tot >= 100 ? 'TON!' : tot < 30 ? 'OH, BEHAVE...' : mpick(['NOT BAD', 'SHOT', 'YOUR THROW', String(tot)]));
+  K.showMsg(`${D.name}: ${visit.map((q) => q.label).join(' · ')} = ${tot}. YOU ${pgDartsSum(D.you)} - ${pgDartsSum(D.them)} ${D.name}`, 2.4);
+}
+function pgEndDarts(K, quit) {
+  const D = PG_STATE.darts; if (!D) return;
+  PG_STATE.darts = null;
+  pgClearDarts(D); scene.remove(D.foe.group);
+  if (quit) { K.showMsg(`YOU PUT THE DARTS DOWN. ${D.name} KEEPS YOUR $3`, 1.8); return; }
+  const a = pgDartsSum(D.you), b = pgDartsSum(D.them);
+  if (a > b) { K.player.cash += 6; PG_STATE.dartsWon++; K.sfx.cash(); K.showMsg(`YOU WIN, ${a} TO ${b}. $6 FROM THE POT. ${D.name} BUYS YOU A HALF`, 3); K.coolHeat(2); }
+  else if (a === b) { K.player.cash += 3; K.showMsg(`A DRAW, ${a} ALL. YOUR $3 BACK`, 2.4); }
+  else K.showMsg(`${D.name} WINS, ${b} TO ${a}. "BETTER LUCK NEXT TIME, PAL"`, 2.6);
+}
+function pgDartsRide(dt, K) {
+  const D = PG_STATE.darts, P = K.player, I = K.input;
+  if (!P.alive || P.car || P.hide || I.fwd < 0 || (P.lastHurt != null && P.lastHurt < 0.1) || K.G.mode !== 'playing' && K.G.mode !== 'shop') { pgEndDarts(K, true); return false; }
+  const O = D.Q.oche; P.x = O.x; P.z = O.z; P.y = 0.21; P.vx = P.vz = P.vy = 0; P.sprinting = false; P.crouch = 0;
+  // the hand drifts: more when you're wanted, or out of breath
+  D.swayT += dt;
+  const amp = 0.006 + 0.004 * Math.min(3, K.G.level) + (P.stam < 40 ? 0.008 : 0);
+  const sy = (Math.sin(D.swayT * 1.7) * 0.7 + Math.sin(D.swayT * 3.3) * 0.3) * amp, sp = (Math.sin(D.swayT * 1.3 + 1) * 0.7 + Math.sin(D.swayT * 2.9) * 0.3) * amp;
+  P.yaw += sy - D.sway.y; P.pitch += sp - D.sway.p; D.sway.y = sy; D.sway.p = sp;
+  if (D.waitT > 0) {
+    D.waitT -= dt;
+    if (D.waitT <= 0) {
+      if (D.turn === 'them') { pgTheirVisit(K); D.turn = 'next'; D.waitT = 2.6; }
+      else if (D.turn === 'next') { pgClearDarts(D); if (D.them.length >= 3) { pgEndDarts(K, false); return false; } D.turn = 'you'; K.showMsg(`VISIT ${D.you.length + 1} OF 3. YOU ${pgDartsSum(D.you)} - ${pgDartsSum(D.them)} ${D.name}`, 1.8); }
+    }
+  }
+  return true;
+}
+
+// =====================================================================
+// Pool
+// =====================================================================
+const PB_R = 0.028, PB_W = 0.6 - PB_R, PB_L = 1.15 - PB_R; // ball radius, half-width and half-length of where a ball's middle can go
+const PB_POCKETS = [[-0.6, -1.15], [0.6, -1.15], [-0.6, 0], [0.6, 0], [-0.6, 1.15], [0.6, 1.15]];
+const PB_COL = { cue: 0xf8f8f0, red: 0xc8202a, yellow: 0xf0c020, black: 0x111111 };
+const pbGeo = new THREE.SphereGeometry(PB_R, 12, 8);
+function poolRack() { // [{u, v, kind}] : the white at the baulk end, the triangle at the other
+  const balls = [{ u: 0, v: -0.75, kind: 'cue' }], order = ['red', 'yellow', 'red', 'yellow', 'black', 'red', 'red', 'yellow', 'yellow', 'red', 'yellow', 'red', 'yellow', 'yellow', 'red'];
+  let i = 0;
+  for (let row = 0; row < 5; row++) for (let k = 0; k <= row; k++) balls.push({ u: (k - row / 2) * PB_R * 2.02, v: 0.55 + row * PB_R * 1.75, kind: order[i++] });
+  return balls.map((b) => ({ ...b, vu: 0, vv: 0, potted: false }));
+}
+// one step of the table: moves, cushions, collisions, pockets. Returns balls potted this step.
+function poolStep(balls, h) {
+  const out = [];
+  for (const b of balls) {
+    if (b.potted) continue;
+    b.u += b.vu * h; b.v += b.vv * h;
+    const sp = Math.hypot(b.vu, b.vv);
+    if (sp > 0) { const ns = Math.max(0, sp - 0.55 * h); b.vu *= ns / sp; b.vv *= ns / sp; }
+    for (const [pu, pv] of PB_POCKETS) if (Math.hypot(b.u - pu, b.v - pv) < (pv === 0 ? 0.05 : 0.065)) { b.potted = true; b.vu = b.vv = 0; out.push(b); break; }
+    if (b.potted) continue;
+    if (b.u < -PB_W) { b.u = -PB_W; b.vu = Math.abs(b.vu) * 0.78; } else if (b.u > PB_W) { b.u = PB_W; b.vu = -Math.abs(b.vu) * 0.78; }
+    if (b.v < -PB_L) { b.v = -PB_L; b.vv = Math.abs(b.vv) * 0.78; } else if (b.v > PB_L) { b.v = PB_L; b.vv = -Math.abs(b.vv) * 0.78; }
+  }
+  for (let i = 0; i < balls.length; i++) for (let j = i + 1; j < balls.length; j++) {
+    const a = balls[i], b = balls[j]; if (a.potted || b.potted) continue;
+    const du = b.u - a.u, dv = b.v - a.v, d = Math.hypot(du, dv);
+    if (d >= PB_R * 2 || d === 0) continue;
+    const nu = du / d, nv = dv / d, ov = PB_R * 2 - d;
+    a.u -= nu * ov / 2; a.v -= nv * ov / 2; b.u += nu * ov / 2; b.v += nv * ov / 2;
+    const rel = (a.vu - b.vu) * nu + (a.vv - b.vv) * nv; if (rel <= 0) continue;
+    const imp = rel * 0.97; a.vu -= imp * nu; a.vv -= imp * nv; b.vu += imp * nu; b.vv += imp * nv;
+    if (!a.firstHit && a.kind === 'cue') a.firstHit = b.kind; if (!b.firstHit && b.kind === 'cue') b.firstHit = a.kind;
+  }
+  return out;
+}
+const pbMoving = (balls) => balls.some((b) => !b.potted && Math.hypot(b.vu, b.vv) > 0.004);
+function pgPoolWorld(T, Q, b) { const [x, z] = Q.F.toXZ(T.ac + b.u, T.bc + b.v); return { x, z }; }
+function pgStartPool(Q, K) {
+  const P = K.player;
+  if (P.cash < 2) { K.showMsg('IT\'S $2 ON THE TABLE', 1.4); return; }
+  if (PG_STATE.pool) return;
+  P.cash -= 2; K.sfx.cash();
+  const T = Q.table, balls = poolRack();
+  const meshes = balls.map((b) => { const m = new THREE.Mesh(pbGeo, new THREE.MeshLambertMaterial({ color: PB_COL[b.kind] })); scene.add(m); return m; });
+  const aim = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.004, 0.6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 })); aim.geometry.translate(0, 0, -0.33); scene.add(aim);
+  const foe = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: mpick(SHIRTS), pants: mpick(PANTS) }); scene.add(foe.group);
+  const [ea0, eb0] = Q.F.toXZ(0, 0), [ea1, eb1] = Q.F.toXZ(1, 0), [ec1, ed1] = Q.F.toXZ(0, 1);
+  PG_STATE.pool = { Q, T, balls, meshes, aim, foe, name: mpick(PG_NAMES), turn: 'you', state: 'aim', t: 0, waitT: 0, shotPots: [], ea: { x: ea1 - ea0, z: eb1 - eb0 }, eb: { x: ec1 - ea0, z: ed1 - eb0 }, foeSkill: mr(0.02, 0.06), shots: 0 };
+  PG_STATE.poolGames++;
+  K.showMsg(`$2 ON THE TABLE. YOU'RE REDS, ${PG_STATE.pool.name}'S YELLOWS. TURN TO AIM, ${K.isTouch ? 'USE' : 'E'} TO STRIKE`, 3);
+  pgPlaceFoe(PG_STATE.pool, false);
+}
+function pgPlaceFoe(G, atTable) {
+  const T = G.T, Q = G.Q;
+  let u = 1.1, v = 0.9; if (atTable) { const c = G.balls[0]; const tgt = pgFoeTarget(G); const du = tgt ? tgt.au : 0, dv = tgt ? tgt.av : 1; u = c.u - du * 0.7; v = c.v - dv * 0.7; }
+  const [x, z] = Q.F.toXZ(T.ac + u, T.bc + v); G.foe.group.position.set(x, 0.21, z);
+  const c = pgPoolWorld(T, Q, G.balls[0]); G.foe.group.rotation.y = Math.atan2(c.x - x, c.z - z);
+}
+const pbLeft = (G, kind) => G.balls.filter((b) => b.kind === kind && !b.potted).length;
+function pgFoeTarget(G) { // the yellows' shot: the easiest ball into the nearest pocket, through a ghost ball
+  const c = G.balls[0], want = pbLeft(G, 'yellow') ? 'yellow' : 'black';
+  let best = null;
+  for (const b of G.balls) {
+    if (b.potted || b.kind !== want) continue;
+    for (const [pu, pv] of PB_POCKETS) {
+      const tu = pu - b.u, tv = pv - b.v, tl = Math.hypot(tu, tv); if (tl < 0.01) continue;
+      const gu = b.u - (tu / tl) * PB_R * 2, gv = b.v - (tv / tl) * PB_R * 2, au = gu - c.u, av = gv - c.v, al = Math.hypot(au, av); if (al < 0.01) continue;
+      const cut = 1 - ((au / al) * (tu / tl) + (av / al) * (tv / tl)); const score = cut * 3 + tl + al * 0.5;
+      if (!best || score < best.score) best = { score, au: au / al, av: av / al, power: clamp(0.25 + (tl + al) * 0.35, 0.3, 0.95) };
+    }
+  }
+  return best;
+}
+function pgStrike(G, du, dv, power) {
+  const c = G.balls[0], sp = 0.4 + power * 3.4;
+  c.vu = du * sp; c.vv = dv * sp; c.firstHit = null; G.state = 'roll'; G.shotPots = []; G.shots++;
+}
+function pgPoolEnd(K, won, msg) {
+  const G = PG_STATE.pool; if (!G) return;
+  PG_STATE.pool = null;
+  for (const m of G.meshes) scene.remove(m); scene.remove(G.aim); scene.remove(G.foe.group);
+  if (won) { K.player.cash += 4; PG_STATE.poolWon++; K.sfx.cash(); K.coolHeat(2); }
+  K.showMsg(msg, 2.8);
+}
+function pgSettle(K) { // the balls have stopped: whose go is it?
+  const G = PG_STATE.pool, mine = G.turn === 'you' ? 'red' : 'yellow', who = G.turn === 'you' ? 'YOU' : G.name;
+  const pots = G.shotPots, cue = pots.some((b) => b.kind === 'cue'), black = pots.some((b) => b.kind === 'black');
+  const foul = cue || !G.balls[0].firstHit || (G.balls[0].firstHit !== mine && !(G.balls[0].firstHit === 'black' && !pbLeft(G, mine) && !pots.some((b) => b.kind === mine)));
+  PG_STATE.pots += pots.filter((b) => b.kind === 'red' && G.turn === 'you').length;
+  if (black) {
+    const legal = !cue && !pbLeft(G, mine);
+    const youWin = (G.turn === 'you') === legal;
+    pgPoolEnd(K, youWin, youWin ? (G.turn === 'you' ? `YOU SINK THE BLACK. GAME. $4 FROM ${G.name}` : `${G.name} POTS THE BLACK TOO EARLY. YOU WIN $4`) : (G.turn === 'you' ? `THE BLACK, TOO SOON. ${G.name} TAKES THE MONEY` : `${G.name} SINKS THE BLACK. "WINNER STAYS ON"`));
+    return;
+  }
+  if (cue) { const c = G.balls[0]; c.potted = false; c.u = 0; c.v = -0.75; c.vu = c.vv = 0; for (const b of G.balls) if (b !== c && !b.potted && Math.hypot(b.u - c.u, b.v - c.v) < PB_R * 2.2) c.u += PB_R * 3; }
+  const keep = !foul && pots.some((b) => b.kind === mine);
+  if (!keep) G.turn = G.turn === 'you' ? 'them' : 'you';
+  const msg = foul ? `FOUL. ${G.turn === 'you' ? 'YOUR' : G.name + '\'S'} SHOT` : keep ? `${who} ${pots.length > 1 ? 'POT TWO' : 'POTS ONE'}. GO AGAIN` : `${G.turn === 'you' ? 'YOUR' : G.name + '\'S'} SHOT`;
+  K.showMsg(`${msg} · REDS LEFT ${pbLeft(G, 'red')}, YELLOWS ${pbLeft(G, 'yellow')}`, 1.8);
+  G.state = 'aim'; G.waitT = G.turn === 'them' ? 1.6 : 0;
+  pgPlaceFoe(G, G.turn === 'them');
+}
+function pgPoolRide(dt, K) {
+  const G = PG_STATE.pool, P = K.player, I = K.input, T = G.T, Q = G.Q;
+  if (!P.alive || P.car || P.hide || I.fwd < 0 || (P.lastHurt != null && P.lastHurt < 0.1)) { pgPoolEnd(K, false, `YOU WALK AWAY FROM THE TABLE. ${G.name} KEEPS THE $2`); return false; }
+  G.t += dt;
+  if (G.state === 'roll') {
+    for (let k = 0; k < 8; k++) G.shotPots.push(...poolStep(G.balls, dt / 8));
+    for (const b of G.shotPots) if (!b.sounded) { b.sounded = true; K.sfx.thunk && K.sfx.thunk(); }
+    if (!pbMoving(G.balls)) { for (const b of G.balls) { b.vu = b.vv = 0; } pgSettle(K); if (!PG_STATE.pool) return false; }
+  } else if (G.turn === 'them') {
+    G.waitT -= dt;
+    if (G.waitT <= 0) { const s = pgFoeTarget(G) || { au: 0, av: 1, power: 0.6 }; const n = mr(-1, 1) * G.foeSkill, cs = Math.cos(n), sn = Math.sin(n); pgStrike(G, s.au * cs - s.av * sn, s.au * sn + s.av * cs, s.power); K.say({ g: G.foe.group }, mpick(['WATCH THIS', 'CORNER POCKET', '...', 'EASY'])); }
+  }
+  // your view: stood behind the white, looking along the shot
+  const c = G.balls[0], cw = pgPoolWorld(T, Q, c);
+  const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
+  if (G.turn === 'you' && G.state === 'aim') { P.x = cw.x - fx * 0.85; P.z = cw.z - fz * 0.85; P.y = 0.21; P.crouch = 0.55; }
+  else { const [sx, sz] = Q.F.toXZ(T.ac - 1.3, T.bc - 0.6); P.x = sx; P.z = sz; P.y = 0.21; P.crouch = 0; }
+  P.vx = P.vz = P.vy = 0; P.sprinting = false;
+  // draw it
+  G.balls.forEach((b, i) => { const m = G.meshes[i]; m.visible = !b.potted; if (!b.potted) { const w = pgPoolWorld(T, Q, b); m.position.set(w.x, 0.88 + PB_R, w.z); } });
+  G.aim.visible = G.turn === 'you' && G.state === 'aim';
+  if (G.aim.visible) { G.aim.position.set(cw.x, 0.88 + PB_R, cw.z); G.aim.rotation.y = P.yaw; }
+  return true;
+}
+const pgPower = (G) => 0.5 - 0.5 * Math.cos(G.t * 2.4);
+function pgShoot(K) {
+  const G = PG_STATE.pool, P = K.player; if (G.turn !== 'you' || G.state !== 'aim') return;
+  const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
+  let du = fx * G.ea.x + fz * G.ea.z, dv = fx * G.eb.x + fz * G.eb.z; const l = Math.hypot(du, dv) || 1; du /= l; dv /= l;
+  pgStrike(G, du, dv, pgPower(G)); K.sfx.thunk && K.sfx.thunk();
+}
+
+// =====================================================================
+// The venue hooks
+// =====================================================================
+function pgUseTarget(K) {
+  const P = K.player;
+  if (PG_STATE.darts) return { kind: 'throw', first: true };
+  if (PG_STATE.pool) return { kind: 'shoot', first: true };
+  if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
+  const Q = pgPubAt(P.x, P.z); if (!Q) return null;
+  if (Math.hypot(P.x - Q.oche.x, P.z - Q.oche.z) < 1.2) return { kind: 'darts', Q };
+  if (Q.table) { const [x, z] = Q.F.toXZ(Q.table.ac, Q.table.bc); if (Math.abs(P.x - x) < 1.9 && Math.abs(P.z - z) < 1.9) return { kind: 'pool', Q }; }
+  return null;
+}
+function pgUsePrompt(T, K, useK) {
+  const back = K.isTouch ? 'pull back' : 'S';
+  if (T.kind === 'throw') { const D = PG_STATE.darts; return D.turn === 'you' ? `${useK} to throw (dart ${D.visit.length + 1} of 3) · ${back} to give up` : `${D.name}'s throw...`; }
+  if (T.kind === 'shoot') { const G = PG_STATE.pool; if (G.turn !== 'you' || G.state !== 'aim') return G.state === 'roll' ? '...' : `${G.name} is lining one up`; const p = Math.round(pgPower(G) * 10); return `${useK} to strike · POWER ${'|'.repeat(p)}${'.'.repeat(10 - p)} · ${back} to walk away`; }
+  if (T.kind === 'darts') return `${useK} to play darts ($3 against a regular)`;
+  if (T.kind === 'pool') return `${useK} to play pool ($2, reds and yellows)`;
+  return '';
+}
+function pgUse(T, K) {
+  if (T.kind === 'throw') { pgThrow(K); return; }
+  if (T.kind === 'shoot') { pgShoot(K); return; }
+  if (T.kind === 'darts') { pgStartDarts(T.Q, K); return; }
+  if (T.kind === 'pool') pgStartPool(T.Q, K);
+}
+const pubGames = {
+  name: 'pubgames', roofs: [],
+  useTarget: pgUseTarget, usePrompt: pgUsePrompt, use: pgUse,
+  conspic: () => (PG_STATE.darts || PG_STATE.pool ? -0.28 : 0),
+  update: () => {},
+  ride: (dt, K) => (PG_STATE.darts ? pgDartsRide(dt, K) : PG_STATE.pool ? pgPoolRide(dt, K) : false),
+  plan: () => false,
+  reset() { const k = { player: { cash: 0 }, showMsg: () => {}, sfx: {}, coolHeat: () => {} }; if (PG_STATE.darts) pgEndDarts(k, true); if (PG_STATE.pool) pgPoolEnd(k, false, ''); Object.assign(PG_STATE, { darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0 }); },
+  diary: () => { const b = []; if (PG_STATE.dartsWon) b.push(`WON AT DARTS (${PG_STATE.dartsWon})`); if (PG_STATE.poolWon) b.push(`WON AT POOL (${PG_STATE.poolWon})`); return b; },
+  debug: () => ({ pubs: pgPubs.length, tables: pgPubs.filter((Q) => Q.table).length, ...PG_STATE, darts: PG_STATE.darts ? { turn: PG_STATE.darts.turn, you: pgDartsSum(PG_STATE.darts.you), them: pgDartsSum(PG_STATE.darts.them) } : null, pool: PG_STATE.pool ? { turn: PG_STATE.pool.turn, state: PG_STATE.pool.state, reds: pbLeft(PG_STATE.pool, 'red'), yellows: pbLeft(PG_STATE.pool, 'yellow') } : null }),
+  PG_STATE, pgPubs, dartScore, poolRack, poolStep, pgStartDarts, pgStartPool, pgPubAt, pgEndDarts, pgPoolEnd, pgSettle, pgFoeTarget, pgStrike,
 };
 
 // GUTTERBALL LANES: an eight-lane bowling alley on Route 4, just south of PORT HALDEN, on the leisure park it
@@ -12090,6 +12646,8 @@ const bowling = {
 //    see you at all, for as long as your breath lasts. Get out by the steps in the corners, or jump at the side.
 //  - The lifeguard sits up on the high chair with a whistle. No running on the side. No swimming without a
 //    ticket. Twice and she gets on the phone.
+//  - THE TWISTER: a yellow tube slide from a tower in the corner, round twice and out into the deep end.
+//    Up the stairs, E at the top. Inside the tube nobody can see you, and it's the quickest way down.
 //  - On the hour, the wave machine. A swim washes the bin smell off, but you come out dripping, and a wet
 //    person in the street gets noticed. Towels at reception.
 
@@ -12115,7 +12673,7 @@ const bathsB = {
   cubicles: [], lockers: [], built: false,
 };
 const btRoofs = [];
-const BT_STATE = { paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 9 };
+const BT_STATE = { slide: null, slides: 0, kidSlides: 0, paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 9 };
 const inBaths = (x, z) => x > bathsB.x0 && x < bathsB.x1 && z > bathsB.z0 && z < bathsB.z1;
 const inHall = (x, z) => x > bathsB.x0 && x < bathsB.hallX && z > bathsB.z0 && z < bathsB.z1;
 const btIn = (R, x, z, pad = 0) => x > R.x0 + pad && x < R.x1 - pad && z > R.z0 + pad && z < R.z1 - pad;
@@ -12217,7 +12775,31 @@ function btBuildFoyer() {
   for (const [x, z] of [[-52, 367], [-48.5, 367], [-52, 370.5]]) { propBuf.cyl(x, z, 0.05, 0.05, 0, 0.75, 0x2a2a2e, 6); propBuf.cyl(x, z, 0.5, 0.5, 0.75, 0.8, 0xf0f0f0, 10); addCollider(x - 0.3, x + 0.3, z - 0.3, z + 0.3, 0.8); }
   propBuf.box(B.hallX - 0.2, B.hallX - 0.1, 1.0, 3.0, 364.5, 379, 0x9ac8e0, { glass: true });
 }
-worldHooks.beforeBake.push(() => { buildBathsShell(); buildPoolHall(); btBuildFoyer(); bathsB.built = true; });
+// THE TWISTER: stairs up the west wall to a platform, a tube that loops round and drops into the deep end
+const btSlide = { top: { x: -95.2, y: 6.0, z: 371.3 }, curve: null, len: 0, built: false };
+const BT_SLIDE_PTS = [[-94.4, 6.2, 371.3], [-91, 5.6, 371.0], [-87.6, 5.0, 373.4], [-87.6, 4.4, 377.4], [-91, 3.8, 379], [-93.2, 3.3, 376.6], [-92.8, 2.9, 372.6], [-91, 2.5, 368.4], [-90, 2.0, 364], [-89.6, 1.3, 360.4]];
+function btBuildSlide() {
+  const B = bathsB;
+  // the stairs, rising north along the west wall, and the platform at the top
+  for (let k = 1; k <= 16; k++) btDeck(-99.8, -98, 359 + (k - 1) * 0.6, 359 + k * 0.6, BT_DECK + k * 0.3, k % 2 ? 0xe0c020 : 0xd8b018);
+  btDeck(-100, -94, 368.6, 374, 6.0, 0x2a7ab0);
+  for (const [x0, x1, z0, z1] of [[-100, -94, 373.9, 374], [-98, -94, 368.6, 368.7]]) { propBuf.box(x0, x1, 6.0, 7.0, z0, z1, 0xd02a2a); addCollider(x0, x1, z0, z1, 7.0, { y0: 6.0 }); }
+  propBuf.box(-94.1, -94, 6.0, 7.0, 368.6, 370.4, 0xd02a2a); addCollider(-94.1, -94, 368.6, 370.4, 7.0, { y0: 6.0 }); propBuf.box(-94.1, -94, 6.0, 7.0, 372.2, 374, 0xd02a2a); addCollider(-94.1, -94, 372.2, 374, 7.0, { y0: 6.0 });
+  btPlane(3, 0.7, textTex(320, 70, '#e0c020', '#1a4a8a', ['THE TWISTER'], 'bold 44px Arial Black, Arial'), -97, 7.4, 368.5, Math.PI);
+  // the tube
+  const curve = new THREE.CatmullRomCurve3(BT_SLIDE_PTS.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+  btSlide.curve = curve; btSlide.len = curve.getLength();
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 140, 0.62, 12, false), new THREE.MeshLambertMaterial({ color: 0xf0c020, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false }));
+  scene.add(tube); btSlide.tube = tube;
+  // posts holding it up, and where it's low enough to walk into, it's solid
+  for (let k = 1; k < 30; k++) {
+    const p = curve.getPointAt(k / 30);
+    if (k % 4 === 0) propBuf.box(p.x - 0.08, p.x + 0.08, BT_DECK, p.y - 0.6, p.z - 0.08, p.z + 0.08, 0xc0c0c8);
+    if (p.y < 3.4 && !poolAt(p.x, p.z)) addCollider(p.x - 0.55, p.x + 0.55, p.z - 0.55, p.z + 0.55, p.y + 0.5, { y0: BT_DECK });
+  }
+  btSlide.built = true;
+}
+worldHooks.beforeBake.push(() => { buildBathsShell(); buildPoolHall(); btBuildFoyer(); btBuildSlide(); bathsB.built = true; });
 
 // =====================================================================
 // Swimmers doing lengths, the lifeguard, the reception and cafe staff
@@ -12255,6 +12837,19 @@ function btAnimSwimmers(dt, K, show) {
   }
 }
 
+let btSlider = null;
+function btKidSlide(dt, K, on) {
+  if (!btSlide.built) return;
+  if (!btSlider) { const p = buildPerson({ skin: mpick(SKINS), hair: mpick(BT_CAPS), shirt: 0x2a8a6a, pants: 0x1a1a2a }); p.group.scale.setScalar(0.75); p.group.visible = false; scene.add(p.group); btSlider = { p, s: -1, waitT: mr(4, 10) }; }
+  const S = btSlider;
+  if (!on) { S.p.group.visible = false; S.s = -1; return; }
+  if (S.s < 0) { S.waitT -= dt; if (S.waitT <= 0) { S.s = 0; S.v = 2.5; if (K.near(-90, 372, 30)) K.say({ g: S.p.group }, mpick(['WHEEEE!', 'WATCH ME!', 'MUM! MUM! LOOK!'])); } return; }
+  const C = btSlide.curve, a = C.getTangentAt(Math.min(0.999, S.s / btSlide.len));
+  S.v = clamp(S.v + (-a.y * 9.8 - 0.1 * S.v) * dt, 3, 11); S.s += S.v * dt;
+  if (S.s >= btSlide.len) { S.s = -1; S.waitT = mr(12, 30); S.p.group.visible = false; BT_STATE.kidSlides++; if (K.near(-90, 360, 30) && K.sfx.splash) K.sfx.splash(true); return; }
+  const p = C.getPointAt(S.s / btSlide.len); S.p.group.visible = true; S.p.group.position.set(p.x, p.y - 0.55, p.z); S.p.group.rotation.y = Math.atan2(a.x, a.z); S.p.legL.rotation.x = S.p.legR.rotation.x = -1.4; S.p.armL.rotation.x = S.p.armR.rotation.x = -2.8;
+}
+
 // =====================================================================
 // You, in the water
 // =====================================================================
@@ -12264,7 +12859,25 @@ function btOverlay(on, deep) {
   btTint.style.display = on ? 'block' : 'none'; if (on) btTint.style.opacity = String(0.7 + 0.3 * deep);
 }
 const btBall = { x: 0, z: 0 };
+// going down the slide: speed builds with the drop, then SPLASH into the deep end
+function btSlideRide(dt, K) {
+  const S = BT_STATE.slide, P = K.player, C = btSlide.curve;
+  const a = C.getTangentAt(Math.min(0.999, S.s / btSlide.len));
+  S.v = clamp(S.v + (-a.y * 9.8 - 0.1 * S.v) * dt, 3, 11);
+  S.s += S.v * dt;
+  if (S.s >= btSlide.len) {
+    BT_STATE.slide = null; BT_STATE.slides++;
+    const e = C.getPointAt(1); P.x = e.x - 0.2; P.z = e.z - 1.2; P.y = 0.4; P.vx = P.vz = 0; P.vy = -2; P.crouch = 0;
+    BT_STATE.splashY = 3.2; K.sfx.splash && K.sfx.splash(true); K.showMsg(mpick(['SPLASH!', 'WHOOSH... SPLASH!', 'AGAIN! AGAIN!']), 1.2);
+    return false;
+  }
+  const p = C.getPointAt(S.s / btSlide.len);
+  P.x = p.x; P.z = p.z; P.y = p.y - 0.55; P.vx = P.vz = P.vy = 0; P.crouch = 0.65; P.sprinting = false;
+  P.yaw = Math.atan2(-a.x, -a.z); P.pitch = clamp(Math.asin(clamp(a.y, -1, 1)) * 0.8, -0.6, 0.2);
+  return true;
+}
 function btRide(dt, K) {
+  if (BT_STATE.slide) return btSlideRide(dt, K);
   const P = K.player, I = K.input, B = bathsB;
   const R = !P.car && !P.hide && P.alive ? poolAt(P.x, P.z) : null;
   if (!R || P.y > R.floor + 0.88 || P.vy > 0.5) { if (BT_STATE.swim) btLeaveWater(K); return false; }
@@ -12358,6 +12971,8 @@ function btCafeMenu(K) {
 }
 function btUseTarget(K) {
   const P = K.player, B = bathsB;
+  if (BT_STATE.slide) return { kind: 'sliding', first: true };
+  if (btSlide.built && !P.car && !P.hide && P.y > 5.5 && Math.hypot(P.x - btSlide.top.x, P.z - btSlide.top.z) < 1.6) return { kind: 'slide' };
   if (!B.built || P.car || P.mode !== 'move' || P.hide || !inBaths(P.x, P.z) || P.y > 0.8) return null;
   if (Math.hypot(P.x - B.desk.x, P.z - B.desk.z) < 1.8) return { kind: 'desk' };
   if (Math.hypot(P.x - B.cafe.x, P.z - B.cafe.z) < 2.4 && P.z < 374) return { kind: 'cafe' };
@@ -12365,11 +12980,15 @@ function btUseTarget(K) {
 }
 function btUsePrompt(T, K, useK) {
   const open = btOpen(K.G.day, K.hour);
+  if (T.kind === 'slide') return open ? `${useK} to go down THE TWISTER` : 'The slide is shut';
+  if (T.kind === 'sliding') return 'WHEEEEE';
   if (T.kind === 'desk') return open ? `${useK} for reception (swim, cap, goggles, towels)` : 'HALDEN BATHS is shut';
   if (T.kind === 'cafe') return open ? `${useK} for the poolside cafe` : 'The cafe is shut';
   return '';
 }
 function btUse(T, K) {
+  if (T.kind === 'sliding') return;
+  if (T.kind === 'slide') { if (!btOpen(K.G.day, K.hour)) { K.showMsg('THE SLIDE\'S SHUT. THERE\'S A CHAIN ACROSS IT', 1.6); return; } BT_STATE.slide = { s: 0, v: 2.5 }; K.sfx.whoosh && K.sfx.whoosh(); return; }
   if (!btOpen(K.G.day, K.hour)) { K.showMsg('SHUT. OPEN 7 TILL 9 (SUNDAYS 8 TILL 6)', 1.8); return; }
   if (T.kind === 'desk') { K.openMenu({ name: 'HALDEN BATHS RECEPTION', kind: 'baths', blurbs: ['"JUST THE ONE, IS IT?"', '"LOCKERS TAKE A COIN, YOU GET IT BACK."', '"NO BOMBING. I MEAN IT."'] }, btDeskMenu(K)); return; }
   if (T.kind === 'cafe') K.openMenu({ name: 'THE POOLSIDE CAFE', kind: 'baths', blurbs: ['"CHIPS?"', '"THE HOT CHOCOLATE MACHINE IS WORKING TODAY. FOR ONCE."'] }, btCafeMenu(K));
@@ -12401,6 +13020,7 @@ function btUpdate(dt, K) {
     a.needsUpdate = true;
   }
   btAnimSwimmers(dt, K, open && K.near(-77, 352, 70));
+  btKidSlide(dt, K, open && K.near(-77, 352, 60));
   if (!B.welcomed || B.welcomed !== day) { if (open && K.near(-44, 352, 26)) { B.welcomed = day; K.banner('HALDEN BATHS<small>SWIM $3 · WAVES ON THE HOUR · NO RUNNING</small>', 4); } }
   // the lifeguard, up on the chair, watching the water and the side
   const G = B.guard; if (!G || !open) return;
@@ -12437,11 +13057,11 @@ function btConspic(K) {
 const baths = {
   name: 'baths', roofs: btRoofs,
   useTarget: btUseTarget, usePrompt: btUsePrompt, use: btUse, conspic: btConspic, update: btUpdate, ride: btRide, plan: () => false,
-  unseen: () => BT_STATE.under,
-  reset() { Object.assign(BT_STATE, { paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 0 }); btOverlay(false); bathsB.welcomed = 0; if (bathsB.guard) bathsB.guard.warnT = 0; },
+  unseen: () => BT_STATE.under || !!BT_STATE.slide,
+  reset() { Object.assign(BT_STATE, { slide: null, slides: 0, kidSlides: 0, paidDay: 0, swim: false, under: false, breath: 1, wetT: 0, lengths: 0, lenFrom: null, dives: 0, unders: 0, warned: 0, warnT: 0, gasps: 0, wave: false, waves: 0, towels: 0, msgT: 0, splashY: 0 }); btOverlay(false); bathsB.welcomed = 0; if (bathsB.guard) bathsB.guard.warnT = 0; },
   diary(K) { const b = []; if (BT_STATE.paidDay === K.G.day) b.push('A SWIM AT HALDEN BATHS (PAID FOR THE DAY)'); if (BT_STATE.wetT > 0) b.push('STILL DRIPPING'); return b; },
   debug: () => ({ built: bathsB.built, swimmers: btSwimmers.length, staff: btStaff.length, cubicles: bathsB.cubicles.length, lockers: bathsB.lockers.length, ...BT_STATE }),
-  bathsB, BT_STATE, BT_CLEAR, poolAt, inBaths, inHall, btOpen, waveNow, btDeskMenu, btCafeMenu, BT_WATER, BT_DECK,
+  bathsB, btSlide, BT_STATE, BT_CLEAR, poolAt, inBaths, inHall, btOpen, waveNow, btDeskMenu, btCafeMenu, BT_WATER, BT_DECK,
 };
 
 // Getting the bus. Every bus in the county takes passengers now, you included.
@@ -12450,6 +13070,8 @@ const baths = {
 //    county go by. Press E to ring the bell, and it stops at the next stop to let you off.
 //  - A seat on the bus is a good place to be: under a roof, among strangers, all of you staring out of the
 //    window. Just don't get on with someone right behind you: the driver won't open the doors.
+//  - Or slip on through the back doors for nothing. Most days nobody checks. Some days a TICKET INSPECTOR
+//    gets on and works down the bus: $10 penalty fare, or off at the next stop and a call on his radio.
 //  - The COUNTY LINK: orange buses between the towns. The X9 runs PORT HALDEN to ASHFORD along Route 9, by
 //    way of the bus station; the X4 runs PORT HALDEN to SALTMARSH DOCKS down Route 4, stopping at the
 //    leisure park (bowling, baths).
@@ -12475,7 +13097,7 @@ const station = { name: 'ROUTE 9 BUS STATION', x0: 264, x1: 328, z0: -52, z1: -2
 const bsRoofs = [];
 const bsRideRoof = { x0: 0, x1: 0, z0: 0, z1: 0, h: -99 }; // the roof of the bus you're on
 bsRoofs.push(bsRideRoof);
-const BS_STATE = { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0 };
+const BS_STATE = { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0, sneaks: 0, inspections: 0, fines: 0, caught: 0 };
 const inStation = (x, z) => x > station.x0 && x < station.x1 && z > station.z0 && z < station.z1;
 const nightBusTime = (hr) => hr >= 23 || hr < 5.5;
 const BS_ORANGE = 0xe07a1a, BS_NIGHT = 0x1a2a6a;
@@ -12667,12 +13289,22 @@ function bsDoorBus(K) {
   }
   return null;
 }
+const bsRear = (c, out = 0.9) => ({ x: c.x - c.fx * (c.hl - 2.4) + c.fz * (c.hw + out), z: c.z - c.fz * (c.hl - 2.4) - c.fx * (c.hw + out) });
+function bsRearBus(K) {
+  const P = K.player;
+  if (P.car || P.hide || P.bike || P.mode !== 'move' || BS_STATE.ride || P.y > 1.2) return null;
+  for (const c of K.G.cars) {
+    if (c.kind !== 'bus' || c.wrecked || c.driver !== 'traffic' || !(c.stopT > 0) || Math.abs(c.speed) > 0.5) continue;
+    const d = bsRear(c); if (Math.hypot(d.x - P.x, d.z - P.z) < 2.2) return c;
+  }
+  return null;
+}
 const busFare = (hr) => (nightBusTime(hr) ? 3 : 2);
-function bsBoard(c, K) {
+function bsBoard(c, K, sneak = false) {
   const P = K.player, hr = K.hour, night = nightBusTime(hr);
   const chased = K.hunters().some((h) => !h.dead && h.state === 'chase' && Math.hypot(h.x - P.x, h.z - P.z) < 18);
   if (chased) { BS_STATE.refused++; K.showMsg('THE DRIVER TAKES ONE LOOK AT WHO\'S BEHIND YOU AND SHUTS THE DOORS', 2.2); c.stopT = 0; return; }
-  const fare = BS_STATE.rider === K.G.day ? 0 : busFare(hr);
+  const fare = BS_STATE.rider === K.G.day || sneak ? 0 : busFare(hr);
   if (P.cash < fare) { K.showMsg(`IT'S $${fare}. YOU HAVEN'T GOT IT. THE DRIVER SHAKES HIS HEAD`, 2); return; }
   if (fare) { P.cash -= fare; K.sfx.cash(); BS_STATE.fares += fare; }
   BS_STATE.rides++; if (night) BS_STATE.nightRides++;
@@ -12682,10 +13314,11 @@ function bsBoard(c, K) {
   let seat = null;
   for (let z = C.L - 3.55; z > -C.L + 0.6 && !seat; z -= 0.95) for (const s of [1, -1]) { const x = s * (C.W - 0.55); if (!taken.has(z.toFixed(2) + x.toFixed(1))) { seat = { x, z }; break; } }
   if (!seat) seat = { x: C.W - 0.55, z: 0 };
-  BS_STATE.ride = { bus: c, seat, t: 0, bell: false, stillT: 0, chatT: mr(4, 8), night, at: { x: c.x, z: c.z } };
+  BS_STATE.ride = { bus: c, seat, t: 0, bell: false, stillT: 0, chatT: mr(4, 8), night, at: { x: c.x, z: c.z }, paid: !sneak, ins: null, checked: false };
+  if (sneak) BS_STATE.sneaks++;
   c.stopT = Math.max(c.stopT, 1.5);
   const name = c.cb ? `THE ${night ? c.cb.night : c.cb.id} TO ${c.cb.dest}` : 'THE BUS';
-  K.showMsg(`${fare ? `$${fare}. ` : 'DAY RIDER. '}ON ${name}. ${K.isTouch ? 'USE' : 'E'} TO RING THE BELL`, 2.6);
+  K.showMsg(sneak ? `IN THROUGH THE BACK DOORS WITHOUT PAYING. ON ${name}. WATCH OUT FOR INSPECTORS` : `${fare ? `$${fare}. ` : 'DAY RIDER. '}ON ${name}. ${K.isTouch ? 'USE' : 'E'} TO RING THE BELL`, 2.6);
   P.yaw = Math.atan2(-c.fz, c.fx); // (facing the window)
   P.pitch = 0;
 }
@@ -12693,7 +13326,7 @@ function bsGetOff(K, msg) {
   const R = BS_STATE.ride; if (!R) return;
   BS_STATE.ride = null;
   const P = K.player, c = R.bus;
-  if (c.cabin) c.cabin.g.visible = false;
+  if (c.cabin) { c.cabin.g.visible = false; if (c.cabin.ins) c.cabin.ins.group.visible = false; }
   let p = null;
   for (const o of [0.9, 1.6, 2.4]) { const d = bsDoor(c, o); if (!K.blocked(d.x, d.z, 0.35)) { p = d; break; } }
   if (!p) p = bsDoor(c, 1.6);
@@ -12716,11 +13349,35 @@ function bsRide(dt, K) {
   if (R.stillT > 6) { BS_STATE.kicked++; bsGetOff(K, 'END OF THE LINE. THE DRIVER TURNS THE ENGINE OFF'); return false; }
   // it's stopped at a stop: off you get if you rang
   if (c.stopT > 0 && Math.abs(c.speed) < 0.5 && R.bell) { R.bell = false; bsGetOff(K, 'YOU STEP OFF THE BUS'); return false; }
+  // a ticket inspector gets on at a stop, now and then, and works down the bus
+  if (c.stopT > 0 && !R.ins && !R.checked && R.t > 2 && c.lastStop !== R.insStop && Math.random() < (R.paid ? 0.12 : 0.3) * dt * 4) bsInspectorOn(R, K);
+  if (c.stopT > 0) R.insStop = c.lastStop;
+  if (R.ins) bsInspectorWalk(R, dt, K);
+  if (R.throwOff && c.stopT > 0 && Math.abs(c.speed) < 0.5 && R.t - R.offAt > 1.5) { bsGetOff(K, 'THE INSPECTOR STANDS THERE UNTIL YOU GET OFF'); return false; }
   // chatter
   R.chatT -= dt;
   if (R.chatT <= 0 && c.cabin && c.cabin.folk.length) { R.chatT = mr(5, 10); const f = mpick(c.cabin.folk); K.say({ g: f.g }, mpick(R.night ? BS_NIGHTERS : BS_RIDERS)); }
   Object.assign(bsRideRoof, { x0: c.x - 6.5, x1: c.x + 6.5, z0: c.z - 6.5, z1: c.z + 6.5, h: 3.4 });
   return true;
+}
+
+function bsInspectorOn(R, K) {
+  const c = R.bus, C = c.cabin; R.ins = { t: 0, dur: mr(4, 7) }; BS_STATE.inspections++;
+  if (C) { if (!C.ins) { C.ins = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: 0x2a3a5a, pants: 0x1a1a2a }); C.g.add(C.ins.group); } C.ins.group.visible = true; C.ins.group.position.set(0, 0.5, C.L - 2); C.ins.group.rotation.y = Math.PI; }
+  K.showMsg(`A TICKET INSPECTOR GETS ON. "TICKETS AND PASSES, PLEASE"${R.paid ? '' : '. YOU DIDN\'T PAY...'}`, 2.4);
+}
+function bsInspectorWalk(R, dt, K) {
+  const C = R.bus.cabin, I = R.ins; I.t += dt;
+  if (C && C.ins) C.ins.group.position.z = (C.L - 2) + ((R.seat.z + 0.8) - (C.L - 2)) * clamp(I.t / I.dur, 0, 1);
+  if (I.t < I.dur) return;
+  R.ins = null; R.checked = true;
+  if (C && C.ins) C.ins.group.visible = false;
+  const P = K.player;
+  if (R.paid || BS_STATE.rider === K.G.day) { K.showMsg(mpick(['"THANK YOU"', '"TA"', '"LOVELY, THANKS"']), 1.4); return; }
+  BS_STATE.caught++;
+  if (P.cash >= 10) { P.cash -= 10; K.sfx.cash(); BS_STATE.fines += 10; R.paid = true; K.showMsg('"NO TICKET? THAT\'S A $10 PENALTY FARE." HE TEARS IT OFF THE PAD', 2.4); return; }
+  R.throwOff = true; R.offAt = R.t; R.bell = true; K.addHeat(3); K.report(); K.bumpLocal(0.05);
+  K.showMsg('"NO TICKET, NO MONEY. OFF AT THE NEXT STOP." HE GETS ON HIS RADIO', 2.4);
 }
 
 // =====================================================================
@@ -12755,6 +13412,7 @@ function bsUseTarget(K) {
   const P = K.player, R = BS_STATE.ride;
   if (R) return { kind: R.bus.stopT > 0 && Math.abs(R.bus.speed) < 0.5 ? 'off' : 'bell', first: true };
   const c = bsDoorBus(K); if (c) return { kind: 'board', c };
+  const cr = bsRearBus(K); if (cr) return { kind: 'sneak', c: cr };
   if (!station.built || P.car || P.hide || P.mode !== 'move' || !inStation(P.x, P.z) || P.y > 0.8) return null;
   if (Math.hypot(P.x - station.office.x, P.z - station.office.z) < 2.4 && P.z > -27) return { kind: 'office' };
   if (Math.hypot(P.x - station.tea.x, P.z - station.tea.z) < 2.4 && P.z > -27) return { kind: 'tea' };
@@ -12764,6 +13422,7 @@ function bsUsePrompt(T, K, useK) {
   if (T.kind === 'bell') return BS_STATE.ride.bell ? 'STOPPING at the next stop' : `${useK} to ring the bell (off at the next stop)`;
   if (T.kind === 'off') return `${useK} to get off here`;
   if (T.kind === 'board') { const c = T.c, fare = BS_STATE.rider === K.G.day ? 0 : busFare(K.hour); return `${useK} to get on ${c.cb ? `the ${nightBusTime(K.hour) ? c.cb.night : c.cb.id} to ${c.cb.dest}` : 'the bus'} (${fare ? '$' + fare : 'DAY RIDER'})`; }
+  if (T.kind === 'sneak') return `${useK} to slip on through the back doors (no fare)`;
   if (T.kind === 'office') return bsOfficeOpen(K.hour) ? `${useK} for tickets (DAY RIDER $6)` : 'The ticket office is shut';
   if (T.kind === 'tea') return bsOfficeOpen(K.hour) ? `${useK} for the tea hatch` : 'The tea hatch is shut';
   return '';
@@ -12772,6 +13431,7 @@ function bsUse(T, K) {
   if (T.kind === 'bell') { const R = BS_STATE.ride; if (!R.bell) { R.bell = true; R.bellAt = K.time; BS_STATE.bells++; K.sfx.ding && K.sfx.ding(); K.showMsg('DING! BUS STOPPING', 1.4); } return; }
   if (T.kind === 'off') { bsGetOff(K, 'YOU STEP OFF THE BUS'); return; }
   if (T.kind === 'board') { bsBoard(T.c, K); return; }
+  if (T.kind === 'sneak') { bsBoard(T.c, K, true); return; }
   if (!bsOfficeOpen(K.hour)) { K.showMsg('SHUT. OPEN 6 TILL 10', 1.6); return; }
   if (T.kind === 'office') { K.openMenu({ name: 'ROUTE 9 BUS STATION · TICKETS', kind: 'buses', blurbs: ['"SINGLE OR DAY RIDER?"', '"THE X9\'S RUNNING LATE. THE X9 IS ALWAYS RUNNING LATE."', '"NIGHT BUSES FROM ELEVEN. GOD HELP YOU."'] }, bsTicketMenu(K)); return; }
   if (T.kind === 'tea') K.openMenu({ name: 'THE TEA HATCH', kind: 'buses', blurbs: ['"MILK AND SUGAR?"', '"LAST ONE, THAT ROLL. LUCKY YOU."'] }, bsTeaMenu(K));
@@ -12835,10 +13495,552 @@ const buses = {
   name: 'buses', roofs: bsRoofs,
   useTarget: bsUseTarget, usePrompt: bsUsePrompt, use: bsUse, conspic: bsConspic, update: bsUpdate, ride: bsRide, plan: () => false,
   riding: (c) => !!BS_STATE.ride && (!c || BS_STATE.ride.bus === c), logic: busLogic,
-  reset() { if (BS_STATE.ride) { const c = BS_STATE.ride.bus; if (c.cabin) c.cabin.g.visible = false; } Object.assign(BS_STATE, { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0, spawned: false }); station.welcomed = 0; bsRideRoof.h = -99; },
+  reset() { if (BS_STATE.ride) { const c = BS_STATE.ride.bus; if (c.cabin) c.cabin.g.visible = false; } Object.assign(BS_STATE, { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0, sneaks: 0, inspections: 0, fines: 0, caught: 0, spawned: false }); station.welcomed = 0; bsRideRoof.h = -99; },
   diary(K) { const b = []; if (BS_STATE.rider === K.G.day) b.push('A DAY RIDER FOR THE BUSES'); if (BS_STATE.ride) b.push('ON THE BUS'); return b; },
   debug: (K) => ({ built: station.built, lockers: station.lockers.length, county: K ? bsCounty(K).map((c) => ({ id: c.cb.id, x: Math.round(c.x), z: Math.round(c.z), stopT: c.stopT, where: bsWhere(c) })) : [], ...BS_STATE, ride: BS_STATE.ride ? { t: BS_STATE.ride.t, bell: BS_STATE.ride.bell, bus: BS_STATE.ride.bus.cb ? BS_STATE.ride.bus.cb.id : 'city' } : null }),
-  station, BS_STATE, BS_CLEAR, BS_STOPS, bsDoor, bsDoorBus, bsBoard, bsGetOff, busFare, nightBusTime, bsTicketMenu, bsCounty,
+  station, BS_STATE, BS_CLEAR, BS_STOPS, bsDoor, bsDoorBus, bsRear, bsRearBus, bsInspectorOn, bsBoard, bsGetOff, busFare, nightBusTime, bsTicketMenu, bsCounty,
+};
+
+// COUNTY RAIL: a railway along the top of the map, from a tunnel west of PORT HALDEN to a tunnel east of
+// ASHFORD, with three stations on the way.
+//  - PORT HALDEN CENTRAL, just north of the city: a booking hall with a ticket office and machines, a line of
+//    ticket barriers, a long platform under a canopy, a departures board. ASHFORD has a smaller copy at the
+//    top of a path up from the town. WHEATLEY HALT, out in the fields between them, is a platform, a shelter
+//    and a request stop: you pay the guard on the train.
+//  - Buy a SINGLE ($4, one journey) or a DAY RETURN ($7, as many as you like today). Walk up to a barrier
+//    with a ticket and press E and it opens. Or vault it: a member of staff who sees you will shout, and the
+//    second time they ring the police.
+//  - The train: three green and cream carriages. When it's in and the doors are open, E at any door gets you
+//    a seat. E again gets you off at the next station. It goes all the way to the end of the line and you
+//    get turfed off at the last stop.
+//  - A ticket inspector comes down the train on most journeys. No ticket from a staffed station means a
+//    penalty fare ($15), or off at the next stop and a call to the police if you can't pay. From WHEATLEY
+//    HALT you can just buy one from him. Or lock yourself in the toilet when you hear him coming.
+//  - Freight trains run through at night on the far track, and they don't stop. Neither line is a footpath.
+
+
+
+
+
+
+
+// =====================================================================
+// Where everything is
+// =====================================================================
+const RW_TZ = -270, RW_FZ = -276; // the passenger line, and the freight line behind it
+const RW_X0 = -165, RW_X1 = 905; // the tunnel mouths
+clearings.push({ x0: -300, x1: 1011, z0: -280, z1: -245 });
+// stations: x is the middle of the platform. `staffed` stations have a booking hall and barriers
+const RW_STATIONS = [
+  { id: 'ph', name: 'PORT HALDEN CENTRAL', short: 'PORT HALDEN', x: 0, staffed: true, gates: [], built: false },
+  { id: 'wh', name: 'WHEATLEY HALT', short: 'WHEATLEY', x: 380, staffed: false, gates: [], built: false },
+  { id: 'ash', name: 'ASHFORD', short: 'ASHFORD', x: 700, staffed: true, gates: [], built: false },
+];
+// footpaths from the stations down to the nearest road
+const RW_PATHS = [{ x: 700, z0: -245, z1: -181 }, { x: 380, z0: -258, z1: -178 }];
+for (const p of RW_PATHS) clearings.push({ x0: p.x - 3, x1: p.x + 3, z0: p.z0 - 1, z1: p.z1 });
+const RW_STATE = { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, boardT: 0, boarded: [] };
+const rwRoofs = [];
+const rwRideRoof = { x0: 0, x1: 0, z0: 0, z1: 0, h: -99 };
+rwRoofs.push(rwRideRoof);
+const RW_GREEN = 0x2a5a3a, RW_CREAM = 0xe8dcb8, RW_BRICK = 0x9a5a3a;
+// the booking hall, relative to the station's x: barriers across it at z -252, platform beyond
+const RW_HALL = { dx0: -26, dx1: 26, z0: -258, z1: -244, H: 6.5, gateZ: -252 };
+const RW_GATE_X = [-3.9, -1.3, 1.3, 3.9];
+const rwInHall = (S, x, z) => S.staffed && x > S.x + RW_HALL.dx0 && x < S.x + RW_HALL.dx1 && z > RW_HALL.z0 && z < RW_HALL.z1;
+const rwOnPlatform = (S, x, z) => x > S.x - 48 && x < S.x + 48 && z > -268.4 && z < (S.staffed ? -258 : -259);
+const rwStationAt = (x, z) => RW_STATIONS.find((S) => x > S.x - 50 && x < S.x + 50 && z > -269 && z < -240) || null;
+const rwTrainsRun = (hr) => hr >= 5.5;
+
+// =====================================================================
+// Building it
+// =====================================================================
+function rwWall(x0, x1, z0, z1, h, col, y0 = 0) { propBuf.box(x0, x1, y0, h, z0, z1, col); return addCollider(x0, x1, z0, z1, h, { y0 }); }
+function rwPlane(w, h, tex, x, y, z, ry = 0) { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex })); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); return m; }
+function rwTrack(z, x0, x1) {
+  groundBuf.flat(x0, x1, z - 1.7, z + 1.7, 0.012, 0x6e6a62); // ballast
+  for (let x = x0 + 0.3; x < x1; x += 0.9) markBuf.flat(x - 0.13, x + 0.13, z - 1.25, z + 1.25, 0.022, 0x4a3a2a); // sleepers
+  for (let x = x0; x < x1; x += 60) for (const s of [-0.72, 0.72]) propBuf.box(x, Math.min(x1, x + 60), 0.02, 0.17, z + s - 0.04, z + s + 0.04, 0x8a8a92);
+}
+function rwPortal(x, out) { // a grassy hill with the tunnel mouth in it
+  const x0 = out < 0 ? x - 40 : x, x1 = out < 0 ? x : x + 40;
+  propBuf.box(x0, x1, 0, 12, -287, -253, 0x4f7d3e); addCollider(x0, x1, -287, -253, 12);
+  const fx = out < 0 ? x1 + 0.05 : x0 - 0.05;
+  propBuf.box(Math.min(fx, fx - out * 0.6), Math.max(fx, fx - out * 0.6), 0, 7.4, -280, -266.5, 0x8a7a6a);
+  propBuf.box(Math.min(fx, fx - out * 0.65), Math.max(fx, fx - out * 0.65), 0, 6, -278.6, -267.8, 0x0a0a0c);
+}
+function rwBench(x, z, face) { propBuf.box(x - 1.2, x + 1.2, 0.42, 0.5, z - 0.25, z + 0.25, RW_GREEN); propBuf.box(x - 1.2, x + 1.2, 0.5, 1.0, z + (face ? -0.25 : 0.2), z + (face ? -0.2 : 0.25), RW_GREEN); addCollider(x - 1.2, x + 1.2, z - 0.25, z + 0.25, 0.5); for (const o of [-0.6, 0.6]) lifeSpots.push({ kind: 'bench', x: x + o, z: z + (face ? 0.8 : -0.8), face: face ? 0 : Math.PI, sx: x + o, sz: z }); }
+function rwPlatform(S) {
+  const x0 = S.x - 48, x1 = S.x + 48;
+  groundBuf.flat(x0, x1, -268.3, S.staffed ? -258 : -259, 0.016, 0x9a948c);
+  markBuf.flat(x0, x1, -268.0, -267.7, 0.024, 0xe0c020); // stand behind the yellow line
+  // the canopy, over the middle of the platform
+  const c0 = S.x - (S.staffed ? 30 : 8), c1 = S.x + (S.staffed ? 30 : 8);
+  propBuf.box(c0, c1, 3.8, 4.1, -266.5, -259, RW_GREEN, { bottom: true }); addRoof(c0, c1, -266.5, -259, 4.1, { y0: 3.8 }); rwRoofs.push({ x0: c0, x1: c1, z0: -266.5, z1: -259, h: 3.8 });
+  for (let x = c0 + 2; x < c1; x += 8) { propBuf.cyl(x, -261, 0.1, 0.1, 0, 3.8, 0x2a3a2a, 6); addCollider(x - 0.12, x + 0.12, -261.12, -260.88, 3.8); }
+  for (let x = c0 + 1; x < c1 - 1; x += 4) glowBuf.box(x, x + 1.4, 3.75, 3.8, -264, -263.7, 0xf0f8ff);
+  for (let x = S.x - (S.staffed ? 24 : 4); x <= S.x + (S.staffed ? 24 : 4); x += 12) rwBench(x, -262, true);
+  // the station name boards along the platform
+  const tex = textTex(512, 80, '#2a5a3a', '#f0ead0', [S.name], 'bold 40px Georgia, serif');
+  for (const dx of [-40, -12, 12, 40]) { if (!S.staffed && Math.abs(dx) > 20) continue; for (const s of [-1.2, 1.2]) propBuf.box(S.x + dx + s - 0.05, S.x + dx + s + 0.05, 0, 2.6, -260.05, -259.95, 0x2a3a2a); rwPlane(3.2, 0.5, tex, S.x + dx, 2.4, -260.1, Math.PI); }
+  // a fence along the back of the platform (and across the ends) so the only way on is through the station
+  const back = S.staffed ? -258 : -259;
+  const fence = (a, b) => { if (b - a < 0.3) return; propBuf.box(a, b, 0, 1.8, back - 0.05, back + 0.05, 0x3a4a3a); addCollider(a, b, back - 0.08, back + 0.08, 1.8); };
+  if (S.staffed) { fence(x0, S.x + RW_HALL.dx0); fence(S.x + RW_HALL.dx1, x1); } else { fence(x0, S.x - 2); fence(S.x + 2, x1); }
+  for (const x of [x0, x1]) { propBuf.box(x - 0.05, x + 0.05, 0, 1.8, -268.3, back, 0x3a4a3a); addCollider(x - 0.08, x + 0.08, -267.0, back, 1.8); } // (the last metre by the edge is open: you can always get down on to the line)
+  for (let x = x0 + 8; x < x1; x += 16) { propBuf.box(x - 0.06, x + 0.06, 0, 4.2, -259.6, -259.5, 0x2a2e32); glowBuf.box(x - 0.3, x + 0.3, 4.1, 4.2, -260, -259.3, 0xfff0c8); }
+}
+function rwHall(S) {
+  const H = RW_HALL, x0 = S.x + H.dx0, x1 = S.x + H.dx1, h = H.H, z0 = H.z0, z1 = H.z1;
+  groundBuf.flat(x0, x1, z0, z1, 0.02, 0xc8bca8);
+  rwWall(x0 - 0.3, x0, z0, z1, h, RW_BRICK); rwWall(x1, x1 + 0.3, z0, z1, h, RW_BRICK);
+  // the front, on to the street: doors in the middle
+  for (const [a, b] of [[x0, S.x - 4], [S.x + 4, x1]]) rwWall(a, b, z1, z1 + 0.3, h, RW_BRICK);
+  propBuf.box(S.x - 4, S.x + 4, 3.4, h, z1, z1 + 0.3, RW_BRICK);
+  navOpen.push({ x0: S.x - 3.6, x1: S.x + 3.6, z0: z1 - 1.5, z1: z1 + 1.5 }); keepClear.push({ x0: S.x - 5, x1: S.x + 5, z0: z1 - 2, z1: z1 + 6 });
+  rwPlane(16, 1.6, textTex(1024, 100, '#2a5a3a', '#f0ead0', [S.name], 'bold 64px Georgia, serif'), S.x, 4.8, z1 + 0.32, 0);
+  // the back, on to the platform: a wide opening in the middle
+  for (const [a, b] of [[x0, S.x - 8], [S.x + 8, x1]]) rwWall(a, b, z0 - 0.3, z0, h, RW_BRICK);
+  propBuf.box(S.x - 8, S.x + 8, 3.6, h, z0 - 0.3, z0, RW_BRICK);
+  navOpen.push({ x0: S.x - 7.5, x1: S.x + 7.5, z0: z0 - 1.5, z1: z0 + 1.5 });
+  propBuf.box(x0 - 0.3, x1 + 0.3, h, h + 0.3, z0 - 0.3, z1 + 0.3, 0x4a3a3a, { bottom: true }); addRoof(x0 - 0.3, x1 + 0.3, z0 - 0.3, z1 + 0.3, h + 0.3, { y0: h });
+  rwRoofs.push({ x0, x1, z0, z1, h });
+  for (let x = x0 + 4; x < x1 - 2; x += 8) glowBuf.box(x - 1.2, x + 1.2, h - 0.08, h - 0.03, -252, -250, 0xfff2d0);
+  interiorZones.push({ x0, x1, z0, z1, y0: -0.5, y1: h - 0.2, name: S.name });
+  // the barrier line: cabinets with gates between them, glass screens out to the walls
+  const gz = H.gateZ;
+  const gx = RW_GATE_X.map((d) => S.x + d);
+  const glass = (a, b) => { propBuf.box(a, b, 0, 0.3, gz - 0.1, gz + 0.1, 0x3a3a40); propBuf.box(a, b, 0.3, 1.9, gz - 0.04, gz + 0.04, 0x9ac8e0, { glass: true }); addCollider(a, b, gz - 0.12, gz + 0.12, 1.9); };
+  glass(x0, gx[0] - 1.05); glass(gx[gx.length - 1] + 1.05, x1);
+  for (let k = 0; k <= gx.length; k++) {
+    const a = k === 0 ? gx[0] - 1.05 : gx[k - 1] + 0.55, b = k === gx.length ? gx[k - 1] + 1.05 : gx[k] - 0.55;
+    if (b - a < 0.1) continue;
+    propBuf.box(a, b, 0, 1.05, gz - 0.6, gz + 0.6, 0x3a3a40); addCollider(a, b, gz - 0.6, gz + 0.6, 1.05);
+    glowBuf.box(a + 0.05, b - 0.05, 1.05, 1.07, gz + 0.3, gz + 0.5, 0x6aff6a);
+  }
+  for (const x of gx) {
+    const c = addCollider(x - 0.55, x + 0.55, gz - 0.08, gz + 0.08, 1.05);
+    const paddles = [];
+    for (const s of [-1, 1]) { const m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.05), new THREE.MeshLambertMaterial({ color: 0xc02a2a, transparent: true, opacity: 0.85 })); m.position.set(x + s * 0.27, 0.75, gz); scene.add(m); paddles.push(m); }
+    S.gates.push({ x, z: gz, c, paddles, openT: 0, byPlayer: 0 });
+    navOpen.push({ x0: x - 0.45, x1: x + 0.45, z0: gz - 1.2, z1: gz + 1.2 });
+  }
+  // the ticket office (west) and the machines (east)
+  S.office = { x: S.x - 18, z: -247.6 };
+  propBuf.box(S.x - 24, S.x - 12, 0, 1.1, -246.6, -245.8, RW_GREEN); addCollider(S.x - 24, S.x - 12, -246.6, -245.8, 1.1); propBuf.box(S.x - 24, S.x - 12, 1.1, 2.6, -246.25, -246.15, 0x9ac8e0, { glass: true });
+  rwWall(S.x - 24, S.x - 23.8, -245.8, z1, 2.6, RW_GREEN); rwWall(S.x - 12.2, S.x - 12, -245.8, z1, 2.6, RW_GREEN);
+  rwPlane(6, 0.8, textTex(512, 80, '#2a5a3a', '#ffffff', ['TICKETS · TRAVEL CENTRE'], 'bold 40px Arial'), S.x - 18, 3.0, -246.7, Math.PI);
+  S.machines = [];
+  for (const dx of [14, 16, 18]) { propBuf.box(S.x + dx - 0.4, S.x + dx + 0.4, 0, 1.8, -245.0, -244.3, 0x2a6a4a); glowBuf.box(S.x + dx - 0.25, S.x + dx + 0.25, 1.1, 1.5, -245.04, -245.0, 0x9ad0ff); addCollider(S.x + dx - 0.4, S.x + dx + 0.4, -245.0, -244.3, 1.8); S.machines.push({ x: S.x + dx, z: -245.8 }); }
+  // the departures board, over the barriers
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 192; S.boardCanvas = cv; S.boardTex = new THREE.CanvasTexture(cv); S.boardTex.colorSpace = THREE.SRGBColorSpace;
+  for (const [z, ry] of [[gz + 0.06, 0], [gz - 0.06, Math.PI]]) rwPlane(6.4, 2.4, S.boardTex, S.x, 3.6, z, ry);
+  propBuf.box(S.x - 3.3, S.x + 3.3, 2.35, 4.85, gz - 0.05, gz + 0.05, 0x1a1a1e);
+  for (const s of [-1, 1]) propBuf.box(S.x + s * 3 - 0.04, S.x + s * 3 + 0.04, 4.85, h, gz - 0.04, gz + 0.04, 0x2a2a2e);
+  // benches in the booking hall
+  for (const dx of [-8, 8]) rwBench(S.x + dx, -248.4, false);
+  // the member of staff at the gates
+  S.staffPos = { x: S.x + 6.4, z: gz + 1.2 };
+}
+function rwHalt(S) { // the shelter, a help point and a sign: REQUEST STOP
+  propBuf.box(S.x - 3, S.x + 3, 2.6, 2.75, -263, -259.4, RW_GREEN, { bottom: true }); addRoof(S.x - 3, S.x + 3, -263, -259.4, 2.75, { y0: 2.6 }); rwRoofs.push({ x0: S.x - 3, x1: S.x + 3, z0: -263, z1: -259.4, h: 2.6 });
+  propBuf.box(S.x - 3, S.x + 3, 0.1, 2.6, -259.5, -259.4, 0x9ac8e0, { glass: true }); addCollider(S.x - 3, S.x + 3, -259.55, -259.35, 2.6);
+  rwPlane(2.6, 0.9, textTex(300, 100, '#f0ead0', '#2a5a3a', ['REQUEST STOP', 'PAY ON THE TRAIN'], 'bold 30px Arial'), S.x + 5, 1.8, -259.3, Math.PI);
+  propBuf.box(S.x + 4.9, S.x + 5.1, 0, 1.4, -259.4, -259.2, 0x8a8a90);
+  S.machines = []; S.office = null;
+}
+function rwBuild() {
+  rwTrack(RW_TZ, RW_X0 - 30, RW_X1 + 30); rwTrack(RW_FZ, RW_X0 - 30, RW_X1 + 30);
+  rwPortal(RW_X0, -1); rwPortal(RW_X1, 1);
+  for (const S of RW_STATIONS) { rwPlatform(S); if (S.staffed) rwHall(S); else rwHalt(S); S.built = true; }
+  // the paths down to the roads, and a short one in front of PORT HALDEN CENTRAL
+  for (const p of RW_PATHS) { groundBuf.flat(p.x - 2, p.x + 2, p.z0, p.z1, 0.014, 0x9a948c); for (let z = p.z0 + 8; z < p.z1; z += 16) { propBuf.box(p.x + 2.3, p.x + 2.4, 0, 4, z - 0.05, z + 0.05, 0x2a2e32); glowBuf.box(p.x + 2.1, p.x + 2.6, 3.9, 4.0, z - 0.2, z + 0.2, 0xfff0c8); } }
+  groundBuf.flat(-6, 6, -244, -239, 0.014, 0x9a948c);
+  // a footbridge at each staffed station, over both lines at the west end (scenery: you can't get up it)
+  for (const S of RW_STATIONS) if (S.staffed) { const x = S.x - 44; propBuf.box(x - 1.2, x + 1.2, 5.6, 6.0, -279, -258, 0x5a6a5a); for (const s of [-1.2, 1.2]) propBuf.box(x + s - 0.05, x + s + 0.05, 6.0, 7.1, -279, -258, 0x5a6a5a); for (const z of [-279, -273, -258.5]) { propBuf.box(x - 1.3, x - 1.1, 0, 5.6, z - 0.1, z + 0.1, 0x5a6a5a); propBuf.box(x + 1.1, x + 1.3, 0, 5.6, z - 0.1, z + 0.1, 0x5a6a5a); addCollider(x - 1.3, x + 1.3, z - 0.1, z + 0.1, 5.6); } }
+}
+worldHooks.beforeBake.push(rwBuild);
+
+// =====================================================================
+// The trains
+// =====================================================================
+const RW_CAR_L = 16, RW_GAP = 0.6, RW_CARS = [-(RW_CAR_L + RW_GAP), 0, RW_CAR_L + RW_GAP];
+const RW_HALF = (RW_CAR_L * 3 + RW_GAP * 2) / 2;
+const RW_FLOOR = 1.0;
+const rwBodyMat = lam(RW_GREEN), rwCreamMat = lam(RW_CREAM), rwDarkMat = lam(0x1a1a1e);
+const rwWinDay = new THREE.MeshLambertMaterial({ color: 0x2a3a4a }), rwWinNight = new THREE.MeshBasicMaterial({ color: 0xfff0c0 });
+function rwMakeTrain(freight) {
+  const g = new THREE.Group(), wins = [], doors = [];
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
+  if (!freight) {
+    for (const cx of RW_CARS) {
+      add(new THREE.BoxGeometry(RW_CAR_L, 2.2, 3.0), rwBodyMat, cx, 1.6, 0);
+      add(new THREE.BoxGeometry(RW_CAR_L, 1.0, 3.0), rwCreamMat, cx, 3.2, 0);
+      add(new THREE.BoxGeometry(RW_CAR_L - 0.4, 0.3, 2.8), rwDarkMat, cx, 3.85, 0);
+      wins.push(add(new THREE.BoxGeometry(RW_CAR_L - 1.2, 0.9, 3.04), rwWinDay, cx, 2.4, 0));
+      add(new THREE.BoxGeometry(RW_CAR_L - 2, 0.5, 2.2), rwDarkMat, cx, 0.35, 0);
+      for (const d of [-5, 5]) for (const s of [-1, 1]) { const m = add(new THREE.BoxGeometry(1.3, 2.4, 0.06), rwCreamMat, cx + d, 1.95, s * 1.52); if (s > 0) doors.push(m); }
+    }
+    for (const s of [-1, 1]) { const end = s * RW_HALF; add(new THREE.BoxGeometry(0.2, 1.2, 2.6), rwCreamMat, end + s * 0.05, 2.5, 0); add(new THREE.BoxGeometry(0.1, 0.25, 2.0), new THREE.MeshBasicMaterial({ color: 0xffffe0 }), end + s * 0.16, 1.0, 0); add(new THREE.BoxGeometry(0.1, 0.6, 2.8), lam(0xe0c020), end + s * 0.12, 1.5, 0); }
+  } else {
+    const n = 9, L = 13; let x = -((n * (L + 0.8)) / 2);
+    for (let k = 0; k < n; k++) {
+      const cx = x + L / 2; x += L + 0.8;
+      if (k === 0) { add(new THREE.BoxGeometry(L, 3.4, 2.9), lam(0x2a2a6a), cx, 2.2, 0); add(new THREE.BoxGeometry(0.1, 0.3, 2.0), new THREE.MeshBasicMaterial({ color: 0xffffe0 }), cx - L / 2 - 0.06, 1.1, 0); continue; }
+      add(new THREE.BoxGeometry(L, 0.4, 2.6), rwDarkMat, cx, 1.0, 0);
+      if (k % 3 !== 2) add(new THREE.BoxGeometry(L - 0.6, 2.6, 2.5), lam(mpick([0xb0302a, 0x2a5aa0, 0x2a8a4a, 0xd0902a, 0x6a6a70, 0xc85a1a])), cx, 2.5, 0);
+    }
+  }
+  g.visible = false; scene.add(g);
+  return { g, wins, doors, freight };
+}
+// state: 'tunnel' (waiting out of sight), 'run', 'dwell' (in a station, doors open)
+const rwPax = { id: 'pax', z: RW_TZ, x: RW_X0 - 60, dir: 1, v: 0, state: 'tunnel', waitT: 3, dwellT: 0, stopAt: null, served: null, mesh: null, cruise: 26, len: RW_HALF };
+const rwFreight = { id: 'freight', z: RW_FZ, x: RW_X1 + 80, dir: -1, v: 0, state: 'tunnel', waitT: 30, cruise: 22, mesh: null, len: 60 };
+const rwTrains = [rwPax, rwFreight];
+const rwNextStation = (T) => RW_STATIONS.filter((S) => (S.x - T.x) * T.dir > 0.5 && S !== T.served).sort((a, b) => (a.x - b.x) * T.dir)[0] || null;
+const rwTerminus = (T) => (T.dir > 0 ? RW_STATIONS[RW_STATIONS.length - 1] : RW_STATIONS[0]);
+function rwStepTrain(T, dt, K) {
+  if (!T.mesh) T.mesh = rwMakeTrain(T.id === 'freight');
+  const hr = K.hour;
+  if (T.state === 'tunnel') {
+    T.mesh.g.visible = false; T.v = 0;
+    T.waitT -= dt;
+    const ok = T.id === 'pax' ? rwTrainsRun(hr) : (hr >= 21 || hr < 6.5);
+    if (T.waitT <= 0 && ok) { T.state = 'run'; T.dir = -T.dir; T.x = T.dir > 0 ? RW_X0 - T.len - 5 : RW_X1 + T.len + 5; T.v = T.cruise * 0.7; T.served = null; if (T.id === 'freight') RW_STATE.freight++; }
+    return;
+  }
+  T.mesh.g.visible = true;
+  if (T.state === 'dwell') {
+    T.v = 0; T.dwellT -= dt;
+    if (T.dwellT <= 0) { T.state = 'run'; RW_STATE.departed = (RW_STATE.departed || 0) + 1; if (K.near(T.x, T.z, 120)) K.sfx.whistle && K.sfx.whistle(); rwDoors(T, false); }
+  } else {
+    let want = T.cruise;
+    if (T.id === 'pax') {
+      const S = rwNextStation(T);
+      if (S) {
+        const d = Math.abs(S.x - T.x);
+        want = Math.min(want, Math.sqrt(2 * 1.4 * d) + 0.6);
+        if (d < 0.6) { T.x = S.x; T.v = 0; T.state = 'dwell'; T.dwellT = S.staffed ? 11 : 7; T.served = S; T.stopAt = S; rwArrive(T, S, K); return; }
+      }
+    }
+    T.v += clamp(want - T.v, -2.6 * dt, 1.3 * dt);
+    T.x += T.dir * T.v * dt;
+    if ((T.dir > 0 && T.x - T.len > RW_X1 + 2) || (T.dir < 0 && T.x + T.len < RW_X0 - 2)) { T.state = 'tunnel'; T.waitT = T.id === 'pax' ? 6 : mr(40, 90); T.served = null; }
+  }
+  T.mesh.g.position.set(T.x, 0.15, T.z);
+}
+function rwDoors(T, open) { if (!T.mesh) return; for (const d of T.mesh.doors) d.position.z = open ? 1.58 : 1.52; T.open = open; }
+// where you stand to get on: the doors on the platform side
+const rwDoorSpots = (T) => RW_CARS.flatMap((cx) => [-5, 5].map((d) => ({ x: T.x + cx + d, z: T.z + 2.3 })));
+function rwArrive(T, S, K) {
+  rwDoors(T, true);
+  const R = RW_STATE.ride;
+  if (R && R.train === T) {
+    R.stops++;
+    if (S === rwTerminus(T)) { rwGetOff(K, `${S.name}. THIS TRAIN TERMINATES HERE. ALL CHANGE`); return; }
+    if (K.near(S.x, RW_TZ, 80)) K.showMsg(`THIS IS ${S.name}. ${K.isTouch ? 'USE' : 'E'} TO GET OFF`, 2.2);
+  }
+  // a few people get off, and head out through the barriers
+  if (!K.near(S.x, -255, 140)) return;
+  const n = Math.floor(mr(1, S.staffed ? 4 : 2.5));
+  for (let k = 0; k < n; k++) {
+    const D = mpick(rwDoorSpots(T)); const h = K.spawnCivAt(D.x, D.z); if (!h) continue;
+    h.x = D.x; h.z = D.z;
+    const route = S.staffed ? [[D.x, -263], [S.x + mpick(RW_GATE_X), -253.4], [S.x + mpick(RW_GATE_X), -250.6], [S.x, -245], [S.x + mr(-6, 6), -240]] : [[D.x, -263], [S.x, -260], [S.x, -256], [S.x, -200]];
+    K.lifeGo(h, 'walk', route[route.length - 1][0], route[route.length - 1][1], null, 0.3, { route, ri: 0, oneWay: true, maxT: 80 });
+  }
+}
+
+// =====================================================================
+// Riding: your seat in the middle carriage, the inspector, the toilet
+// =====================================================================
+const rwCabMat = new THREE.MeshLambertMaterial({ color: 0xe0d8c4, side: THREE.DoubleSide });
+const rwSeatMat = new THREE.MeshLambertMaterial({ color: 0x8a2a3a });
+const RW_CHAT = ['IS THIS THE STOPPING SERVICE?', 'WE\'RE RUNNING LATE AGAIN', 'MIND THE GAP, SHE SAID. WHAT GAP?', 'LOVELY VIEW, THIS', 'I\'VE NEVER BEEN TO WHEATLEY. NOBODY HAS.', '...AND THE SIGNAL\'S GONE AGAIN', 'ANY MORE TICKETS FROM PORT HALDEN?'];
+function rwCabin(T) {
+  const M = T.mesh; if (M.cabin) { M.cabin.g.visible = true; return M.cabin; }
+  const g = new THREE.Group(), W = 1.42, L = RW_CAR_L / 2 - 0.1;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(L * 2, W * 2), lam(0x4a4a52)); floor.rotation.x = -Math.PI / 2; floor.position.y = RW_FLOOR - 0.15; g.add(floor);
+  for (const s of [-1, 1]) for (const [y, hh] of [[RW_FLOOR + 0.4, 1.1], [3.25, 0.7]]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(L * 2, hh), rwCabMat); p.position.set(0, y, s * W); g.add(p); }
+  const roof = new THREE.Mesh(new THREE.PlaneGeometry(L * 2, W * 2), rwCabMat); roof.rotation.x = Math.PI / 2; roof.position.y = 3.6; g.add(roof);
+  for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.PlaneGeometry(W * 2, 2.8), rwCabMat); e.rotation.y = Math.PI / 2; e.position.set(s * L, 2.2, 0); g.add(e); }
+  const seats = [];
+  for (let x = -L + 1.2; x < L - 0.8; x += 1.3) { if (Math.abs(Math.abs(x) - 5) < 1.0) continue; for (const s of [-1, 1]) { const z = s * (W - 0.5); const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.9), rwSeatMat); seat.position.set(x, RW_FLOOR - 0.1 + 0.45, z); g.add(seat); const bk = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.8, 0.9), rwSeatMat); bk.position.set(x - 0.28, RW_FLOOR + 0.75, z); g.add(bk); seats.push({ x, z }); } }
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(L * 2 - 1, 0.04, 0.3), new THREE.MeshBasicMaterial({ color: 0xf0f8ff })); lamp.position.y = 3.55; g.add(lamp);
+  // the toilet cubicle, at one end
+  const loo = new THREE.Mesh(new THREE.BoxGeometry(1.4, 2.3, 1.4), lam(0xd8d0c0)); loo.position.set(L - 0.75, RW_FLOOR + 1.0, -0.6); g.add(loo);
+  const folk = [];
+  for (let k = 0; k < 5; k++) {
+    const st = seats[Math.floor(Math.random() * seats.length)]; if (folk.some((f) => f.st === st)) continue;
+    const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: mpick(SHIRTS), pants: mpick(PANTS) });
+    p.group.position.set(st.x, RW_FLOOR + 0.03, st.z); p.group.rotation.y = Math.PI / 2; p.legL.rotation.x = p.legR.rotation.x = -1.4; p.armL.rotation.x = p.armR.rotation.x = -0.4;
+    g.add(p.group); folk.push({ p, g: p.group, st });
+  }
+  // the inspector: stands at the far end until he does his rounds
+  const ins = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: 0x1a2a4a, pants: 0x1a1a2a }); ins.group.position.set(-L + 0.6, RW_FLOOR - 0.15, 0); ins.group.rotation.y = Math.PI / 2; ins.group.visible = false; g.add(ins.group);
+  T.mesh.g.add(g);
+  M.cabin = { g, seats, folk, ins, L, W };
+  return M.cabin;
+}
+const rwHasTicket = (K) => { const t = RW_STATE.ticket; return !!t && t.day === K.G.day && (t.kind === 'return' || !t.used); };
+function rwTrainAtDoor(K) {
+  const P = K.player, T = rwPax;
+  if (P.car || P.hide || P.bike || P.mode !== 'move' || RW_STATE.ride || T.state !== 'dwell' || P.y > 1.4) return null;
+  if (T.stopAt === rwTerminus(T)) return null; // (it's going on into the tunnel, empty)
+  return rwDoorSpots(T).some((D) => Math.hypot(D.x - P.x, D.z - P.z) < 2.4) ? T : null;
+}
+function rwBoard(T, K) {
+  const P = K.player, S = T.stopAt;
+  const chased = K.hunters().some((h) => !h.dead && h.state === 'chase' && Math.hypot(h.x - P.x, h.z - P.z) < 10);
+  const C = rwCabin(T);
+  const free = C.seats.filter((s) => !C.folk.some((f) => f.st === s));
+  const seat = free.length ? free.reduce((a, b) => (Math.abs(b.x) < Math.abs(a.x) ? b : a)) : C.seats[0];
+  RW_STATE.ride = { train: T, seat, t: 0, from: S, stops: 0, bell: false, insT: Math.random() < 0.7 ? mr(5, 12) : null, ins: null, loo: false, chatT: mr(4, 8), paid: rwHasTicket(K), unstaffed: S && !S.staffed };
+  RW_STATE.rides++;
+  if (RW_STATE.ticket && RW_STATE.ticket.day === K.G.day && RW_STATE.ticket.kind === 'single' && !RW_STATE.ticket.used) RW_STATE.ticket.used = true;
+  T.dwellT = Math.max(T.dwellT, 2.5);
+  const nx = rwNextStation(T);
+  K.showMsg(`ON THE ${T.dir > 0 ? 'EASTBOUND' : 'WESTBOUND'} TRAIN${nx ? ' · NEXT STOP ' + nx.name : ''}${chased ? '. THE DOORS SHUT ON THEIR FACES' : ''}`, 2.6);
+  if (chased) { T.dwellT = Math.min(T.dwellT, 2.5); RW_STATE.escaped = (RW_STATE.escaped || 0) + 1; }
+}
+function rwGetOff(K, msg) {
+  const R = RW_STATE.ride; if (!R) return;
+  RW_STATE.ride = null;
+  const P = K.player, T = R.train;
+  if (T.mesh && T.mesh.cabin) { T.mesh.cabin.g.visible = false; T.mesh.cabin.ins.group.visible = false; }
+  let p = null;
+  for (const o of [0, 1.5, -1.5, 3, -3]) { const x = T.x + o, z = T.z + 3.2; if (!K.blocked(x, z, 0.35)) { p = { x, z }; break; } }
+  if (!p) p = { x: T.x, z: T.z + 3.4 };
+  P.x = p.x; P.z = p.z; P.y = 0; P.vx = P.vz = P.vy = 0; P.crouch = 0;
+  rwRideRoof.h = -99;
+  if (msg) K.showMsg(msg, 2.4);
+}
+function rwInspect(K) {
+  const R = RW_STATE.ride, P = K.player;
+  RW_STATE.inspections++;
+  if (R.loo) { if (Math.random() < 0.75) { RW_STATE.dodged++; K.showMsg('A KNOCK ON THE TOILET DOOR. "ANYONE IN THERE?" ...HE MOVES ON', 2.4); return; } K.showMsg('"I KNOW YOU\'RE IN THERE. OUT YOU COME. TICKET?"', 2.2); R.loo = false; }
+  if (K.G.level >= 2 && P.disg < 0.4 && Math.random() < 0.35) { K.addHeat(4); K.bumpLocal(0.06); RW_STATE.recognised = (RW_STATE.recognised || 0) + 1; }
+  if (R.paid || rwHasTicket(K)) { K.showMsg(mpick(['"THANK YOU"', '"LOVELY, CHEERS"', '"THAT\'S FINE. ENJOY YOUR JOURNEY"']), 1.6); return; }
+  if (R.unstaffed && P.cash >= 4) { P.cash -= 4; K.sfx.cash(); R.paid = true; RW_STATE.fares += 4; RW_STATE.ticket = { day: K.G.day, kind: 'single', used: true }; K.showMsg('"GOT ON AT WHEATLEY? THAT\'S $4 THEN." YOU PAY THE GUARD', 2.2); return; }
+  if (P.cash >= 15) { P.cash -= 15; K.sfx.cash(); R.paid = true; RW_STATE.fines++; K.showMsg('"NO TICKET? THAT\'S A PENALTY FARE. $15." HE WRITES IT ALL DOWN', 2.4); return; }
+  RW_STATE.fines++; R.throwOff = true; K.addHeat(5); K.report();
+  K.showMsg('"NO TICKET AND NO MONEY? YOU\'RE OFF AT THE NEXT STOP. AND I\'M RADIOING AHEAD"', 2.6);
+}
+function rwRide(dt, K) {
+  const R = RW_STATE.ride; if (!R) return false;
+  const P = K.player, T = R.train, C = T.mesh && T.mesh.cabin;
+  if (!P.alive) { rwGetOff(K); return false; }
+  R.t += dt;
+  P.x = T.x + R.seat.x + 0.1; P.z = T.z + R.seat.z; P.y = RW_FLOOR; P.vx = P.vz = P.vy = 0; P.crouch = 0.6; P.sprinting = false;
+  if (R.loo) { P.x = T.x + C.L - 0.75; P.z = T.z - 0.6; P.crouch = 0; }
+  P.stam = Math.min(100, P.stam + 14 * dt);
+  // the inspector does his rounds
+  if (R.insT != null && T.state === 'run') {
+    R.insT -= dt;
+    if (R.insT <= 4 && !R.insWarned) { R.insWarned = true; K.showMsg(`"TICKETS FROM ${R.from ? R.from.short : 'HERE'}, PLEASE!" THE INSPECTOR IS COMING DOWN THE TRAIN${rwHasTicket(K) || R.paid ? '' : `. ${K.isTouch ? 'USE' : 'E'} TO HIDE IN THE TOILET`}`, 2.8); if (C) C.ins.group.visible = true; }
+    if (C && R.insWarned) { const f = clamp(1 - R.insT / 4, 0, 1); C.ins.group.position.x = lerp(-C.L + 0.6, R.seat.x - 0.7, f); }
+    if (R.insT <= 0) { R.insT = null; rwInspect(K); R.insDone = true; if (C) C.ins.group.visible = false; }
+  }
+  if (C && R.insDone && !R.loo && R.chatT < 0) R.chatT = 0;
+  if (T.state === 'dwell' && R.throwOff && R.stops > 0) { R.throwOff = false; rwGetOff(K, 'THE INSPECTOR WALKS YOU TO THE DOOR. "OFF."'); return false; }
+  if (T.state === 'dwell' && R.bell && R.stops > 0) { rwGetOff(K, `YOU GET OFF AT ${T.stopAt ? T.stopAt.name : 'THE STATION'}`); return false; }
+  R.chatT -= dt;
+  if (R.chatT <= 0 && C && C.folk.length) { R.chatT = mr(6, 12); K.say({ g: mpick(C.folk).g }, mpick(RW_CHAT)); }
+  Object.assign(rwRideRoof, { x0: T.x - RW_HALF, x1: T.x + RW_HALF, z0: T.z - 1.6, z1: T.z + 1.6, h: 3.8 });
+  return true;
+}
+
+// =====================================================================
+// Tickets: the office, the machines, the gates
+// =====================================================================
+function rwTicketMenu(K) {
+  const P = K.player, day = K.G.day;
+  return {
+    cash: () => P.cash,
+    items: () => [
+      { id: 'rw_single', name: 'SINGLE', price: 4, desc: 'One journey, any station to any station. Today only.' },
+      { id: 'rw_return', name: 'DAY RETURN', price: 7, desc: 'As many trains as you like, until the last one tonight.' },
+      { id: 'rw_paper', name: 'A NEWSPAPER FOR THE JOURNEY', price: 1, desc: 'Something to hide behind.' },
+    ],
+    state: (it) => (rwHasTicket(K) && (it.id === 'rw_return' ? RW_STATE.ticket.kind === 'return' : it.id === 'rw_single' && RW_STATE.ticket.kind === 'single') ? 'owned' : ''),
+    buy(it) {
+      if (it.id !== 'rw_paper' && rwHasTicket(K) && (RW_STATE.ticket.kind === 'return' || it.id === 'rw_single')) return 'YOU\'VE ALREADY GOT ONE';
+      if (P.cash < it.price) return `YOU NEED $${it.price - P.cash} MORE`;
+      P.cash -= it.price; K.sfx.cash();
+      if (it.id === 'rw_paper') { RW_STATE.paperDay = day; return 'THE COUNTY GAZETTE. YOU\'RE ON PAGE FOUR'; }
+      RW_STATE.fares += it.price; RW_STATE.ticket = { day, kind: it.id === 'rw_return' ? 'return' : 'single', used: false };
+      return it.id === 'rw_return' ? 'DAY RETURN. KEEP IT SAFE' : 'SINGLE. THROUGH THE BARRIERS';
+    },
+  };
+}
+const rwOfficeOpen = (hr) => hr >= 6 && hr < 22;
+function rwGateNear(K) {
+  const P = K.player; if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
+  for (const S of RW_STATIONS) { if (!S.staffed || !rwInHall(S, P.x, P.z)) continue; for (const Gt of S.gates) if (Math.abs(P.x - Gt.x) < 0.75 && Math.abs(P.z - Gt.z) < 1.3) return Gt; }
+  return null;
+}
+function rwUseTarget(K) {
+  const P = K.player, R = RW_STATE.ride;
+  if (R) {
+    if (R.insT != null && R.insT < 4 && !R.loo && !R.paid && !rwHasTicket(K)) return { kind: 'loo', first: true };
+    if (R.loo) return { kind: 'unloo', first: true };
+    return { kind: R.train.state === 'dwell' && R.t > 1 ? 'off' : 'stay', first: true };
+  }
+  const T = rwTrainAtDoor(K); if (T) return { kind: 'board', T };
+  if (rwPax.state === 'dwell' && rwPax.stopAt === rwTerminus(rwPax) && !P.car && rwDoorSpots(rwPax).some((D) => Math.hypot(D.x - P.x, D.z - P.z) < 2.4)) return { kind: 'terminates' };
+  const Gt = rwGateNear(K); if (Gt) return { kind: 'gate', Gt };
+  if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
+  const S = rwStationAt(P.x, P.z); if (!S || !S.staffed || !rwInHall(S, P.x, P.z)) return null;
+  if (S.office && Math.hypot(P.x - S.office.x, P.z - S.office.z) < 3 && P.z > -248.5) return { kind: 'office', S };
+  for (const M of S.machines) if (Math.hypot(P.x - M.x, P.z - M.z) < 1.3) return { kind: 'machine', S };
+  return null;
+}
+function rwUsePrompt(T, K, useK) {
+  if (T.kind === 'loo') return `${useK} to lock yourself in the toilet`;
+  if (T.kind === 'unloo') return `In the toilet. ${useK} to come out`;
+  if (T.kind === 'stay') return RW_STATE.ride.bell ? 'GETTING OFF at the next station' : `${useK} to get off at the next station`;
+  if (T.kind === 'off') return `${useK} to get off here`;
+  if (T.kind === 'board') return `${useK} to get on the train${rwHasTicket(K) ? '' : ' (no ticket)'}`;
+  if (T.kind === 'terminates') return 'This train terminates here. Wait for the next one';
+  if (T.kind === 'gate') return rwHasTicket(K) || RW_STATE.ride ? `${useK} to put your ticket in` : 'NO TICKET: the barrier stays shut';
+  if (T.kind === 'office') return rwOfficeOpen(K.hour) ? `${useK} for tickets (SINGLE $4, DAY RETURN $7)` : 'The ticket office is shut. Use the machines';
+  if (T.kind === 'machine') return `${useK} for the ticket machine`;
+  return '';
+}
+function rwOpenGate(Gt, by, K) { Gt.openT = 2.4; if (by) { Gt.byPlayer = K.time; RW_STATE.opened++; } }
+function rwUse(T, K) {
+  const R = RW_STATE.ride;
+  if (T.kind === 'loo') { R.loo = true; RW_STATE.loo++; K.showMsg('YOU LOCK THE DOOR. IT SMELLS. YOU HOLD YOUR BREATH', 1.8); return; }
+  if (T.kind === 'unloo') { R.loo = false; return; }
+  if (T.kind === 'stay') { if (!R.bell) { R.bell = true; K.showMsg('YOU\'LL GET OFF AT THE NEXT STATION', 1.4); } return; }
+  if (T.kind === 'off') { rwGetOff(K, `YOU GET OFF AT ${R.train.stopAt ? R.train.stopAt.name : 'THE STATION'}`); return; }
+  if (T.kind === 'board') { rwBoard(T.T, K); return; }
+  if (T.kind === 'terminates') { K.showMsg('"NOT THIS ONE. IT\'S GOING TO THE SHED"', 1.6); return; }
+  if (T.kind === 'gate') { if (rwHasTicket(K)) { rwOpenGate(T.Gt, true, K); K.sfx.thunk && K.sfx.thunk(); } else K.showMsg('THE BARRIER BEEPS. SEEK ASSISTANCE', 1.4); return; }
+  const blurbs = ['"SINGLE OR RETURN?"', '"THE NEXT ONE\'S ON TIME. FOR ONCE."', '"WHEATLEY? WHY WOULD ANYONE GO TO WHEATLEY?"'];
+  if (T.kind === 'office' && !rwOfficeOpen(K.hour)) { K.showMsg('SHUT. USE THE MACHINES', 1.4); return; }
+  K.openMenu({ name: `${T.S.name} · ${T.kind === 'office' ? 'TRAVEL CENTRE' : 'TICKET MACHINE'}`, kind: 'railway', blurbs: T.kind === 'office' ? blurbs : ['PLEASE SELECT YOUR TICKET', 'CARDS AND CASH ACCEPTED (MOSTLY)'] }, rwTicketMenu(K));
+}
+
+// =====================================================================
+// The departures board
+// =====================================================================
+function rwEta(S) {
+  const T = rwPax;
+  if (T.state === 'dwell' && T.stopAt === S) return 'PLATFORM 1 · BOARDING';
+  if (T.state === 'tunnel') return 'APPROX 2 MIN';
+  const ahead = (S.x - T.x) * T.dir;
+  if (ahead > 0) { const s = ahead / Math.max(8, T.cruise * 0.8) + RW_STATIONS.filter((Q) => (Q.x - T.x) * T.dir > 0 && (S.x - Q.x) * T.dir > 0).length * 9; return s < 20 ? 'DUE' : `${Math.ceil(s / 30)} MIN`; }
+  return 'APPROX 3 MIN';
+}
+function rwDrawBoard(S, K) {
+  const x = S.boardCanvas.getContext('2d'), T = rwPax, run = rwTrainsRun(K.hour);
+  x.fillStyle = '#08080c'; x.fillRect(0, 0, 512, 192);
+  x.fillStyle = '#ffb020'; x.font = 'bold 22px monospace'; x.textAlign = 'left'; x.fillText('DEPARTURES', 12, 28);
+  x.textAlign = 'right'; const hh = Math.floor(K.hour), mm = Math.floor((K.hour % 1) * 60); x.fillText(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, 500, 28);
+  x.textAlign = 'left'; x.font = 'bold 19px monospace';
+  if (!run) { x.fillText('NO MORE TRAINS TONIGHT', 12, 80); x.fillText('FIRST TRAIN 05:30', 12, 110); x.fillStyle = '#7a7a7a'; x.fillText('FREIGHT ONLY · KEEP BACK', 12, 160); S.boardTex.needsUpdate = true; return; }
+  const rows = [];
+  const eastOk = S !== RW_STATIONS[RW_STATIONS.length - 1], westOk = S !== RW_STATIONS[0];
+  if (eastOk) rows.push(['ASHFORD', T.dir > 0 || T.state === 'tunnel' ? rwEta(S) : 'APPROX 4 MIN']);
+  if (westOk) rows.push(['PORT HALDEN CENTRAL', T.dir < 0 || T.state === 'tunnel' ? rwEta(S) : 'APPROX 4 MIN']);
+  rows.forEach((r, i) => { const y = 72 + i * 36; x.fillStyle = '#ffb020'; x.fillText(r[0], 12, y); x.textAlign = 'right'; x.fillStyle = /DUE|BOARD/.test(r[1]) ? '#7aff7a' : '#ffb020'; x.fillText(r[1], 500, y); x.textAlign = 'left'; });
+  x.fillStyle = '#ffb020'; x.font = '15px monospace'; x.fillText('CALLING AT: PORT HALDEN CENTRAL, WHEATLEY HALT, ASHFORD', 12, 176);
+  S.boardTex.needsUpdate = true;
+}
+
+// =====================================================================
+// Each frame
+// =====================================================================
+const RW_STAFF = [];
+function rwStaffFor(S) {
+  if (S.staff) return S.staff;
+  const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: 0xe06a1a, pants: 0x1a1a2a }); p.group.position.set(S.staffPos.x, 0, S.staffPos.z); p.group.rotation.y = Math.PI; scene.add(p.group);
+  S.staff = { p, warned: 0, lastSide: null }; RW_STAFF.push(S.staff); return S.staff;
+}
+function rwHitCheck(T, dt, K) {
+  if (T.state === 'tunnel' || !T.mesh) return;
+  const P = K.player, half = T.id === 'pax' ? RW_HALF : (9 * 13.8) / 2;
+  const inRect = (x, z, y) => y < 4.2 && Math.abs(z - T.z) < 1.75 && Math.abs(x - T.x) < half + 0.4;
+  if (!RW_STATE.ride && P.alive && !P.car && inRect(P.x, P.z, P.y)) {
+    if (T.v > 2.5) { RW_STATE.hits++; K.hurt(Math.min(60, 12 + T.v * 1.6)); P.z = T.z + (P.z > T.z ? 2.4 : -2.4); P.vz = (P.z > T.z ? 1 : -1) * 6; P.vx = T.dir * T.v * 0.3; P.vy = 4; K.showMsg('THE TRAIN CLIPS YOU AND FLINGS YOU OFF THE LINE', 2); }
+    else P.z = T.z + (P.z > T.z ? 1.85 : -1.85);
+  }
+  if (T.v > 3) for (const h of K.hunters()) if (!h.dead && inRect(h.x, h.z, h.y || 0)) h.die({ x: T.dir * T.v * 1.1, y: 5, z: (h.z > T.z ? 1 : -1) * 6 }, 1.2, false);
+  // the horn, for anyone on the line ahead
+  const ax = P.x - T.x;
+  if (T.state === 'run' && T.v > 6 && Math.abs(P.z - T.z) < 2.2 && ax * T.dir > 0 && ax * T.dir < 160 && !RW_STATE.ride) { T.hornT = (T.hornT || 0) - dt; if (T.hornT <= 0) { T.hornT = 2.5; K.sfx.horn(); if (RW_STATE.msgT <= 0) { RW_STATE.msgT = 6; K.showMsg('A TRAIN IS COMING. GET OFF THE LINE!', 1.6); } } }
+}
+function rwUpdate(dt, K) {
+  if (!RW_STATIONS[0].built) return;
+  const P = K.player, hr = K.hour;
+  for (const T of rwTrains) { rwStepTrain(T, dt, K); rwHitCheck(T, dt, K); }
+  RW_STATE.msgT = Math.max(0, RW_STATE.msgT - dt);
+  const night = hr >= 19 || hr < 6.5;
+  if (rwPax.mesh) for (const w of rwPax.mesh.wins) { const m = night ? rwWinNight : rwWinDay; if (w.material !== m) w.material = m; }
+  if (!RW_STATE.ride) rwRideRoof.h = -99;
+  if (P.z > -235) return; // (everything else only matters when you're up by the line)
+  for (const S of RW_STATIONS) {
+    if (!K.near(S.x, -258, 120)) continue;
+    if (S.staffed) {
+      // the gates: open for anyone walking through with a ticket (the town has season tickets), and for you if you put yours in
+      for (const Gt of S.gates) {
+        if (Gt.openT <= 0 && K.hunters().some((h) => !h.dead && Math.abs(h.x - Gt.x) < 0.9 && Math.abs(h.z - Gt.z) < 1.5)) rwOpenGate(Gt, false, K);
+        Gt.openT = Math.max(0, Gt.openT - dt);
+        const open = Gt.openT > 0; Gt.c.h = open ? 0 : 1.05;
+        Gt.paddles[0].position.x = Gt.x - (open ? 0.5 : 0.27); Gt.paddles[1].position.x = Gt.x + (open ? 0.5 : 0.27);
+        Gt.paddles[0].rotation.y = Gt.paddles[1].rotation.y = open ? Math.PI / 2 : 0;
+      }
+      const St = rwStaffFor(S); St.p.group.visible = rwOfficeOpen(hr);
+      // vaulting the barriers
+      if (rwInHall(S, P.x, P.z) || (Math.abs(P.x - S.x) < 26 && P.z < -244 && P.z > -258)) {
+        const side = P.z < RW_HALL.gateZ ? 'in' : 'out';
+        if (St.lastSide && St.lastSide !== side && side === 'in') {
+          const viaGate = S.gates.some((Gt) => Gt.byPlayer && K.time - Gt.byPlayer < 4 && Math.abs(P.x - Gt.x) < 1.2);
+          if (!viaGate) {
+            RW_STATE.vaults++;
+            if (St.p.group.visible && Math.hypot(P.x - S.staffPos.x, P.z - S.staffPos.z) < 16 && !(P.disg > 0.7 && Math.random() < 0.5)) {
+              St.warned++; RW_STATE.warned++;
+              if (St.warned >= 2) { K.addHeat(5); K.report(); K.bumpLocal(0.06); K.say({ g: St.p.group }, 'RIGHT. I\'M CALLING THE POLICE'); K.showMsg('THE STATION STAFF SAW YOU JUMP THE BARRIER AGAIN. THEY\'RE ON THE PHONE', 2.4); }
+              else { K.say({ g: St.p.group }, 'OI! YOU HAVEN\'T PAID FOR THAT!'); K.showMsg('YOU VAULT THE BARRIER. THE MAN IN ORANGE SAW THAT', 2); K.bumpLocal(0.03); }
+            }
+          }
+        }
+        St.lastSide = side;
+      } else St.lastSide = null;
+      S.boardT = (S.boardT || 0) - dt;
+      if (S.boardT <= 0) { S.boardT = 1; rwDrawBoard(S, K); }
+    }
+    if (S.welcomed !== K.G.day && K.near(S.x, -250, 22)) { S.welcomed = K.G.day; K.banner(`${S.name}<small>${S.staffed ? 'COUNTY RAIL · SINGLE $4 · DAY RETURN $7 · TRAINS 05:30 TILL MIDNIGHT' : 'REQUEST STOP · PAY THE GUARD ON THE TRAIN'}</small>`, 4); }
+  }
+  // the first time a train's in and you're on the platform
+  const T = rwTrainAtDoor(K);
+  if (T && !RW_STATE.doorTip) { RW_STATE.doorTip = true; K.showMsg(`THE TRAIN'S IN. ${K.isTouch ? 'USE' : 'E'} AT A DOOR TO GET ON`, 1.8); }
+}
+function rwConspic(K) {
+  const P = K.player, R = RW_STATE.ride;
+  if (R) return R.loo ? -0.6 : RW_STATE.paperDay === K.G.day ? -0.38 : -0.3;
+  if (P.car) return 0;
+  const S = rwStationAt(P.x, P.z);
+  if (S && (rwInHall(S, P.x, P.z) || rwOnPlatform(S, P.x, P.z))) return -0.12; // just another commuter
+  if (P.z < -264 && P.z > -280) return 0.2; // walking along the railway line is not normal
+  return 0;
+}
+const railway = {
+  name: 'railway', roofs: rwRoofs,
+  useTarget: rwUseTarget, usePrompt: rwUsePrompt, use: rwUse, conspic: rwConspic, update: rwUpdate, ride: rwRide, plan: () => false,
+  riding: () => !!RW_STATE.ride,
+  unseen: () => !!(RW_STATE.ride && RW_STATE.ride.loo),
+  reset() {
+    if (RW_STATE.ride) rwGetOff({ player: { x: 0, z: 0 }, blocked: () => false, showMsg: () => {} });
+    Object.assign(RW_STATE, { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, doorTip: false, paperDay: 0 });
+    for (const S of RW_STATIONS) { S.welcomed = 0; if (S.staff) S.staff.warned = 0; }
+    rwRideRoof.h = -99;
+  },
+  diary(K) { const b = []; if (rwHasTicket(K)) b.push(RW_STATE.ticket.kind === 'return' ? 'A DAY RETURN ON COUNTY RAIL' : 'A SINGLE TRAIN TICKET'); if (RW_STATE.ride) b.push('ON THE TRAIN'); return b; },
+  debug: () => ({ stations: RW_STATIONS.map((S) => ({ id: S.id, built: S.built, gates: S.gates.length })), pax: { x: Math.round(rwPax.x), dir: rwPax.dir, state: rwPax.state, v: +rwPax.v.toFixed(1), at: rwPax.stopAt ? rwPax.stopAt.id : null }, freight: { x: Math.round(rwFreight.x), state: rwFreight.state }, ...RW_STATE, ride: RW_STATE.ride ? { t: RW_STATE.ride.t, paid: RW_STATE.ride.paid, loo: RW_STATE.ride.loo, stops: RW_STATE.ride.stops } : null }),
+  RW_STATE, RW_STATIONS, rwPax, rwFreight, rwDoorSpots, rwBoard, rwGetOff, rwHasTicket, rwTicketMenu, rwTrainAtDoor, rwInspect, rwInHall, rwStationAt,
 };
 
 // Safehouses: one hideout per town. Get inside without being seen and you can lie low: your profile
@@ -13851,8 +15053,11 @@ function mhRivalCaughtByYou(r, ctx) {
 
 
 
+
+
+
 // the newer venues all plug in the same way: E targets, how well you blend in, each frame, the diary...
-const XV = [pubTV, bowling, baths, buses];
+const XV = [pubTV, pubGames, bowling, baths, buses, railway, dockWork];
 
 
 
@@ -14071,7 +15276,7 @@ class Hunter {
     if (this.thinkT <= 0) {
       this.thinkT = 0.2 + Math.random() * 0.12;
       let see = !this.inside && d < 90 && (d > 50 ? los(this.x, this.z, tp.x, tp.z) : true) && losSolid(this.x, this.y + 1.6, this.z, tp.x, player.car ? 1.2 : playerEyeY(), tp.z);
-      this.hasLOS = see = see && (!player.hide || this.checkSpot === player.hide) && !(baths.unseen && baths.unseen(this)); // nobody can see into a closed bin (unless they watched you climb in)
+      this.hasLOS = see = see && (!player.hide || this.checkSpot === player.hide) && !XV.some((V) => V.unseen && V.unseen(this)); // nobody can see into a closed bin (unless they watched you climb in)
       const tdt = Math.min(0.5, G.elapsed - this.thinkAt); this.thinkAt = G.elapsed;
       if (this.state !== 'chase' && !G.super) {
         // nobody clocks you instantly: they get suspicious first, faster the more you stand out
@@ -16757,7 +17962,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { XV, pubTV, bowling, baths, buses, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { XV, pubTV, pubGames, dockWork, bowling, baths, buses, railway, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>
