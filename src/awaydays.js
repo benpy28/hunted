@@ -110,7 +110,8 @@ export function coachLogic(c, dt, target, K) {
   }
   if (A.phase === 'wait') { // waiting for everybody to get back on (the driver gives up eventually)
     const waiting = K.hunters().filter((h) => !h.dead && h.awFan && !h.gone);
-    for (const h of waiting) if (h.awFan === 'home' && Math.abs(h.x - (A.kx ?? AW_KERB.x)) < 14 && Math.abs(h.z - AW_KERB.z) < 3.5) { h.remove(); AW_STATE.boarded++; }
+    // (if traffic made it pull up short of the kerb, fans who walk to the usual stop just walk back along to it)
+    for (const h of waiting) if (h.awFan === 'home' && (Math.abs(h.x - (A.kx ?? AW_KERB.x)) < 14 || Math.abs(h.x - AW_KERB.x) < 3) && Math.abs(h.z - AW_KERB.z) < 3.5) { h.remove(); AW_STATE.boarded++; }
     if ((!waiting.length && A.t > 3) || A.t > 35) { A.phase = 'out'; A.t = 0; if (K.near(c.x, c.z, 80)) K.sfx.horn(); }
     return 0;
   }
