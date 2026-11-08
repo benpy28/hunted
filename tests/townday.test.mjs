@@ -87,7 +87,8 @@ test('on market day the crowd goes round the stalls', async () => {
     H.fresh(H); H.G.day = 2;
     const M = H.markets.find((m) => m.city === 'PORT HALDEN'); H.goTo(H, M.x + 10, M.z + 10); H.player.outfit = {}; H.G.level = 0;
     let best = 0;
-    H.stepAt(H, 60, 11, () => { for (const h of H.G.hunters) h.sus = 0; best = Math.max(best, H.G.hunters.filter((h) => h.act && h.act.kind === 'browse' && h.act.stall).length); return best >= 4; }); // nobody's looking at you: they're shopping
+    H.stepAt(H, 60, 11, () => { for (const h of H.G.hunters) h.sus = 0; H.G.hunterCarT = 99; for (const c of H.G.cars) if (c.driver === 'hunter') c.driver = 'traffic'; // and no day-2 hunter driver running you over mid-test (game over freezes the town)
+      best = Math.max(best, H.G.hunters.filter((h) => h.act && h.act.kind === 'browse' && h.act.stall).length); return best >= 4; }); // nobody's looking at you: they're shopping
     return { best };
   });
   assert.ok(s.best >= 4, `only ${s.best} people browsing the stalls`);
@@ -135,17 +136,17 @@ test('the village fete: bunting up, a crowd on the school field, a tombola and c
   const s = await g.run((H) => {
     H.fresh(H); H.G.day = 2; // Saturday
     const F = H.schoolInfo.field; H.goTo(H, F.x, F.z0 + 8);
-    H.stepAt(H, 25, 12);
+    H.stepAt(H, 25, 12, () => { H.G.hunterCarT = 99; for (const c of H.G.cars) if (c.driver === 'hunter') c.driver = 'traffic'; }); // no day-2 hunter driver ending the game mid-fete
     const crowd = H.G.hunters.filter((h) => h.feteGoer && !h.dead && h.x > F.x0 - 3 && h.x < F.x1 + 3 && h.z > F.z0 - 3 && h.z < F.z1 + 3).length;
     const vis = H.fete.group.visible;
-    H.G.hour = 12; H.goTo(H, H.fete.tombola.x, H.fete.tombola.z); const t1 = H.townUseTarget(H.TDK); const c0 = H.player.cash; H.townUse(t1, H.TDK); const paid = c0 - H.player.cash;
+    H.G.hour = 12; H.goTo(H, H.fete.tombola.x, H.fete.tombola.z); const t1 = H.townUseTarget(H.TDK); const c0 = H.player.cash, n0 = H.TD_STATE.tombola; H.townUse(t1, H.TDK); const paid = c0 - H.player.cash, goes = H.TD_STATE.tombola - n0;
     H.G.hour = 12; H.goTo(H, H.fete.cakes.x, H.fete.cakes.z); const t2 = H.townUseTarget(H.TDK); H.player.hp = 50; const hp0 = H.player.hp; H.townUse(t2, H.TDK);
     H.G.day = 3; H.step(0.1); const gone = !H.fete.group.visible;
-    return { crowd, vis, t1: t1 && t1.kind, paid, t2: t2 && t2.kind, healed: H.player.hp - hp0, gone };
+    return { crowd, vis, t1: t1 && t1.kind, paid, goes, t2: t2 && t2.kind, healed: H.player.hp - hp0, gone };
   });
   assert.ok(s.vis, 'fete is set up on Saturday');
   assert.ok(s.crowd >= 8, `only ${s.crowd} at the fete`);
-  assert.equal(s.t1, 'tombola'); assert.equal(s.paid, 2);
+  assert.equal(s.t1, 'tombola'); assert.equal(s.goes, 1); assert.ok(s.paid === 2 || s.paid === -18, `paid ${s.paid}`); // -18: won the $20 book token
   assert.equal(s.t2, 'cakes'); assert.ok(s.healed > 0);
   assert.ok(s.gone, 'packed away on Sunday');
 });
