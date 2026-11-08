@@ -191,12 +191,16 @@ const HATCOLS = [0x2a3a6a, 0xc83a3a, 0x3a6a3a, 0xe0d0a0, 0x2a2a2a, 0x8a5a9a, 0xe
 const COATCOLS = [0x4a3a2a, 0x2a2a30, 0x6a5040, 0x3a4a5a, 0x8a2a2a, 0xc0a070, 0x2a4a3a];
 // everyday people dressed for who they are and where they are: office types downtown, pensioners in the
 // suburbs, dock workers in hi-vis. Returns {kind, slow} so the caller can make them move to match.
-export function dressCivilian(look, town) {
+export function dressCivilian(look, town, mix) {
   const r = Math.random(), P = mpickP;
-  const pick = (w) => { let t = 0; for (const [k, p] of w) { t += p; if (r < t) return k; } return null; };
+  // mix: who's more or less likely to be out at this hour (office types at rush hour, pensioners in the morning...)
+  const pick = (w) => {
+    if (mix) { w = w.map(([k, p]) => [k, p * (mix[k] ?? 1)]); const tot = w.reduce((s, [, p]) => s + p, 0); if (tot > 0.95) w = w.map(([k, p]) => [k, p * 0.95 / tot]); }
+    let t = 0; for (const [k, p] of w) { t += p; if (r < t) return k; } return null;
+  };
   const kind = town === 'ASHFORD' ? pick([['pensioner', 0.2], ['parent', 0.14], ['gardener', 0.08], ['teen', 0.12], ['shopper', 0.12], ['smart', 0.06]])
     : town === 'SALTMARSH DOCKS' ? pick([['docker', 0.3], ['fisher', 0.12], ['pensioner', 0.06], ['office', 0.08], ['teen', 0.06], ['chef', 0.04]])
-    : pick([['office', 0.22], ['student', 0.12], ['smart', 0.1], ['shopper', 0.1], ['pensioner', 0.07], ['chef', 0.03], ['tourist', 0.06]]);
+    : pick([['office', 0.22], ['student', 0.12], ['smart', 0.1], ['shopper', 0.1], ['parent', 0.05], ['pensioner', 0.07], ['chef', 0.03], ['tourist', 0.06]]);
   const o = { kind, slow: 1 };
   if (kind === 'office') { look.shirt = P([0xe8ecf0, 0xc8d8f0, 0xf0f0f0, 0xd0e0d0]); look.pants = P([0x23262e, 0x2a2a36, 0x3b3f4a]); look.tie = P([0xa02a2a, 0x2a3a8a, 0x2a6a3a, 0x6a2a6a]); look.shoes = 0x1a1210; if (Math.random() < 0.45) look.bag = 'case'; if (Math.random() < 0.3) look.coat = P(COATCOLS); }
   else if (kind === 'student' || kind === 'teen') { look.shirt = P([0xc83a3a, 0x3a5a8c, 0x2a2a2a, 0x6b3a8c, 0x5a7a2a, 0xe0c030]); look.bag = 'backpack'; look.bagCol = P([0x2a2a2a, 0xc83a3a, 0x2a5aa0, 0xe0a020]); if (Math.random() < 0.4) { look.hat = 'beanie'; look.hatCol = P(HATCOLS); } look.shoes = P([0xf0f0f0, 0x1a1a1a, 0xc83a3a]); }
