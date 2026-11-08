@@ -4,6 +4,8 @@
 //    county go by. Press E to ring the bell, and it stops at the next stop to let you off.
 //  - A seat on the bus is a good place to be: under a roof, among strangers, all of you staring out of the
 //    window. Just don't get on with someone right behind you: the driver won't open the doors.
+//  - Or slip on through the back doors for nothing. Most days nobody checks. Some days a TICKET INSPECTOR
+//    gets on and works down the bus: $10 penalty fare, or off at the next stop and a call on his radio.
 //  - The COUNTY LINK: orange buses between the towns. The X9 runs PORT HALDEN to ASHFORD along Route 9, by
 //    way of the bus station; the X4 runs PORT HALDEN to SALTMARSH DOCKS down Route 4, stopping at the
 //    leisure park (bowling, baths).
@@ -29,7 +31,7 @@ export const station = { name: 'ROUTE 9 BUS STATION', x0: 264, x1: 328, z0: -52,
 export const bsRoofs = [];
 const bsRideRoof = { x0: 0, x1: 0, z0: 0, z1: 0, h: -99 }; // the roof of the bus you're on
 bsRoofs.push(bsRideRoof);
-export const BS_STATE = { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0 };
+export const BS_STATE = { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0, sneaks: 0, inspections: 0, fines: 0, caught: 0 };
 export const inStation = (x, z) => x > station.x0 && x < station.x1 && z > station.z0 && z < station.z1;
 export const nightBusTime = (hr) => hr >= 23 || hr < 5.5;
 const BS_ORANGE = 0xe07a1a, BS_NIGHT = 0x1a2a6a;
@@ -221,12 +223,22 @@ function bsDoorBus(K) {
   }
   return null;
 }
+const bsRear = (c, out = 0.9) => ({ x: c.x - c.fx * (c.hl - 2.4) + c.fz * (c.hw + out), z: c.z - c.fz * (c.hl - 2.4) - c.fx * (c.hw + out) });
+function bsRearBus(K) {
+  const P = K.player;
+  if (P.car || P.hide || P.bike || P.mode !== 'move' || BS_STATE.ride || P.y > 1.2) return null;
+  for (const c of K.G.cars) {
+    if (c.kind !== 'bus' || c.wrecked || c.driver !== 'traffic' || !(c.stopT > 0) || Math.abs(c.speed) > 0.5) continue;
+    const d = bsRear(c); if (Math.hypot(d.x - P.x, d.z - P.z) < 2.2) return c;
+  }
+  return null;
+}
 export const busFare = (hr) => (nightBusTime(hr) ? 3 : 2);
-function bsBoard(c, K) {
+function bsBoard(c, K, sneak = false) {
   const P = K.player, hr = K.hour, night = nightBusTime(hr);
   const chased = K.hunters().some((h) => !h.dead && h.state === 'chase' && Math.hypot(h.x - P.x, h.z - P.z) < 18);
   if (chased) { BS_STATE.refused++; K.showMsg('THE DRIVER TAKES ONE LOOK AT WHO\'S BEHIND YOU AND SHUTS THE DOORS', 2.2); c.stopT = 0; return; }
-  const fare = BS_STATE.rider === K.G.day ? 0 : busFare(hr);
+  const fare = BS_STATE.rider === K.G.day || sneak ? 0 : busFare(hr);
   if (P.cash < fare) { K.showMsg(`IT'S $${fare}. YOU HAVEN'T GOT IT. THE DRIVER SHAKES HIS HEAD`, 2); return; }
   if (fare) { P.cash -= fare; K.sfx.cash(); BS_STATE.fares += fare; }
   BS_STATE.rides++; if (night) BS_STATE.nightRides++;
@@ -236,10 +248,11 @@ function bsBoard(c, K) {
   let seat = null;
   for (let z = C.L - 3.55; z > -C.L + 0.6 && !seat; z -= 0.95) for (const s of [1, -1]) { const x = s * (C.W - 0.55); if (!taken.has(z.toFixed(2) + x.toFixed(1))) { seat = { x, z }; break; } }
   if (!seat) seat = { x: C.W - 0.55, z: 0 };
-  BS_STATE.ride = { bus: c, seat, t: 0, bell: false, stillT: 0, chatT: mr(4, 8), night, at: { x: c.x, z: c.z } };
+  BS_STATE.ride = { bus: c, seat, t: 0, bell: false, stillT: 0, chatT: mr(4, 8), night, at: { x: c.x, z: c.z }, paid: !sneak, ins: null, checked: false };
+  if (sneak) BS_STATE.sneaks++;
   c.stopT = Math.max(c.stopT, 1.5);
   const name = c.cb ? `THE ${night ? c.cb.night : c.cb.id} TO ${c.cb.dest}` : 'THE BUS';
-  K.showMsg(`${fare ? `$${fare}. ` : 'DAY RIDER. '}ON ${name}. ${K.isTouch ? 'USE' : 'E'} TO RING THE BELL`, 2.6);
+  K.showMsg(sneak ? `IN THROUGH THE BACK DOORS WITHOUT PAYING. ON ${name}. WATCH OUT FOR INSPECTORS` : `${fare ? `$${fare}. ` : 'DAY RIDER. '}ON ${name}. ${K.isTouch ? 'USE' : 'E'} TO RING THE BELL`, 2.6);
   P.yaw = Math.atan2(-c.fz, c.fx); // (facing the window)
   P.pitch = 0;
 }
@@ -247,7 +260,7 @@ function bsGetOff(K, msg) {
   const R = BS_STATE.ride; if (!R) return;
   BS_STATE.ride = null;
   const P = K.player, c = R.bus;
-  if (c.cabin) c.cabin.g.visible = false;
+  if (c.cabin) { c.cabin.g.visible = false; if (c.cabin.ins) c.cabin.ins.group.visible = false; }
   let p = null;
   for (const o of [0.9, 1.6, 2.4]) { const d = bsDoor(c, o); if (!K.blocked(d.x, d.z, 0.35)) { p = d; break; } }
   if (!p) p = bsDoor(c, 1.6);
@@ -270,11 +283,35 @@ function bsRide(dt, K) {
   if (R.stillT > 6) { BS_STATE.kicked++; bsGetOff(K, 'END OF THE LINE. THE DRIVER TURNS THE ENGINE OFF'); return false; }
   // it's stopped at a stop: off you get if you rang
   if (c.stopT > 0 && Math.abs(c.speed) < 0.5 && R.bell) { R.bell = false; bsGetOff(K, 'YOU STEP OFF THE BUS'); return false; }
+  // a ticket inspector gets on at a stop, now and then, and works down the bus
+  if (c.stopT > 0 && !R.ins && !R.checked && R.t > 2 && c.lastStop !== R.insStop && Math.random() < (R.paid ? 0.12 : 0.3) * dt * 4) bsInspectorOn(R, K);
+  if (c.stopT > 0) R.insStop = c.lastStop;
+  if (R.ins) bsInspectorWalk(R, dt, K);
+  if (R.throwOff && c.stopT > 0 && Math.abs(c.speed) < 0.5 && R.t - R.offAt > 1.5) { bsGetOff(K, 'THE INSPECTOR STANDS THERE UNTIL YOU GET OFF'); return false; }
   // chatter
   R.chatT -= dt;
   if (R.chatT <= 0 && c.cabin && c.cabin.folk.length) { R.chatT = mr(5, 10); const f = mpick(c.cabin.folk); K.say({ g: f.g }, mpick(R.night ? BS_NIGHTERS : BS_RIDERS)); }
   Object.assign(bsRideRoof, { x0: c.x - 6.5, x1: c.x + 6.5, z0: c.z - 6.5, z1: c.z + 6.5, h: 3.4 });
   return true;
+}
+
+function bsInspectorOn(R, K) {
+  const c = R.bus, C = c.cabin; R.ins = { t: 0, dur: mr(4, 7) }; BS_STATE.inspections++;
+  if (C) { if (!C.ins) { C.ins = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: 0x2a3a5a, pants: 0x1a1a2a }); C.g.add(C.ins.group); } C.ins.group.visible = true; C.ins.group.position.set(0, 0.5, C.L - 2); C.ins.group.rotation.y = Math.PI; }
+  K.showMsg(`A TICKET INSPECTOR GETS ON. "TICKETS AND PASSES, PLEASE"${R.paid ? '' : '. YOU DIDN\'T PAY...'}`, 2.4);
+}
+function bsInspectorWalk(R, dt, K) {
+  const C = R.bus.cabin, I = R.ins; I.t += dt;
+  if (C && C.ins) C.ins.group.position.z = (C.L - 2) + ((R.seat.z + 0.8) - (C.L - 2)) * clamp(I.t / I.dur, 0, 1);
+  if (I.t < I.dur) return;
+  R.ins = null; R.checked = true;
+  if (C && C.ins) C.ins.group.visible = false;
+  const P = K.player;
+  if (R.paid || BS_STATE.rider === K.G.day) { K.showMsg(mpick(['"THANK YOU"', '"TA"', '"LOVELY, THANKS"']), 1.4); return; }
+  BS_STATE.caught++;
+  if (P.cash >= 10) { P.cash -= 10; K.sfx.cash(); BS_STATE.fines += 10; R.paid = true; K.showMsg('"NO TICKET? THAT\'S A $10 PENALTY FARE." HE TEARS IT OFF THE PAD', 2.4); return; }
+  R.throwOff = true; R.offAt = R.t; R.bell = true; K.addHeat(3); K.report(); K.bumpLocal(0.05);
+  K.showMsg('"NO TICKET, NO MONEY. OFF AT THE NEXT STOP." HE GETS ON HIS RADIO', 2.4);
 }
 
 // =====================================================================
@@ -309,6 +346,7 @@ function bsUseTarget(K) {
   const P = K.player, R = BS_STATE.ride;
   if (R) return { kind: R.bus.stopT > 0 && Math.abs(R.bus.speed) < 0.5 ? 'off' : 'bell', first: true };
   const c = bsDoorBus(K); if (c) return { kind: 'board', c };
+  const cr = bsRearBus(K); if (cr) return { kind: 'sneak', c: cr };
   if (!station.built || P.car || P.hide || P.mode !== 'move' || !inStation(P.x, P.z) || P.y > 0.8) return null;
   if (Math.hypot(P.x - station.office.x, P.z - station.office.z) < 2.4 && P.z > -27) return { kind: 'office' };
   if (Math.hypot(P.x - station.tea.x, P.z - station.tea.z) < 2.4 && P.z > -27) return { kind: 'tea' };
@@ -318,6 +356,7 @@ function bsUsePrompt(T, K, useK) {
   if (T.kind === 'bell') return BS_STATE.ride.bell ? 'STOPPING at the next stop' : `${useK} to ring the bell (off at the next stop)`;
   if (T.kind === 'off') return `${useK} to get off here`;
   if (T.kind === 'board') { const c = T.c, fare = BS_STATE.rider === K.G.day ? 0 : busFare(K.hour); return `${useK} to get on ${c.cb ? `the ${nightBusTime(K.hour) ? c.cb.night : c.cb.id} to ${c.cb.dest}` : 'the bus'} (${fare ? '$' + fare : 'DAY RIDER'})`; }
+  if (T.kind === 'sneak') return `${useK} to slip on through the back doors (no fare)`;
   if (T.kind === 'office') return bsOfficeOpen(K.hour) ? `${useK} for tickets (DAY RIDER $6)` : 'The ticket office is shut';
   if (T.kind === 'tea') return bsOfficeOpen(K.hour) ? `${useK} for the tea hatch` : 'The tea hatch is shut';
   return '';
@@ -326,6 +365,7 @@ function bsUse(T, K) {
   if (T.kind === 'bell') { const R = BS_STATE.ride; if (!R.bell) { R.bell = true; R.bellAt = K.time; BS_STATE.bells++; K.sfx.ding && K.sfx.ding(); K.showMsg('DING! BUS STOPPING', 1.4); } return; }
   if (T.kind === 'off') { bsGetOff(K, 'YOU STEP OFF THE BUS'); return; }
   if (T.kind === 'board') { bsBoard(T.c, K); return; }
+  if (T.kind === 'sneak') { bsBoard(T.c, K, true); return; }
   if (!bsOfficeOpen(K.hour)) { K.showMsg('SHUT. OPEN 6 TILL 10', 1.6); return; }
   if (T.kind === 'office') { K.openMenu({ name: 'ROUTE 9 BUS STATION · TICKETS', kind: 'buses', blurbs: ['"SINGLE OR DAY RIDER?"', '"THE X9\'S RUNNING LATE. THE X9 IS ALWAYS RUNNING LATE."', '"NIGHT BUSES FROM ELEVEN. GOD HELP YOU."'] }, bsTicketMenu(K)); return; }
   if (T.kind === 'tea') K.openMenu({ name: 'THE TEA HATCH', kind: 'buses', blurbs: ['"MILK AND SUGAR?"', '"LAST ONE, THAT ROLL. LUCKY YOU."'] }, bsTeaMenu(K));
@@ -389,8 +429,8 @@ export const buses = {
   name: 'buses', roofs: bsRoofs,
   useTarget: bsUseTarget, usePrompt: bsUsePrompt, use: bsUse, conspic: bsConspic, update: bsUpdate, ride: bsRide, plan: () => false,
   riding: (c) => !!BS_STATE.ride && (!c || BS_STATE.ride.bus === c), logic: busLogic,
-  reset() { if (BS_STATE.ride) { const c = BS_STATE.ride.bus; if (c.cabin) c.cabin.g.visible = false; } Object.assign(BS_STATE, { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0, spawned: false }); station.welcomed = 0; bsRideRoof.h = -99; },
+  reset() { if (BS_STATE.ride) { const c = BS_STATE.ride.bus; if (c.cabin) c.cabin.g.visible = false; } Object.assign(BS_STATE, { ride: null, rides: 0, fares: 0, rider: 0, bells: 0, refused: 0, nightRides: 0, stops: 0, msgT: 0, kicked: 0, sneaks: 0, inspections: 0, fines: 0, caught: 0, spawned: false }); station.welcomed = 0; bsRideRoof.h = -99; },
   diary(K) { const b = []; if (BS_STATE.rider === K.G.day) b.push('A DAY RIDER FOR THE BUSES'); if (BS_STATE.ride) b.push('ON THE BUS'); return b; },
   debug: (K) => ({ built: station.built, lockers: station.lockers.length, county: K ? bsCounty(K).map((c) => ({ id: c.cb.id, x: Math.round(c.x), z: Math.round(c.z), stopT: c.stopT, where: bsWhere(c) })) : [], ...BS_STATE, ride: BS_STATE.ride ? { t: BS_STATE.ride.t, bell: BS_STATE.ride.bell, bus: BS_STATE.ride.bus.cb ? BS_STATE.ride.bus.cb.id : 'city' } : null }),
-  station, BS_STATE, BS_CLEAR, BS_STOPS, bsDoor, bsDoorBus, bsBoard, bsGetOff, busFare, nightBusTime, bsTicketMenu, bsCounty,
+  station, BS_STATE, BS_CLEAR, BS_STOPS, bsDoor, bsDoorBus, bsRear, bsRearBus, bsInspectorOn, bsBoard, bsGetOff, busFare, nightBusTime, bsTicketMenu, bsCounty,
 };
