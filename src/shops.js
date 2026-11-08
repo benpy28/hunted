@@ -9,6 +9,7 @@ import { buildPerson, SKINS, HAIRS } from './people.js';
 import { newsMat } from './news.js';
 
 export const shopSpots = []; // {x, z, y, r, kind, name, city, face}
+export const shopRooms = []; // the inside of each shop strip: under a roof, out of sight of aircraft
 export const atmSpots = [];  // {x, z, nx, nz} cash machines on the pavement (contracts)
 
 // one block per town turns into a shop strip facing the street on `face` ('pz' or 'nz')
@@ -40,6 +41,7 @@ for (const S of STRIPS) {
     roofBuf.flat(x0, x1, zLo, zHi, H, 0x3d3944);
     ib.box(x0, x1, H - 0.3, H - 0.29, zLo, zHi, 0xe8e2d6, { bottom: true, top: false, sides: false });
     addRoof(x0, x1, zLo, zHi, H, { y0: H - 0.3, city: S.city });
+    shopRooms.push({ x0, x1, z0: zLo, z1: zHi, h: H });
     parapet(x0, x1, zLo, zHi, H);
     // three units
     ['guns', 'hire', 'costume'].forEach((kind, k) => {

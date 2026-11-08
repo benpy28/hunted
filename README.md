@@ -29,3 +29,10 @@ node tools/build-single.mjs
 - `src/audio.js`, `src/fx.js`, `src/people.js`: synth sound, particles and bullet trails, characters and ragdolls
 - `src/game.js`: hunters, cars, aircraft, profile system, weapons, HUD, game loop
 - `vendor/three.module.min.js`: three.js r170 (MIT, see `vendor/THREE_LICENSE`)
+
+## Tests
+
+GitHub Actions runs the tests on every push and pull request (`.github/workflows/tests.yml`).
+Locally: `npm install && npx playwright install chromium && npm test`. That rebuilds
+`dist/hunted.html`, syntax-checks every module plus the bundle, then plays the game in
+headless Chromium through the `window.__hunted` hooks.

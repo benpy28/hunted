@@ -1205,6 +1205,16 @@ export function navRecenter(x, z, force = false) {
       const wx = gox + (gx + 0.5) * CELL, wz = goz + (gz + 0.5) * CELL;
       if (wx >= c.x0 - 0.3 && wx <= c.x1 + 0.3 && wz >= c.z0 - 0.3 && wz <= c.z1 + 0.3) blocked[gz * GN + gx] = 1;
     }
+    // thin walls can fall between cell centres and leave a gap people try to walk through:
+    // mark the cells along the wall's length too (ends pulled in so doorways stay open)
+    const w = c.x1 - c.x0, d = c.z1 - c.z0;
+    if (Math.min(w, d) < CELL && Math.max(w, d) > 1.2) {
+      const alongX = w >= d, a0 = (alongX ? c.x0 : c.z0) + 0.45, a1 = (alongX ? c.x1 : c.z1) - 0.45, mid = alongX ? (c.z0 + c.z1) / 2 : (c.x0 + c.x1) / 2;
+      for (let a = a0; a <= a1 + 1e-6; a += 0.5) {
+        const gx = Math.floor(((alongX ? a : mid) - gox) / CELL), gz = Math.floor(((alongX ? mid : a) - goz) / CELL);
+        if (gx >= 0 && gz >= 0 && gx < GN && gz < GN) blocked[gz * GN + gx] = 1;
+      }
+    }
   }
   for (let g = 0; g < GN; g++) for (let h = 0; h < GN; h++) {
     const wx = gox + (g + 0.5) * CELL, wz = goz + (h + 0.5) * CELL;
