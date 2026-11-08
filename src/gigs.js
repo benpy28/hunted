@@ -30,7 +30,7 @@ const gjHash = (x, z, k = 0) => { const s = Math.sin(x * 12.9898 + z * 78.233 + 
 const overlaps = (c, x0, x1, z0, z1) => c.x1 > x0 && c.x0 < x1 && c.z1 > z0 && c.z0 < z1;
 const clearOf = (list, x0, x1, z0, z1, yTop = 2.2) => !list.some((c) => (c.h || 0) > 0.28 && (c.y0 || 0) < yTop && overlaps(c, x0, x1, z0, z1));
 // furniture that faces into the room along (ux, uz); half sizes: wa along the wall, wd away from it
-function hidePiece(kind, x, z, ux, uz, wa, wd, hgt, y0) {
+export function hidePiece(kind, x, z, ux, uz, wa, wd, hgt, y0) {
   const alongX = uz !== 0; // the wall runs along x when the piece faces along z
   const lx = alongX ? wa : wd, lz = alongX ? wd : wa;
   const x0 = x - lx, x1 = x + lx, z0 = z - lz, z1 = z + lz;

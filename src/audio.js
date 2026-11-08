@@ -66,6 +66,14 @@ sfx.camBeep = () => { tone(1760, 0.08, 'square', 0.05); tone(1760, 0.08, 'square
 sfx.paper = () => { noise(0.12, 0.18, 3200, 1.4); noise(0.08, 0.12, 2200, 1.2, 0.1); };
 sfx.meow = () => { tone(720, 0.12, 'triangle', 0.07, 1.25); tone(900, 0.28, 'triangle', 0.06, 0.62, 0.1); };
 sfx.compactor = () => { tone(60, 1.2, 'sawtooth', 0.12, 1.4); noise(1.2, 0.3, 300, 0.5); tone(45, 0.8, 'square', 0.08, 1, 0.5); };
+// the ice cream van's chime: a jaunty little tune of its own, on a slightly wobbly music box
+sfx.chime = () => { const N = [784, 988, 1175, 988, 784, 880, 988, 659, 784, 880, 784, 659, 587]; N.forEach((f, i) => { tone(f, 0.2, 'triangle', 0.05, 1.004, i * 0.17); tone(f * 2, 0.12, 'sine', 0.012, 1, i * 0.17); }); };
+sfx.whistle = () => { tone(2900, 0.5, 'square', 0.035, 1.02); tone(3050, 0.5, 'sine', 0.03, 0.98); noise(0.5, 0.05, 3000, 2); };
+sfx.roar = (home = true) => { const v = home ? 0.2 : 0.07; for (let i = 0; i < 6; i++) noise(1.6 - i * 0.12, v, 500 + i * 260, 0.5, i * 0.06); tone(220, 1.2, 'sawtooth', home ? 0.03 : 0.01, 1.15, 0.05); };
+sfx.ooh = () => { noise(0.9, 0.08, 420, 0.6); noise(0.9, 0.06, 700, 0.8, 0.05); };
+sfx.chant = () => { for (let i = 0; i < 4; i++) { noise(0.32, 0.05, 600 + (i % 2) * 180, 0.7, i * 0.42); tone(i % 2 ? 196 : 247, 0.3, 'sawtooth', 0.012, 1, i * 0.42); } };
+sfx.organ = () => { const C = [[262, 330, 392], [294, 370, 440], [247, 311, 370], [262, 330, 392]]; C.forEach((ch, i) => ch.forEach((f) => { tone(f, 1.0, 'sine', 0.025, 1, i * 0.9); tone(f * 2, 1.0, 'sine', 0.008, 1, i * 0.9); })); };
+sfx.churchBell = () => { const f = 523 * (Math.random() < 0.5 ? 1 : 0.84); tone(f, 2.2, 'sine', 0.07); tone(f * 2.4, 1.4, 'sine', 0.02); tone(f * 0.5, 2.6, 'sine', 0.03); };
 sfx.explode = () => { noise(0.9, 0.6, 180, 0.4); tone(60, 0.7, 'sawtooth', 0.2, 0.4); };
 
 // continuous rotor / propeller hum, volume driven by distance to the nearest aircraft

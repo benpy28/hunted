@@ -87,7 +87,8 @@ test('on market day the crowd goes round the stalls', async () => {
     H.fresh(H); H.G.day = 2;
     const M = H.markets.find((m) => m.city === 'PORT HALDEN'); H.goTo(H, M.x + 10, M.z + 10); H.player.outfit = {}; H.G.level = 0;
     let best = 0;
-    H.stepAt(H, 60, 11, () => { for (const h of H.G.hunters) h.sus = 0; best = Math.max(best, H.G.hunters.filter((h) => h.act && h.act.kind === 'browse' && h.act.stall).length); return best >= 4; }); // nobody's looking at you: they're shopping
+    H.stepAt(H, 60, 11, () => { for (const h of H.G.hunters) h.sus = 0; H.G.hunterCarT = 99; for (const c of H.G.cars) if (c.driver === 'hunter') c.driver = 'traffic'; // and no day-2 hunter driver running you over mid-test (game over freezes the town)
+      best = Math.max(best, H.G.hunters.filter((h) => h.act && h.act.kind === 'browse' && h.act.stall).length); return best >= 4; }); // nobody's looking at you: they're shopping
     return { best };
   });
   assert.ok(s.best >= 4, `only ${s.best} people browsing the stalls`);
@@ -135,7 +136,7 @@ test('the village fete: bunting up, a crowd on the school field, a tombola and c
   const s = await g.run((H) => {
     H.fresh(H); H.G.day = 2; // Saturday
     const F = H.schoolInfo.field; H.goTo(H, F.x, F.z0 + 8);
-    H.stepAt(H, 25, 12);
+    H.stepAt(H, 25, 12, () => { H.G.hunterCarT = 99; for (const c of H.G.cars) if (c.driver === 'hunter') c.driver = 'traffic'; }); // no day-2 hunter driver ending the game mid-fete
     const crowd = H.G.hunters.filter((h) => h.feteGoer && !h.dead && h.x > F.x0 - 3 && h.x < F.x1 + 3 && h.z > F.z0 - 3 && h.z < F.z1 + 3).length;
     const vis = H.fete.group.visible;
     H.G.hour = 12; H.goTo(H, H.fete.tombola.x, H.fete.tombola.z); const t1 = H.townUseTarget(H.TDK); const c0 = H.player.cash, n0 = H.TD_STATE.tombola; H.townUse(t1, H.TDK); const paid = c0 - H.player.cash, goes = H.TD_STATE.tombola - n0;

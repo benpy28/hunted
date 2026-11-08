@@ -236,6 +236,7 @@ export function routineVisit(h, want, C) {
   let best = null, bd = want === 'home' ? 120 : 80;
   for (const W of walkIns) {
     if (VISIT_OF[W.kind] !== want || (W.busy || 0) >= (want === 'home' ? 2 : 4)) continue;
+    if (C.isShut && C.isShut(W)) continue;
     const d = Math.abs(W.x - h.x) + Math.abs(W.z - h.z); if (d < bd && d > 3) { bd = d; best = W; }
   }
   if (!best) return false;

@@ -9,6 +9,8 @@ before(async () => {
   g = await openGame(); await g.run((H) => H.startGame(false));
   await g.run((H) => {
     H.fresh = (H) => {
+      H.noDrivers = false; // tests on day 2+ switch this on: from day 2 hunter drivers come for you even at zero heat, and a run-over ends the game mid-test
+      H.TDK.distracted = () => null; // no ice cream van pulling up at the playground mid-test (kids forget all about you when it does)
       if (H.pramHeld()) H.dropPram(H.TDK);
       if (H.player.hide) H.leaveHide(H.SK);
       if (H.G.mode !== 'playing') H.G.mode = 'playing';
@@ -21,7 +23,7 @@ before(async () => {
     H.goTo = (H, x, z) => { H.player.x = x; H.player.z = z; H.player.y = H.floorAt(x, z, 1.5); H.player.vx = H.player.vz = 0; H.navRecenter(x, z, true); };
     // keep the crowd away: only the people a test puts down
     H.quiet = (H) => { const L = H.G.hunters; for (let i = L.length - 1; i >= 0; i--) if (!L[i].mine && !L[i].dead) { L[i].remove(); L.splice(i, 1); } };
-    H.stepAt = (H, secs, hour = 11, each) => { for (let i = 0; i < secs * 30; i++) { H.G.hour = hour; H.step(1 / 30); H.quiet(H); if (each && each()) return true; } return false; };
+    H.stepAt = (H, secs, hour = 11, each) => { for (let i = 0; i < secs * 30; i++) { H.G.hour = hour; if (H.noDrivers) { H.G.hunterCarT = 99; for (const c of H.G.cars) if (c.driver === 'hunter') c.driver = 'traffic'; } H.step(1 / 30); H.quiet(H); if (each && each()) return true; } return false; };
     H.family = (H, x, z, o = {}) => { const h = new H.Hunter(x, z, 'civ', false); h.mine = true; h.job = null; h.folk = 'parent'; Object.assign(h, o); H.G.hunters.push(h); H.makeKid(h, H.TDK); return h; };
   });
 });
@@ -33,7 +35,9 @@ test('a kid holds their grown-up\'s hand and keeps up with them as they walk abo
     const PG = H.playgrounds[0]; H.goTo(H, PG.x + 60, PG.z + 60);
     const p = H.randomOpenPoint(PG.x + 60, PG.z + 60, 20, 40);
     const h = H.family(H, p.x, p.z), k = h.kid;
+    k.hushDay = H.G.day; // this one's about walking together: if they wander near you the kid keeps quiet, so the grown-up doesn't run off chasing you
     h.wt = H.randomOpenPoint(p.x, p.z, 12, 20); h.waitT = 0;
+    for (const c of H.G.cars) if (Math.hypot(c.x - p.x, c.z - p.z) < 200) { c.x += 2000; c.lane = null; c.driver = null; } // and no car knocking the grown-up flat as they cross the road
     let far = 0;
     H.stepAt(H, 12, 11, () => { if (Math.hypot(k.x - h.x, k.z - h.z) > 3.5) far++; });
     return { moved: Math.hypot(h.x - p.x, h.z - p.z), gap: Math.hypot(k.x - h.x, k.z - h.z), far, kids: H.kids.length, inHunters: H.G.hunters.includes(k) };
@@ -155,10 +159,11 @@ test('parents push prams about and leave them outside when they pop into a shop'
 
 test('on a school morning parents walk their kids to the gates and the kids run in', async () => {
   const s = await g.run((H) => {
-    H.fresh(H); H.G.day = 4; // Monday
+    H.fresh(H); H.G.day = 4; H.noDrivers = true; // Monday
     const S = H.schoolInfo; H.goTo(H, S.gate.x + 25, S.gate.z - 25);
     const p = H.randomOpenPoint(S.gate.x, S.gate.z - 20, 10, 20);
     const h = H.family(H, p.x, p.z); h.waitT = 0; h.wt = null;
+    for (const c of H.G.cars) if (Math.hypot(c.x - p.x, c.z - p.z) < 200) { c.x += 2000; c.lane = null; c.driver = null; } // no car knocking the grown-up flat on the way (the kid would run off shouting instead)
     const in0 = H.KD_STATE.schoolIn;
     const planned = H.LIFE.plan(h, 8.3);
     const k = h.kid; let dbg = '';
@@ -172,7 +177,7 @@ test('on a school morning parents walk their kids to the gates and the kids run 
 
 test('at home time parents crowd the school gates and the kids come out to them', async () => {
   const s = await g.run((H) => {
-    H.fresh(H); H.G.day = 4;
+    H.fresh(H); H.G.day = 4; H.noDrivers = true;
     const S = H.schoolInfo; H.goTo(H, S.gate.x + 15, S.gate.z - 15);
     const out0 = H.KD_STATE.schoolOut;
     let waiting = 0;

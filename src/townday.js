@@ -259,7 +259,9 @@ export function tdPlan(h, hr, K) {
   for (const M of markets) {
     if (Math.abs(M.x - h.x) > 140 || Math.abs(M.z - h.z) > 140 || !marketOpen(hr)) continue;
     const big = !!eventOn('market', M.city, day, hr);
-    if (Math.random() < (big ? 0.45 : 0.07) && browseStall(h, M, K)) return true;
+    if (Math.random() < (big ? 0.85 : 0.07)) { // the whole town turns up on a big market day
+      for (let tries = 0; tries < 4; tries++) if (browseStall(h, M, K, big ? mr(15, 35) : mr(8, 22))) return true; // a stall with room in front of it
+    }
   }
   // cheering on the runners
   if (eventOn('funrun', funRun.city, day, hr) && onFunRunCourse(h.x, h.z) && Math.random() < 0.4) {
@@ -271,12 +273,12 @@ export function tdPlan(h, hr, K) {
   if (eventOn('fete', 'ASHFORD', day, hr) && schoolInfo.field && Math.hypot(h.x - schoolInfo.field.x, h.z - schoolInfo.field.z) < 160 && Math.random() < 0.3) { h.feteGoer = true; return feteActivity(h, K); }
   return false;
 }
-function browseStall(h, M, K) {
+function browseStall(h, M, K, dur) {
   const st = mpick(M.stalls); if (!st || !st.front) return false;
   const ux = st.front.x - st.back.x, uz = st.front.z - st.back.z, l = Math.hypot(ux, uz) || 1, a = mr(-1, 1);
   const x = st.front.x + (uz / l) * a + (ux / l) * mr(0, 0.6), z = st.front.z - (ux / l) * a + (uz / l) * mr(0, 0.6);
   if (blockedAt(x, z)) return false;
-  return K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), mr(8, 22), { stall: st, maxGo: 120 });
+  return K.lifeGo(h, 'browse', x, z, Math.atan2(-ux, -uz), dur || mr(8, 22), { stall: st, maxGo: 120 });
 }
 // big market day near you: keep the stalls busy with idle passers-by
 function updateMarketDay(dt, K, day, hr) {
