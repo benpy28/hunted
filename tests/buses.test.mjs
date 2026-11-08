@@ -112,3 +112,22 @@ test('the X4 calls at the leisure park on Route 4', async () => {
   assert.ok(s.called, 'the X4 pulls in at the leisure park');
   assert.ok(s.doorX < -5, `the door opens on the kerb side (${s.doorX.toFixed(1)})`);
 });
+
+test('bus inspectors: slip on the back without paying, and the inspector who gets on fines you', async () => {
+  const s = await g.run((H) => {
+    H.fresh(H);
+    const B = H.buses, K = H.TDK;
+    H.goTo(H, 296, -7.2, 0);
+    const c = H.placeBus(H, 'X9', 1, 250);
+    const called = H.stepAt(H, 15, 12, () => c.stopT > 0 && Math.abs(c.x - 296) < 8 && Math.abs(c.speed) < 0.5);
+    const r = B.bsRear(c); H.goTo(H, r.x, r.z, 0);
+    const T = B.useTarget(K), cash0 = H.player.cash;
+    if (T && T.kind === 'sneak') B.use(T, K);
+    const R = B.BS_STATE.ride, on = !!R, paid = cash0 - H.player.cash;
+    B.bsInspectorOn(R, K); R.ins.dur = 1;
+    H.stepAt(H, 2, 12);
+    return { called, T: T && T.kind, on, paid, fined: cash0 - H.player.cash, caught: B.BS_STATE.caught, sneaks: B.BS_STATE.sneaks, stillOn: !!B.BS_STATE.ride };
+  });
+  assert.ok(s.called); assert.equal(s.T, 'sneak'); assert.ok(s.on); assert.equal(s.paid, 0, 'nothing at the back door');
+  assert.equal(s.caught, 1); assert.equal(s.fined, 10, 'a $10 penalty fare'); assert.equal(s.sneaks, 1); assert.ok(s.stillOn, 'paid up, so you stay on');
+});
