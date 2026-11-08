@@ -48,7 +48,7 @@ const pgBoardTex = (() => {
   for (let i = 0; i < 20; i++) { const a = -Math.PI / 2 + i * Math.PI / 10, r = 0.198 * k; x.fillText(String(PG_SEG[i]), S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r); }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 })();
-const pgBoardMat = new THREE.MeshLambertMaterial({ map: pgBoardTex, transparent: true });
+const pgBoardMat = new THREE.MeshBasicMaterial({ map: pgBoardTex, transparent: true, color: 0xd8d8d8 });
 function buildPubGames() {
   if (pgPubs.length) return;
   for (const W of walkIns) {
