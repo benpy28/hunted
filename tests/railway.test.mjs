@@ -14,7 +14,7 @@ before(async () => {
       if (H.railway.RW_STATE.ride) H.railway.rwGetOff(H.TDK);
       H.player.vx = H.player.vz = H.player.vy = 0; H.player.hp = 90; H.player.alive = true; H.player.car = null; H.player.bike = null; H.player.mode = 'move'; H.player.hide = null;
       H.G.heat = 0; H.G.level = 0; H.G.lastSeenT = 99; H.input.crouch = false; H.player.crouch = 0; H.player.sprinting = false; H.input.sprint = false; H.input.fwd = 0; H.input.side = 0;
-      H.player.cash = 100; H.player.outfit = {}; H.player.disg = 0; H.G.day = 1; H.railway.RW_STATE.ticket = null;
+      H.player.cash = 100; H.player.outfit = {}; H.player.disg = 0; H.G.day = 1; H.railway.RW_STATE.ticket = null; H.railway.RW_STATE.delayP = 0; if (H.railway.RW_STATE.fride) H.railway.rwJumpFreight(H.TDK, true);
     };
     H.goTo = (H, x, z, y) => { H.player.x = x; H.player.z = z; H.player.y = y ?? H.floorAt(x, z, 1.5); H.player.vx = H.player.vz = 0; H.navRecenter(x, z, true); };
     H.stepAt = (H, secs, hour = 10, each) => { for (let i = 0; i < secs * 30; i++) { H.G.hour = hour; H.step(1 / 30); if (each && each()) return true; } return false; };

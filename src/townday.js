@@ -72,7 +72,7 @@ export function folkMix(hr, day) {
 export function crowdMul(hr, day, town) {
   let k = hr < 5 ? 0.62 : hr < 7 ? 0.78 : hr < 9.5 ? 1.12 : hr < 12 ? 0.96 : hr < 14 ? 1.1 : hr < 16.5 ? 0.97 : hr < 19 ? 1.12 : hr < 23 ? 0.95 : 0.75;
   if (isWeekend(day) && hr >= 10 && hr < 18) k += 0.05;
-  for (const E of TD_EVENTS) if (E.id !== 'school' && E.days.includes(weekdayOf(day)) && hr >= E.from && hr < E.to && (!E.town || E.town === town)) k += E.id === 'quiz' ? 0.05 : 0.15;
+  for (const E of TD_EVENTS) if (E.id !== 'school' && E.id !== 'strike' && E.days.includes(weekdayOf(day)) && hr >= E.from && hr < E.to && (!E.town || E.town === town)) k += E.id === 'quiz' || E.id === 'darts' ? 0.05 : 0.15;
   return k;
 }
 // what someone fancies doing next, by who they are and the hour

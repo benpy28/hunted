@@ -13,13 +13,19 @@
 //  - A ticket inspector comes down the train on most journeys. No ticket from a staffed station means a
 //    penalty fare ($15), or off at the next stop and a call to the police if you can't pay. From WHEATLEY
 //    HALT you can just buy one from him. Or lock yourself in the toilet when you hear him coming.
-//  - Freight trains run through at night on the far track, and they don't stop. Neither line is a footpath.
+//  - Freight trains run through at night (and over lunch) on the far track. Most of them wait at the red signal
+//    in the fields west of WHEATLEY: that's your chance to climb on to one of the flat wagons and lie low. Jump off
+//    whenever you like (it hurts at speed), and get off before the tunnel. People on the platforms might see you.
+//  - Delays: leaves on the line, a cow, the wrong kind of rain. The train sits in the station and the board says so.
+//  - Every Wednesday there's a RAIL STRIKE: no passenger trains, pickets with a brazier outside the stations.
+//  - A platform cafe at both staffed stations (through the barriers): tea, bacon rolls, cake.
 import * as THREE from '../vendor/three.module.min.js';
 import { mr, mpick, clamp, lerp, scene, textTex } from './core.js';
 import { clearings, propBuf, glowBuf, groundBuf, markBuf, addCollider, addRoof, worldHooks, navOpen, keepClear } from './world.js';
 import { interiorZones } from './interiors.js';
 import { lifeSpots } from './streets.js';
 import { buildPerson, lam, SKINS, HAIRS, SHIRTS, PANTS } from './people.js';
+import { TD_EVENTS, weekdayOf } from './townday.js';
 
 // =====================================================================
 // Where everything is
@@ -36,7 +42,12 @@ export const RW_STATIONS = [
 // footpaths from the stations down to the nearest road
 const RW_PATHS = [{ x: 700, z0: -245, z1: -181 }, { x: 380, z0: -258, z1: -178 }];
 for (const p of RW_PATHS) clearings.push({ x0: p.x - 3, x1: p.x + 3, z0: p.z0 - 1, z1: p.z1 });
-export const RW_STATE = { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, boardT: 0, boarded: [] };
+export const RW_STATE = { ride: null, fride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, boardT: 0, boarded: [], hops: 0, tumbles: 0, spotted: 0, held: 0, delays: 0, delayP: 0.16, cafe: 0, petitions: 0, petitionDay: 0, strikeSeen: 0 };
+// the strike: every Wednesday, until somebody settles the pay dispute
+export const rwStrikeDay = (day) => weekdayOf(day) === 2;
+TD_EVENTS.push({ id: 'strike', town: null, days: [2], from: 5.5, to: 24, name: 'RAIL STRIKE', where: 'COUNTY RAIL', blurb: 'No passenger trains all day. Pickets and a brazier outside PORT HALDEN CENTRAL and ASHFORD. The freight still runs.' });
+const RW_DELAYS = ['LEAVES ON THE LINE', 'A SIGNAL FAILURE AT WHEATLEY', 'A COW ON THE LINE', 'THE WRONG KIND OF RAIN', 'A SHORTAGE OF GUARDS', 'A LATE-RUNNING FREIGHT TRAIN', 'A PIGEON IN THE SIGNAL BOX'];
+export const RW_SIG_X = 240; // the freight signal, out in the fields between PORT HALDEN and WHEATLEY
 export const rwRoofs = [];
 const rwRideRoof = { x0: 0, x1: 0, z0: 0, z1: 0, h: -99 };
 rwRoofs.push(rwRideRoof);
@@ -138,6 +149,15 @@ function rwHall(S) {
   for (const dx of [-8, 8]) rwBench(S.x + dx, -248.4, false);
   // the member of staff at the gates
   S.staffPos = { x: S.x + 6.4, z: gz + 1.2 };
+  // the platform cafe, through the barriers on the east side: a counter, an urn, two little tables
+  const cn = S.id === 'ph' ? 'THE BUFFER STOP CAFE' : 'PLATFORM TEAS';
+  propBuf.box(S.x + 15, S.x + 23, 0, 1.05, -257.0, -256.3, 0x6a4a3a); addCollider(S.x + 15, S.x + 23, -257.0, -256.3, 1.05);
+  propBuf.box(S.x + 15, S.x + 23, 1.05, 1.1, -257.05, -256.25, 0xd8d0c0);
+  propBuf.cyl(S.x + 16, -256.65, 0.18, 0.18, 1.1, 1.6, 0xb8bcc4, 10); // the urn
+  glowBuf.box(S.x + 18, S.x + 21.5, 1.1, 1.35, -256.9, -256.5, 0xf0e0b0); // the cake cabinet
+  rwPlane(6, 0.7, textTex(512, 60, '#5a2a1a', '#f8e8c0', [cn], 'bold 34px Georgia, serif'), S.x + 19, 3.0, -257.95, 0);
+  for (const dx of [16.5, 21.5]) { propBuf.cyl(S.x + dx, -254.4, 0.45, 0.45, 0.72, 0.76, 0xe8e0d0, 12); propBuf.cyl(S.x + dx, -254.4, 0.05, 0.05, 0, 0.72, 0x3a3a3a, 6); addCollider(S.x + dx - 0.3, S.x + dx + 0.3, -254.7, -254.1, 0.76); for (const s of [-1, 1]) lifeSpots.push({ kind: 'bench', x: S.x + dx + s * 0.75, z: -254.4, face: s > 0 ? -Math.PI / 2 : Math.PI / 2, sx: S.x + dx + s * 0.75, sz: -254.4 }); }
+  S.cafe = { x: S.x + 19, z: -255.6, name: cn, server: null };
 }
 function rwHalt(S) { // the shelter, a help point and a sign: REQUEST STOP
   propBuf.box(S.x - 3, S.x + 3, 2.6, 2.75, -263, -259.4, RW_GREEN, { bottom: true }); addRoof(S.x - 3, S.x + 3, -263, -259.4, 2.75, { y0: 2.6 }); rwRoofs.push({ x0: S.x - 3, x1: S.x + 3, z0: -263, z1: -259.4, h: 2.6 });
@@ -155,7 +175,11 @@ function rwBuild() {
   groundBuf.flat(-6, 6, -244, -239, 0.014, 0x9a948c);
   // a footbridge at each staffed station, over both lines at the west end (scenery: you can't get up it)
   for (const S of RW_STATIONS) if (S.staffed) { const x = S.x - 44; propBuf.box(x - 1.2, x + 1.2, 5.6, 6.0, -279, -258, 0x5a6a5a); for (const s of [-1.2, 1.2]) propBuf.box(x + s - 0.05, x + s + 0.05, 6.0, 7.1, -279, -258, 0x5a6a5a); for (const z of [-279, -273, -258.5]) { propBuf.box(x - 1.3, x - 1.1, 0, 5.6, z - 0.1, z + 0.1, 0x5a6a5a); propBuf.box(x + 1.1, x + 1.3, 0, 5.6, z - 0.1, z + 0.1, 0x5a6a5a); addCollider(x - 1.3, x + 1.3, z - 0.1, z + 0.1, 5.6); } }
+  // the freight signal: a post beside the far track with a red and a green lamp
+  propBuf.box(RW_SIG_X - 0.1, RW_SIG_X + 0.1, 0, 4.2, -278.9, -278.7, 0x2a2e32); propBuf.box(RW_SIG_X - 0.35, RW_SIG_X + 0.35, 3.2, 4.6, -279.0, -278.6, 0x111114);
+  for (const [y, col] of [[4.25, 0xff2a1a], [3.55, 0x2aff5a]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.92), new THREE.MeshBasicMaterial({ color: col })); m.position.set(RW_SIG_X, y, -278.8); scene.add(m); rwSigLamps.push(m); }
 }
+const rwSigLamps = [];
 worldHooks.beforeBake.push(rwBuild);
 
 // =====================================================================
@@ -167,7 +191,7 @@ const RW_FLOOR = 1.0;
 const rwBodyMat = lam(RW_GREEN), rwCreamMat = lam(RW_CREAM), rwDarkMat = lam(0x1a1a1e);
 const rwWinDay = new THREE.MeshLambertMaterial({ color: 0x2a3a4a }), rwWinNight = new THREE.MeshBasicMaterial({ color: 0xfff0c0 });
 function rwMakeTrain(freight) {
-  const g = new THREE.Group(), wins = [], doors = [];
+  const g = new THREE.Group(), wins = [], doors = [], flats = [];
   const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
   if (!freight) {
     for (const cx of RW_CARS) {
@@ -186,15 +210,18 @@ function rwMakeTrain(freight) {
       if (k === 0) { add(new THREE.BoxGeometry(L, 3.4, 2.9), lam(0x2a2a6a), cx, 2.2, 0); add(new THREE.BoxGeometry(0.1, 0.3, 2.0), new THREE.MeshBasicMaterial({ color: 0xffffe0 }), cx - L / 2 - 0.06, 1.1, 0); continue; }
       add(new THREE.BoxGeometry(L, 0.4, 2.6), rwDarkMat, cx, 1.0, 0);
       if (k % 3 !== 2) add(new THREE.BoxGeometry(L - 0.6, 2.6, 2.5), lam(mpick([0xb0302a, 0x2a5aa0, 0x2a8a4a, 0xd0902a, 0x6a6a70, 0xc85a1a])), cx, 2.5, 0);
+      else { flats.push(cx); for (const o of [-4.5, 4.5]) add(new THREE.BoxGeometry(1.6, 0.9, 2.2), lam(0x7a5a3a), cx + o, 1.65, 0); } // a flat wagon: a couple of crates and room to lie down
     }
   }
   g.visible = false; scene.add(g);
-  return { g, wins, doors, freight };
+  return { g, wins, doors, freight, flats };
 }
 // state: 'tunnel' (waiting out of sight), 'run', 'dwell' (in a station, doors open)
 const rwPax = { id: 'pax', z: RW_TZ, x: RW_X0 - 60, dir: 1, v: 0, state: 'tunnel', waitT: 3, dwellT: 0, stopAt: null, served: null, mesh: null, cruise: 26, len: RW_HALF };
-const rwFreight = { id: 'freight', z: RW_FZ, x: RW_X1 + 80, dir: -1, v: 0, state: 'tunnel', waitT: 30, cruise: 22, mesh: null, len: 60 };
+const rwFreight = { id: 'freight', z: RW_FZ, x: RW_X1 + 80, dir: -1, v: 0, state: 'tunnel', waitT: 30, cruise: 22, mesh: null, len: 62, sigStop: false, heldT: 0 };
+export const rwFreightHours = (hr) => hr >= 21 || hr < 6.5 || (hr >= 12 && hr < 14);
 export const rwTrains = [rwPax, rwFreight];
+const rwSigStopX = (T) => RW_SIG_X - T.dir * (4 + T.len);
 const rwNextStation = (T) => RW_STATIONS.filter((S) => (S.x - T.x) * T.dir > 0.5 && S !== T.served).sort((a, b) => (a.x - b.x) * T.dir)[0] || null;
 const rwTerminus = (T) => (T.dir > 0 ? RW_STATIONS[RW_STATIONS.length - 1] : RW_STATIONS[0]);
 function rwStepTrain(T, dt, K) {
@@ -203,14 +230,20 @@ function rwStepTrain(T, dt, K) {
   if (T.state === 'tunnel') {
     T.mesh.g.visible = false; T.v = 0;
     T.waitT -= dt;
-    const ok = T.id === 'pax' ? rwTrainsRun(hr) : (hr >= 21 || hr < 6.5);
-    if (T.waitT <= 0 && ok) { T.state = 'run'; T.dir = -T.dir; T.x = T.dir > 0 ? RW_X0 - T.len - 5 : RW_X1 + T.len + 5; T.v = T.cruise * 0.7; T.served = null; if (T.id === 'freight') RW_STATE.freight++; }
+    const ok = T.id === 'pax' ? rwTrainsRun(hr) && !rwStrikeDay(K.G.day) : rwFreightHours(hr);
+    if (T.waitT <= 0 && ok) {
+      T.state = 'run'; T.dir = -T.dir; T.x = T.dir > 0 ? RW_X0 - T.len - 5 : RW_X1 + T.len + 5; T.v = T.cruise * 0.7; T.served = null; T.delayed = null;
+      if (T.id === 'freight') { RW_STATE.freight++; T.sigStop = Math.random() < 0.8; T.mesh.g.rotation.y = T.dir > 0 ? Math.PI : 0; } // (the loco's built at -x: turn it round to lead)
+    }
     return;
   }
   T.mesh.g.visible = true;
-  if (T.state === 'dwell') {
+  if (T.state === 'held') { // a freight at the red signal
+    T.v = 0; T.heldT -= dt;
+    if (T.heldT <= 0) { T.state = 'run'; T.sigStop = false; if (K.near(T.x, T.z, 120)) K.sfx.horn(); }
+  } else if (T.state === 'dwell') {
     T.v = 0; T.dwellT -= dt;
-    if (T.dwellT <= 0) { T.state = 'run'; RW_STATE.departed = (RW_STATE.departed || 0) + 1; if (K.near(T.x, T.z, 120)) K.sfx.whistle && K.sfx.whistle(); rwDoors(T, false); }
+    if (T.dwellT <= 0) { T.state = 'run'; T.delayed = null; RW_STATE.departed = (RW_STATE.departed || 0) + 1; if (K.near(T.x, T.z, 120)) K.sfx.whistle && K.sfx.whistle(); rwDoors(T, false); }
   } else {
     let want = T.cruise;
     if (T.id === 'pax') {
@@ -220,6 +253,12 @@ function rwStepTrain(T, dt, K) {
         want = Math.min(want, Math.sqrt(2 * 1.4 * d) + 0.6);
         if (d < 0.6) { T.x = S.x; T.v = 0; T.state = 'dwell'; T.dwellT = S.staffed ? 11 : 7; T.served = S; T.stopAt = S; rwArrive(T, S, K); return; }
       }
+    } else if (T.sigStop) { // the freight pulls up with its nose at the signal
+      const d = (rwSigStopX(T) - T.x) * T.dir;
+      if (d > -1) {
+        want = Math.min(want, Math.sqrt(2 * 1.1 * Math.max(0, d)) + 0.3);
+        if (d < 0.5) { T.v = 0; T.state = 'held'; T.heldT = mr(18, 30); RW_STATE.held++; T.mesh.g.position.set(T.x, 0.15, T.z); if (K.near(T.x, T.z, 90) && RW_STATE.msgT <= 0) { RW_STATE.msgT = 4; K.showMsg('THE FREIGHT GRINDS TO A HALT AT THE RED SIGNAL', 2); } return; }
+      } else T.sigStop = false;
     }
     T.v += clamp(want - T.v, -2.6 * dt, 1.3 * dt);
     T.x += T.dir * T.v * dt;
@@ -237,6 +276,12 @@ function rwArrive(T, S, K) {
     R.stops++;
     if (S === rwTerminus(T)) { rwGetOff(K, `${S.name}. THIS TRAIN TERMINATES HERE. ALL CHANGE`); return; }
     if (K.near(S.x, RW_TZ, 80)) K.showMsg(`THIS IS ${S.name}. ${K.isTouch ? 'USE' : 'E'} TO GET OFF`, 2.2);
+  }
+  // held in the station
+  if (S !== rwTerminus(T) && Math.random() < RW_STATE.delayP) {
+    const why = mpick(RW_DELAYS); T.dwellT += mr(22, 40); T.delayed = why; RW_STATE.delays++;
+    if (R && R.train === T) R.delayMsgT = 2.4; // (after the station announcement)
+    else if (K.near(S.x, -255, 60)) K.showMsg(`"COUNTY RAIL APOLOGISES. THE TRAIN AT PLATFORM 1 IS DELAYED DUE TO ${why}"`, 3);
   }
   // a few people get off, and head out through the barriers
   if (!K.near(S.x, -255, 140)) return;
@@ -342,7 +387,9 @@ function rwRide(dt, K) {
   if (C && R.insDone && !R.loo && R.chatT < 0) R.chatT = 0;
   if (T.state === 'dwell' && R.throwOff && R.stops > 0) { R.throwOff = false; rwGetOff(K, 'THE INSPECTOR WALKS YOU TO THE DOOR. "OFF."'); return false; }
   if (T.state === 'dwell' && R.bell && R.stops > 0) { rwGetOff(K, `YOU GET OFF AT ${T.stopAt ? T.stopAt.name : 'THE STATION'}`); return false; }
+  if (R.delayMsgT > 0) { R.delayMsgT -= dt; if (R.delayMsgT <= 0 && T.delayed) { K.showMsg(`"THIS IS YOUR GUARD. WE'RE BEING HELD HERE FOR A FEW MINUTES DUE TO ${T.delayed}. SORRY ABOUT THAT"`, 3); R.chatT = 1.5; R.groan = true; } }
   R.chatT -= dt;
+  if (R.groan && R.chatT <= 0 && C && C.folk.length) { R.groan = false; R.chatT = mr(6, 12); K.say({ g: mpick(C.folk).g }, mpick(['TYPICAL', 'EVERY SINGLE DAY', 'I\'LL BE LATE AGAIN', 'UNBELIEVABLE'])); }
   if (R.chatT <= 0 && C && C.folk.length) { R.chatT = mr(6, 12); K.say({ g: mpick(C.folk).g }, mpick(RW_CHAT)); }
   Object.assign(rwRideRoof, { x0: T.x - RW_HALF, x1: T.x + RW_HALF, z0: T.z - 1.6, z1: T.z + 1.6, h: 3.8 });
   return true;
@@ -379,21 +426,29 @@ function rwGateNear(K) {
 }
 function rwUseTarget(K) {
   const P = K.player, R = RW_STATE.ride;
+  if (RW_STATE.fride) return { kind: 'jumpfreight', first: true };
   if (R) {
     if (R.insT != null && R.insT < 4 && !R.loo && !R.paid && !rwHasTicket(K)) return { kind: 'loo', first: true };
     if (R.loo) return { kind: 'unloo', first: true };
     return { kind: R.train.state === 'dwell' && R.t > 1 ? 'off' : 'stay', first: true };
   }
   const T = rwTrainAtDoor(K); if (T) return { kind: 'board', T };
+  const fx = rwFreightNear(K); if (fx != null) return { kind: 'hopfreight', fx };
   if (rwPax.state === 'dwell' && rwPax.stopAt === rwTerminus(rwPax) && !P.car && rwDoorSpots(rwPax).some((D) => Math.hypot(D.x - P.x, D.z - P.z) < 2.4)) return { kind: 'terminates' };
   const Gt = rwGateNear(K); if (Gt) return { kind: 'gate', Gt };
   if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
+  for (const S of RW_STATIONS) if (S.picket && S.picket.g.visible && Math.hypot(P.x - S.picket.table.x, P.z - S.picket.table.z) < 2.2) return { kind: 'picket', S };
   const S = rwStationAt(P.x, P.z); if (!S || !S.staffed || !rwInHall(S, P.x, P.z)) return null;
   if (S.office && Math.hypot(P.x - S.office.x, P.z - S.office.z) < 3 && P.z > -248.5) return { kind: 'office', S };
+  if (S.cafe && Math.abs(P.x - S.cafe.x) < 4 && P.z > -256.4 && P.z < -254.6) return { kind: 'cafe', S };
   for (const M of S.machines) if (Math.hypot(P.x - M.x, P.z - M.z) < 1.3) return { kind: 'machine', S };
   return null;
 }
 function rwUsePrompt(T, K, useK) {
+  if (T.kind === 'jumpfreight') return rwFreight.v < 1 ? `Lying on a freight wagon. ${useK} to climb down` : `Lying on a freight wagon. ${useK} to jump off (it's moving${rwFreight.v > 6 ? ': it will hurt' : ''})`;
+  if (T.kind === 'hopfreight') return `${useK} to climb on to the freight wagon`;
+  if (T.kind === 'cafe') return rwCafeOpen(K) ? `${useK} for ${T.S.cafe.name} (tea $1, bacon roll $3)` : `${T.S.cafe.name} is shut`;
+  if (T.kind === 'picket') return RW_STATE.petitionDay === K.G.day ? 'You signed their petition. Solidarity' : `${useK} to sign the strikers' petition`;
   if (T.kind === 'loo') return `${useK} to lock yourself in the toilet`;
   if (T.kind === 'unloo') return `In the toilet. ${useK} to come out`;
   if (T.kind === 'stay') return RW_STATE.ride.bell ? 'GETTING OFF at the next station' : `${useK} to get off at the next station`;
@@ -401,6 +456,7 @@ function rwUsePrompt(T, K, useK) {
   if (T.kind === 'board') return `${useK} to get on the train${rwHasTicket(K) ? '' : ' (no ticket)'}`;
   if (T.kind === 'terminates') return 'This train terminates here. Wait for the next one';
   if (T.kind === 'gate') return rwHasTicket(K) || RW_STATE.ride ? `${useK} to put your ticket in` : 'NO TICKET: the barrier stays shut';
+  if (T.kind === 'office' && rwStrikeDay(K.G.day)) return 'The ticket office is shut: ON STRIKE';
   if (T.kind === 'office') return rwOfficeOpen(K.hour) ? `${useK} for tickets (SINGLE $4, DAY RETURN $7)` : 'The ticket office is shut. Use the machines';
   if (T.kind === 'machine') return `${useK} for the ticket machine`;
   return '';
@@ -408,6 +464,14 @@ function rwUsePrompt(T, K, useK) {
 function rwOpenGate(Gt, by, K) { Gt.openT = 2.4; if (by) { Gt.byPlayer = K.time; RW_STATE.opened++; } }
 function rwUse(T, K) {
   const R = RW_STATE.ride;
+  if (T.kind === 'jumpfreight') { rwJumpFreight(K, false); return; }
+  if (T.kind === 'hopfreight') { rwHopFreight(T.fx, K); return; }
+  if (T.kind === 'cafe') { if (!rwCafeOpen(K)) { K.showMsg(rwStrikeDay(K.G.day) ? 'SHUT. A NOTE ON THE COUNTER: "IN SOLIDARITY"' : 'THE SHUTTERS ARE DOWN', 1.6); return; } K.openMenu({ name: T.S.cafe.name, kind: 'cafe', blurbs: ['"WHAT CAN I GET YOU, LOVE?"', '"THE BACON\'S JUST ON."', '"YOU\'VE GOT TIME. IT\'S RUNNING LATE."'] }, rwCafeMenu(K)); return; }
+  if (T.kind === 'picket') {
+    if (RW_STATE.petitionDay === K.G.day) { K.say({ g: mpick(T.S.picket.folk).group }, mpick(['CHEERS FOR THE SUPPORT', 'HONK IF YOU\'RE PASSING', 'WE\'RE HERE TILL SEVEN'])); return; }
+    RW_STATE.petitionDay = K.G.day; RW_STATE.petitions++; K.player.hp = Math.min(100, K.player.hp + 8); K.coolHeat(2);
+    K.say({ g: T.S.picket.folk[0].group }, 'GOOD ON YOU. HAVE A TEA'); K.showMsg('YOU SIGN THE PETITION. THEY POUR YOU A TEA FROM THE URN AND LET YOU WARM YOUR HANDS', 2.6); return;
+  }
   if (T.kind === 'loo') { R.loo = true; RW_STATE.loo++; K.showMsg('YOU LOCK THE DOOR. IT SMELLS. YOU HOLD YOUR BREATH', 1.8); return; }
   if (T.kind === 'unloo') { R.loo = false; return; }
   if (T.kind === 'stay') { if (!R.bell) { R.bell = true; K.showMsg('YOU\'LL GET OFF AT THE NEXT STATION', 1.4); } return; }
@@ -416,7 +480,9 @@ function rwUse(T, K) {
   if (T.kind === 'terminates') { K.showMsg('"NOT THIS ONE. IT\'S GOING TO THE SHED"', 1.6); return; }
   if (T.kind === 'gate') { if (rwHasTicket(K)) { rwOpenGate(T.Gt, true, K); K.sfx.thunk && K.sfx.thunk(); } else K.showMsg('THE BARRIER BEEPS. SEEK ASSISTANCE', 1.4); return; }
   const blurbs = ['"SINGLE OR RETURN?"', '"THE NEXT ONE\'S ON TIME. FOR ONCE."', '"WHEATLEY? WHY WOULD ANYONE GO TO WHEATLEY?"'];
+  if (T.kind === 'office' && rwStrikeDay(K.G.day)) { K.showMsg('A SIGN IN THE WINDOW: "CLOSED. ALL STAFF ON STRIKE"', 1.8); return; }
   if (T.kind === 'office' && !rwOfficeOpen(K.hour)) { K.showMsg('SHUT. USE THE MACHINES', 1.4); return; }
+  if (T.kind === 'machine' && rwStrikeDay(K.G.day)) { K.showMsg('THE SCREEN SAYS: NO SERVICES TODAY', 1.6); return; }
   K.openMenu({ name: `${T.S.name} · ${T.kind === 'office' ? 'TRAVEL CENTRE' : 'TICKET MACHINE'}`, kind: 'railway', blurbs: T.kind === 'office' ? blurbs : ['PLEASE SELECT YOUR TICKET', 'CARDS AND CASH ACCEPTED (MOSTLY)'] }, rwTicketMenu(K));
 }
 
@@ -425,7 +491,8 @@ function rwUse(T, K) {
 // =====================================================================
 function rwEta(S) {
   const T = rwPax;
-  if (T.state === 'dwell' && T.stopAt === S) return 'PLATFORM 1 · BOARDING';
+  if (T.state === 'dwell' && T.stopAt === S) return T.delayed ? 'PLATFORM 1 · DELAYED' : 'PLATFORM 1 · BOARDING';
+  if (T.state === 'dwell' && T.delayed) return 'DELAYED';
   if (T.state === 'tunnel') return 'APPROX 2 MIN';
   const ahead = (S.x - T.x) * T.dir;
   if (ahead > 0) { const s = ahead / Math.max(8, T.cruise * 0.8) + RW_STATIONS.filter((Q) => (Q.x - T.x) * T.dir > 0 && (S.x - Q.x) * T.dir > 0).length * 9; return s < 20 ? 'DUE' : `${Math.ceil(s / 30)} MIN`; }
@@ -437,15 +504,112 @@ function rwDrawBoard(S, K) {
   x.fillStyle = '#ffb020'; x.font = 'bold 22px monospace'; x.textAlign = 'left'; x.fillText('DEPARTURES', 12, 28);
   x.textAlign = 'right'; const hh = Math.floor(K.hour), mm = Math.floor((K.hour % 1) * 60); x.fillText(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, 500, 28);
   x.textAlign = 'left'; x.font = 'bold 19px monospace';
+  if (rwStrikeDay(K.G.day)) { x.fillStyle = '#ff6a4a'; x.fillText('NO SERVICE TODAY', 12, 72); x.fillStyle = '#ffb020'; x.fillText('INDUSTRIAL ACTION', 12, 104); x.font = '15px monospace'; x.fillText('COUNTY RAIL APOLOGISES FOR ANY INCONVENIENCE', 12, 140); x.fillText('PLEASE USE THE ROUTE 9 BUSES', 12, 166); S.boardTex.needsUpdate = true; return; }
   if (!run) { x.fillText('NO MORE TRAINS TONIGHT', 12, 80); x.fillText('FIRST TRAIN 05:30', 12, 110); x.fillStyle = '#7a7a7a'; x.fillText('FREIGHT ONLY · KEEP BACK', 12, 160); S.boardTex.needsUpdate = true; return; }
   const rows = [];
   const eastOk = S !== RW_STATIONS[RW_STATIONS.length - 1], westOk = S !== RW_STATIONS[0];
   if (eastOk) rows.push(['ASHFORD', T.dir > 0 || T.state === 'tunnel' ? rwEta(S) : 'APPROX 4 MIN']);
   if (westOk) rows.push(['PORT HALDEN CENTRAL', T.dir < 0 || T.state === 'tunnel' ? rwEta(S) : 'APPROX 4 MIN']);
-  rows.forEach((r, i) => { const y = 72 + i * 36; x.fillStyle = '#ffb020'; x.fillText(r[0], 12, y); x.textAlign = 'right'; x.fillStyle = /DUE|BOARD/.test(r[1]) ? '#7aff7a' : '#ffb020'; x.fillText(r[1], 500, y); x.textAlign = 'left'; });
+  rows.forEach((r, i) => { const y = 72 + i * 36; x.fillStyle = '#ffb020'; x.fillText(r[0], 12, y); x.textAlign = 'right'; x.fillStyle = /DELAY/.test(r[1]) ? '#ff6a4a' : /DUE|BOARD/.test(r[1]) ? '#7aff7a' : '#ffb020'; x.fillText(r[1], 500, y); x.textAlign = 'left'; });
   x.fillStyle = '#ffb020'; x.font = '15px monospace'; x.fillText('CALLING AT: PORT HALDEN CENTRAL, WHEATLEY HALT, ASHFORD', 12, 176);
   S.boardTex.needsUpdate = true;
 }
+
+
+// =====================================================================
+// Hopping the freight: climb on to a flat wagon while it waits at the signal, lie flat, jump off
+// =====================================================================
+export const rwFlatXs = (T) => { const M = T.mesh; if (!M || !M.flats) return []; const s = T.dir > 0 ? -1 : 1; return M.flats.map((cx) => T.x + s * cx); };
+export function rwFreightNear(K) {
+  const P = K.player, T = rwFreight;
+  if (RW_STATE.ride || RW_STATE.fride || P.car || P.hide || P.bike || P.mode !== 'move' || T.state === 'tunnel' || T.v > 2.5 || P.y > 1.6) return null;
+  if (Math.abs(P.z - RW_FZ) > 3.4) return null;
+  return rwFlatXs(T).find((fx) => Math.abs(P.x - fx) < 5.5) ?? null;
+}
+export function rwHopFreight(fx, K) {
+  const P = K.player, T = rwFreight;
+  const passed = {}; for (const S of RW_STATIONS) passed[S.id] = (fx - S.x) * T.dir > 0;
+  RW_STATE.fride = { T, off: fx - T.x + mr(-2.5, 2.5), t: 0, passed, moved: T.state === 'run' && T.v > 1, tunnelWarned: false };
+  RW_STATE.hops++;
+  P.x = fx; P.z = RW_FZ; P.y = 1.25;
+  K.showMsg(`YOU HAUL YOURSELF UP ON TO THE FLAT WAGON AND LIE DOWN BETWEEN THE CRATES. ${K.isTouch ? 'USE' : 'E'} TO JUMP OFF`, 2.8);
+}
+export function rwJumpFreight(K, quiet, msg) {
+  const F = RW_STATE.fride; if (!F) return;
+  RW_STATE.fride = null;
+  const P = K.player, T = F.T, x = T.x + F.off;
+  P.x = x; P.z = RW_FZ + 3.0; P.y = 0; P.vx = T.dir * T.v * 0.2; P.vz = T.v > 6 ? 2.5 : 0; P.vy = T.v > 6 ? 2 : 0; P.crouch = 0;
+  if (quiet) return;
+  if (T.v > 6) { const dmg = Math.min(35, Math.round(T.v * 1.4)); RW_STATE.tumbles++; K.hurt(dmg); K.sfx.thud(); K.showMsg(msg || 'YOU JUMP FROM THE MOVING WAGON AND HIT THE BALLAST HARD', 2.2); }
+  else K.showMsg(msg || 'YOU CLIMB DOWN OFF THE WAGON', 1.6);
+}
+function rwFreightRide(dt, K) {
+  const F = RW_STATE.fride, P = K.player, T = F.T;
+  if (!P.alive || T.state === 'tunnel') { rwJumpFreight(K, true); return false; }
+  F.t += dt;
+  P.x = T.x + F.off; P.z = RW_FZ; P.y = 1.25; P.vx = P.vz = P.vy = 0; P.crouch = 1; P.sprinting = false;
+  P.stam = Math.min(100, P.stam + 8 * dt);
+  if (!F.moved && T.state === 'run' && T.v > 1) { F.moved = true; K.showMsg('THE SIGNAL GOES GREEN. THE WAGONS JOLT AND START TO ROLL', 2); }
+  const toPortal = T.dir > 0 ? RW_X1 - P.x : P.x - RW_X0;
+  if (toPortal < 110 && !F.tunnelWarned) { F.tunnelWarned = true; K.showMsg(`THE TUNNEL'S COMING UP. ${K.isTouch ? 'USE' : 'E'} TO JUMP OFF. NOW`, 2.4); }
+  if (toPortal < 10) { rwJumpFreight(K, false, 'YOU THROW YOURSELF OFF BEFORE THE TUNNEL SWALLOWS THE WAGON'); return false; }
+  // rolling through a station: somebody on the platform might see you
+  for (const S of RW_STATIONS) {
+    if (F.passed[S.id] || (P.x - S.x) * T.dir < 0) continue;
+    F.passed[S.id] = true;
+    if (S.staffed && rwOfficeOpen(K.hour) && !rwStrikeDay(K.G.day) && Math.random() < 0.4) { RW_STATE.spotted++; K.addHeat(3); K.report(); K.showMsg(`SOMEONE ON THE PLATFORM AT ${S.name} POINTS AT YOU AND GETS ON THE PHONE`, 2.4); }
+    else if (K.near(S.x, RW_TZ, 60)) K.showMsg(`YOU RATTLE THROUGH ${S.name}, FLAT ON YOUR BACK`, 1.6);
+  }
+  return true;
+}
+
+// =====================================================================
+// The platform cafe, and the picket line on strike days
+// =====================================================================
+const rwCafeOpen = (K) => K.hour >= 6 && K.hour < 21 && !rwStrikeDay(K.G.day);
+function rwCafeMenu(K) {
+  const P = K.player;
+  return {
+    cash: () => P.cash,
+    items: () => [
+      { id: 'rw_tea', name: 'A CUP OF TEA', price: 1, heal: 6, desc: 'Stewed. Hot. Calms you right down.' },
+      { id: 'rw_bacon', name: 'A BACON ROLL', price: 3, heal: 22, desc: 'With brown sauce, whether you want it or not.' },
+      { id: 'rw_cake', name: 'A SLICE OF FRUIT CAKE', price: 2, heal: 12, desc: 'Made this morning. Possibly yesterday morning.' },
+      { id: 'rw_paper', name: 'A NEWSPAPER', price: 1, desc: 'Something to hide behind on the train.' },
+    ],
+    state: () => '',
+    buy(it) {
+      if (P.cash < it.price) return `YOU NEED $${it.price - P.cash} MORE`;
+      P.cash -= it.price; K.sfx.cash(); RW_STATE.cafe++;
+      if (it.id === 'rw_paper') { RW_STATE.paperDay = K.G.day; return 'THE COUNTY GAZETTE. YOU\'RE ON PAGE FOUR'; }
+      P.hp = Math.min(100, P.hp + it.heal); if (it.id === 'rw_tea') K.coolHeat(3);
+      return mpick(['THERE YOU GO, LOVE', 'MIND, IT\'S HOT', 'NAPKINS ARE ON THE SIDE', 'ENJOY YOUR JOURNEY']);
+    },
+  };
+}
+const RW_PLACARDS = ['ON STRIKE', 'FAIR PAY FOR RAIL', 'SAVE OUR GUARDS', 'HONK FOR THE PICKET'];
+function rwPicketFor(S) {
+  if (S.picket) return S.picket;
+  const g = new THREE.Group(), folk = [], cx = S.x + 9, cz = -241.6;
+  for (let k = 0; k < 4; k++) {
+    const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: k % 2 ? 0xe06a1a : mpick(SHIRTS), pants: mpick(PANTS) });
+    const a = (k / 4) * Math.PI * 2 + 0.4; p.group.position.set(cx + Math.cos(a) * 1.6, 0, cz + Math.sin(a) * 1.1); p.group.rotation.y = Math.atan2(cx - p.group.position.x, cz - p.group.position.z);
+    if (k < 3) { // a placard on a stick
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.2, 0.04), lam(0x8a6a4a)); st.position.set(0.3, 1.5, 0.25); p.group.add(st);
+      const bd = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.55), new THREE.MeshBasicMaterial({ map: textTex(256, 160, '#f8f0e0', '#c0202a', [RW_PLACARDS[k]], 'bold 34px Arial'), side: THREE.DoubleSide })); bd.position.set(0.3, 2.2, 0.27); bd.rotation.y = Math.PI; p.group.add(bd);
+      p.armR.rotation.x = -1.2;
+    }
+    g.add(p.group); folk.push(p);
+  }
+  // the brazier, and a table with an urn and the petition
+  const br = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.3, 0.7, 10), lam(0x3a3a3a)); br.position.set(cx, 0.35, cz); g.add(br);
+  const fire = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.5, 8), new THREE.MeshBasicMaterial({ color: 0xff8a2a })); fire.position.set(cx, 0.95, cz); g.add(fire);
+  const tb = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.75, 0.7), lam(0x6a6a70)); tb.position.set(cx + 3.6, 0.375, cz); g.add(tb);
+  scene.add(g);
+  S.picket = { g, folk, fire, x: cx, z: cz, table: { x: cx + 3.6, z: cz + 0.9 } };
+  return S.picket;
+}
+const rwPicketsOut = (K) => rwStrikeDay(K.G.day) && K.hour >= 6 && K.hour < 19;
 
 // =====================================================================
 // Each frame
@@ -460,19 +624,21 @@ function rwHitCheck(T, dt, K) {
   if (T.state === 'tunnel' || !T.mesh) return;
   const P = K.player, half = T.id === 'pax' ? RW_HALF : (9 * 13.8) / 2;
   const inRect = (x, z, y) => y < 4.2 && Math.abs(z - T.z) < 1.75 && Math.abs(x - T.x) < half + 0.4;
-  if (!RW_STATE.ride && P.alive && !P.car && inRect(P.x, P.z, P.y)) {
+  if (!RW_STATE.ride && !RW_STATE.fride && P.alive && !P.car && inRect(P.x, P.z, P.y)) {
     if (T.v > 2.5) { RW_STATE.hits++; K.hurt(Math.min(60, 12 + T.v * 1.6)); P.z = T.z + (P.z > T.z ? 2.4 : -2.4); P.vz = (P.z > T.z ? 1 : -1) * 6; P.vx = T.dir * T.v * 0.3; P.vy = 4; K.showMsg('THE TRAIN CLIPS YOU AND FLINGS YOU OFF THE LINE', 2); }
     else P.z = T.z + (P.z > T.z ? 1.85 : -1.85);
   }
   if (T.v > 3) for (const h of K.hunters()) if (!h.dead && inRect(h.x, h.z, h.y || 0)) h.die({ x: T.dir * T.v * 1.1, y: 5, z: (h.z > T.z ? 1 : -1) * 6 }, 1.2, false);
   // the horn, for anyone on the line ahead
   const ax = P.x - T.x;
-  if (T.state === 'run' && T.v > 6 && Math.abs(P.z - T.z) < 2.2 && ax * T.dir > 0 && ax * T.dir < 160 && !RW_STATE.ride) { T.hornT = (T.hornT || 0) - dt; if (T.hornT <= 0) { T.hornT = 2.5; K.sfx.horn(); if (RW_STATE.msgT <= 0) { RW_STATE.msgT = 6; K.showMsg('A TRAIN IS COMING. GET OFF THE LINE!', 1.6); } } }
+  if (T.state === 'run' && T.v > 6 && Math.abs(P.z - T.z) < 2.2 && ax * T.dir > 0 && ax * T.dir < 160 && !RW_STATE.ride && !RW_STATE.fride) { T.hornT = (T.hornT || 0) - dt; if (T.hornT <= 0) { T.hornT = 2.5; K.sfx.horn(); if (RW_STATE.msgT <= 0) { RW_STATE.msgT = 6; K.showMsg('A TRAIN IS COMING. GET OFF THE LINE!', 1.6); } } }
 }
 function rwUpdate(dt, K) {
   if (!RW_STATIONS[0].built) return;
   const P = K.player, hr = K.hour;
   for (const T of rwTrains) { rwStepTrain(T, dt, K); rwHitCheck(T, dt, K); }
+  if (rwSigLamps.length) { const red = rwFreight.sigStop || rwFreight.state === 'held'; rwSigLamps[0].visible = red; rwSigLamps[1].visible = !red; }
+  const strike = rwStrikeDay(K.G.day);
   RW_STATE.msgT = Math.max(0, RW_STATE.msgT - dt);
   const night = hr >= 19 || hr < 6.5;
   if (rwPax.mesh) for (const w of rwPax.mesh.wins) { const m = night ? rwWinNight : rwWinDay; if (w.material !== m) w.material = m; }
@@ -483,13 +649,18 @@ function rwUpdate(dt, K) {
     if (S.staffed) {
       // the gates: open for anyone walking through with a ticket (the town has season tickets), and for you if you put yours in
       for (const Gt of S.gates) {
+        if (strike) Gt.openT = Math.max(Gt.openT, 1); // (nobody's minding them)
         if (Gt.openT <= 0 && K.hunters().some((h) => !h.dead && Math.abs(h.x - Gt.x) < 0.9 && Math.abs(h.z - Gt.z) < 1.5)) rwOpenGate(Gt, false, K);
         Gt.openT = Math.max(0, Gt.openT - dt);
         const open = Gt.openT > 0; Gt.c.h = open ? 0 : 1.05;
         Gt.paddles[0].position.x = Gt.x - (open ? 0.5 : 0.27); Gt.paddles[1].position.x = Gt.x + (open ? 0.5 : 0.27);
         Gt.paddles[0].rotation.y = Gt.paddles[1].rotation.y = open ? Math.PI / 2 : 0;
       }
-      const St = rwStaffFor(S); St.p.group.visible = rwOfficeOpen(hr);
+      const St = rwStaffFor(S); St.p.group.visible = rwOfficeOpen(hr) && !strike;
+      // the cafe lady, and the picket line out front
+      if (S.cafe) { if (!S.cafe.server) { const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: 0xf0e8e0, pants: 0x2a2a3a }); p.group.position.set(S.cafe.x, 0, -257.5); scene.add(p.group); S.cafe.server = p; } S.cafe.server.group.visible = rwCafeOpen(K); }
+      const out = rwPicketsOut(K);
+      if (out || S.picket) { const Pk = rwPicketFor(S); Pk.g.visible = out; if (out) { Pk.fire.scale.y = 0.8 + Math.random() * 0.4; Pk.chantT = (Pk.chantT || 0) - dt; if (Pk.chantT <= 0) { Pk.chantT = mr(5, 9); if (K.near(Pk.x, Pk.z, 30)) K.say({ g: mpick(Pk.folk).group }, mpick(['FAIR PAY NOW!', 'NO TRAINS TODAY, MATE', 'HONK! HONK!', 'SAVE OUR GUARDS!', 'WHAT DO WE WANT?'])); } if (K.near(Pk.x, Pk.z, 30) && RW_STATE.strikeSeen !== K.G.day) { RW_STATE.strikeSeen = K.G.day; K.showMsg('A PICKET LINE OUTSIDE THE STATION. NO TRAINS TODAY', 2.2); } } }
       // vaulting the barriers
       if (rwInHall(S, P.x, P.z) || (Math.abs(P.x - S.x) < 26 && P.z < -244 && P.z > -258)) {
         const side = P.z < RW_HALL.gateZ ? 'in' : 'out';
@@ -517,25 +688,30 @@ function rwUpdate(dt, K) {
 }
 function rwConspic(K) {
   const P = K.player, R = RW_STATE.ride;
+  if (RW_STATE.fride) return -0.5; // flat on a wagon
+  for (const S of RW_STATIONS) if (S.picket && S.picket.g.visible && K.near(S.picket.x, S.picket.z, 6)) return -0.25; // one of the strikers
   if (R) return R.loo ? -0.6 : RW_STATE.paperDay === K.G.day ? -0.38 : -0.3;
   if (P.car) return 0;
   const S = rwStationAt(P.x, P.z);
   if (S && (rwInHall(S, P.x, P.z) || rwOnPlatform(S, P.x, P.z))) return -0.12; // just another commuter
+  if (S && S.cafe && Math.abs(P.x - S.cafe.x) < 6 && P.z > -257 && P.z < -253) return -0.2; // a cuppa in the cafe
   if (P.z < -264 && P.z > -280) return 0.2; // walking along the railway line is not normal
   return 0;
 }
 export const railway = {
   name: 'railway', roofs: rwRoofs,
-  useTarget: rwUseTarget, usePrompt: rwUsePrompt, use: rwUse, conspic: rwConspic, update: rwUpdate, ride: rwRide, plan: () => false,
-  riding: () => !!RW_STATE.ride,
-  unseen: () => !!(RW_STATE.ride && RW_STATE.ride.loo),
+  useTarget: rwUseTarget, usePrompt: rwUsePrompt, use: rwUse, conspic: rwConspic, update: rwUpdate, ride: (dt, K) => (RW_STATE.fride ? rwFreightRide(dt, K) : rwRide(dt, K)), plan: () => false,
+  riding: () => !!(RW_STATE.ride || RW_STATE.fride),
+  unseen: (h) => !!(RW_STATE.ride && RW_STATE.ride.loo) || !!(RW_STATE.fride && h && Math.hypot(h.x - (RW_STATE.fride.T.x + RW_STATE.fride.off), h.z - RW_FZ) > 9), // (lying flat on a wagon, you can't be seen from the ground)
   reset() {
     if (RW_STATE.ride) rwGetOff({ player: { x: 0, z: 0 }, blocked: () => false, showMsg: () => {} });
-    Object.assign(RW_STATE, { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, doorTip: false, paperDay: 0 });
+    if (RW_STATE.fride) rwJumpFreight({ player: { x: 0, z: 0 } }, true);
+    Object.assign(RW_STATE, { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, doorTip: false, paperDay: 0, fride: null, hops: 0, tumbles: 0, spotted: 0, held: 0, delays: 0, cafe: 0, petitions: 0, petitionDay: 0, strikeSeen: 0 });
     for (const S of RW_STATIONS) { S.welcomed = 0; if (S.staff) S.staff.warned = 0; }
     rwRideRoof.h = -99;
   },
-  diary(K) { const b = []; if (rwHasTicket(K)) b.push(RW_STATE.ticket.kind === 'return' ? 'A DAY RETURN ON COUNTY RAIL' : 'A SINGLE TRAIN TICKET'); if (RW_STATE.ride) b.push('ON THE TRAIN'); return b; },
-  debug: () => ({ stations: RW_STATIONS.map((S) => ({ id: S.id, built: S.built, gates: S.gates.length })), pax: { x: Math.round(rwPax.x), dir: rwPax.dir, state: rwPax.state, v: +rwPax.v.toFixed(1), at: rwPax.stopAt ? rwPax.stopAt.id : null }, freight: { x: Math.round(rwFreight.x), state: rwFreight.state }, ...RW_STATE, ride: RW_STATE.ride ? { t: RW_STATE.ride.t, paid: RW_STATE.ride.paid, loo: RW_STATE.ride.loo, stops: RW_STATE.ride.stops } : null }),
+  diary(K) { const b = []; if (rwHasTicket(K)) b.push(RW_STATE.ticket.kind === 'return' ? 'A DAY RETURN ON COUNTY RAIL' : 'A SINGLE TRAIN TICKET'); if (RW_STATE.ride) b.push('ON THE TRAIN'); if (RW_STATE.fride) b.push('LYING ON A FREIGHT WAGON'); if (rwStrikeDay(K.G.day)) b.push('NO TRAINS: RAIL STRIKE'); return b; },
+  debug: () => ({ stations: RW_STATIONS.map((S) => ({ id: S.id, built: S.built, gates: S.gates.length })), pax: { x: Math.round(rwPax.x), dir: rwPax.dir, state: rwPax.state, v: +rwPax.v.toFixed(1), at: rwPax.stopAt ? rwPax.stopAt.id : null }, freight: { x: Math.round(rwFreight.x), state: rwFreight.state, v: +rwFreight.v.toFixed(1), dir: rwFreight.dir, sig: rwFreight.sigStop }, ...RW_STATE, fride: RW_STATE.fride ? { t: RW_STATE.fride.t, x: RW_STATE.fride.T.x + RW_STATE.fride.off } : null, ride: RW_STATE.ride ? { t: RW_STATE.ride.t, paid: RW_STATE.ride.paid, loo: RW_STATE.ride.loo, stops: RW_STATE.ride.stops } : null }),
+  rwFreightNear, rwHopFreight, rwJumpFreight, rwFlatXs, rwSigStopX, rwCafeMenu, rwStrikeDay, rwPicketsOut, RW_SIG_X, RW_X0, RW_X1, RW_FZ,
   RW_STATE, RW_STATIONS, rwPax, rwFreight, rwDoorSpots, rwBoard, rwGetOff, rwHasTicket, rwTicketMenu, rwTrainAtDoor, rwInspect, rwInHall, rwStationAt,
 };

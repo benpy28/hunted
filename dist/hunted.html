@@ -8699,7 +8699,7 @@ function folkMix(hr, day) {
 function crowdMul(hr, day, town) {
   let k = hr < 5 ? 0.62 : hr < 7 ? 0.78 : hr < 9.5 ? 1.12 : hr < 12 ? 0.96 : hr < 14 ? 1.1 : hr < 16.5 ? 0.97 : hr < 19 ? 1.12 : hr < 23 ? 0.95 : 0.75;
   if (isWeekend(day) && hr >= 10 && hr < 18) k += 0.05;
-  for (const E of TD_EVENTS) if (E.id !== 'school' && E.days.includes(weekdayOf(day)) && hr >= E.from && hr < E.to && (!E.town || E.town === town)) k += E.id === 'quiz' ? 0.05 : 0.15;
+  for (const E of TD_EVENTS) if (E.id !== 'school' && E.id !== 'strike' && E.days.includes(weekdayOf(day)) && hr >= E.from && hr < E.to && (!E.town || E.town === town)) k += E.id === 'quiz' || E.id === 'darts' ? 0.05 : 0.15;
   return k;
 }
 // what someone fancies doing next, by who they are and the hour
@@ -11550,6 +11550,185 @@ const dockWork = {
   DW_STATE, dwNewJob, dwSite, dwHop, dwEndJob, dwAtRear,
 };
 
+// The quay crane at SALTMARSH DOCKS: through the working day, the big crane nearest the cargo ship is unloading
+// it. The trolley runs out along the boom, the spreader drops on to a container, lifts it off the deck (or out of
+// the hold), runs it back over the quay and lowers it on to a waiting lorry, which drives off with it.
+//  - SIGN ON: E with the banksman (the one in the orange hard hat) between 6am and 8pm. You get a hi-vis vest
+//    for the day, and anyone looking at the waterfront sees another docker.
+//  - LASH IT: on shift, when a box comes down on the lorry, E at the lorry locks the twistlocks: $3 a box.
+//    Leave it too long and the docker does it, and the banksman has words.
+//  - STAND CLEAR: the crane won't lower a box on to anyone. Stand under it and the driver leans on the horn,
+//    the banksman shouts, and everyone looks at you.
+
+
+
+
+
+const QY_DOCKS = CITIES[2];
+const QY_QZ = QY_DOCKS.maxZ; // the quay edge (the road runs along it, the water beyond)
+const QY_SHIP = { x: QY_DOCKS.cx + 40, z: QY_QZ + 22, deck: 5.2 };
+// the crane that's over the ship: the baked cranes stand every 70m from minX+30
+const QY_X = (() => { let best = null; for (let x = QY_DOCKS.minX + 30; x < QY_DOCKS.maxX - 20; x += 70) if (x > QY_SHIP.x - 50 && x < QY_SHIP.x + 30 && (best == null || Math.abs(x - (QY_SHIP.x + 20)) < Math.abs(best - (QY_SHIP.x + 20)))) best = x; return best; })();
+const QY_LZ = QY_QZ - 3.2; // where the lorry stops, in the lane by the quay, between the crane's legs
+const QY_PICK_Z = QY_SHIP.z; // the middle of the deck, where the stack is
+const QY_TROLLEY_Y = 25.4, QY_HIGH = 19, QY_BED = 1.25;
+const QY_STATE = { state: 'idle', t: 0, tz: QY_LZ, sy: QY_HIGH, box: null, stack: [], lorry: null, lorryX: -60, gapT: 3, moved: 0, lashed: 0, earned: 0, shiftDay: 0, horn: 0, waits: 0, lashT: 0, shouted: 0, msgT: 0, built: false };
+const QY_HOURS = (hr) => hr >= 6 && hr < 20;
+const QY_SHOUT = ['STAND CLEAR!', 'OI! OUT FROM UNDER THERE!', 'ARE YOU MAD? MOVE!', 'NOBODY UNDER A SUSPENDED LOAD!'];
+
+// =====================================================================
+// The meshes: trolley, cables, spreader, the deck stack, the lorry
+// =====================================================================
+const qyYellow = lam(0xe8c020), qyDark = lam(0x1a1a1e);
+let QY = null;
+function qyContainer(col) {
+  const g = new THREE.Group(), m = new THREE.MeshLambertMaterial({ color: col ?? mpick(CONTAINER_COLORS) });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(6, 2.6, 2.44), m));
+  for (let k = 0; k < 9; k++) { const r = new THREE.Mesh(new THREE.BoxGeometry(0.05, 2.4, 2.46), qyDark); r.position.x = -2.8 + k * 0.7; g.add(r); }
+  scene.add(g); return g;
+}
+function qyBuild() {
+  if (QY) return QY;
+  const trolley = new THREE.Mesh(new THREE.BoxGeometry(3, 0.9, 4), lam(0xe8e8e8)); scene.add(trolley);
+  const cables = []; for (const [dx, dz] of [[-1.2, -0.8], [1.2, -0.8], [-1.2, 0.8], [1.2, 0.8]]) { const c = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1, 0.05), qyDark); c.userData = { dx, dz }; scene.add(c); cables.push(c); }
+  const spreader = new THREE.Group(); spreader.add(new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.35, 2.5), qyYellow)); for (const s of [-1, 1]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, 2.6), qyDark); b.position.x = s * 3; spreader.add(b); } scene.add(spreader);
+  // the lorry: cab, chassis, wheels (a skeletal trailer for a container)
+  const lorry = new THREE.Group(), add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); lorry.add(m); return m; };
+  add(new THREE.BoxGeometry(9.6, 0.35, 2.2), qyDark, 0, 0.95, 0);
+  for (const x of [-3.6, -2.4, 3.6]) for (const s of [-1, 1]) { const w = add(new THREE.CylinderGeometry(0.5, 0.5, 0.35, 12), lam(0x111111), x, 0.5, s * 1.0); w.rotation.x = Math.PI / 2; }
+  add(new THREE.BoxGeometry(2.4, 2.4, 2.4), lam(0x2a5aa0), 5.6, 2.0, 0); add(new THREE.BoxGeometry(0.05, 0.9, 2.1), new THREE.MeshLambertMaterial({ color: 0x2a3a4a }), 6.82, 2.5, 0);
+  lorry.visible = false; scene.add(lorry);
+  // the people: the banksman, and a docker to do the lashing
+  const mk = (shirt) => { const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt, pants: 0x2a2a3a }); const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 0.14, 10), lam(shirt === 0xe06a1a ? 0xf0f0f0 : 0xe8c020)); hat.position.y = 1.84; p.group.add(hat); scene.add(p.group); return p; };
+  const banks = mk(0xe06a1a), docker = mk(0xe8e020);
+  banks.group.position.set(QY_X + 7.5, 0, QY_QZ - 0.7); banks.group.rotation.y = -Math.PI / 2 - 0.4;
+  QY = { trolley, cables, spreader, lorry, banks, docker };
+  QY_STATE.built = true;
+  return QY;
+}
+function qyStackY(i) { return QY_SHIP.deck + 1.3 + i * 2.6; }
+function qyRestock() { for (const g of QY_STATE.stack) scene.remove(g); QY_STATE.stack = []; for (let i = 0; i < 3; i++) { const g = qyContainer(); g.position.set(QY_X, qyStackY(i), QY_PICK_Z); QY_STATE.stack.push(g); } }
+function qyPose() {
+  const S = QY_STATE;
+  QY.trolley.position.set(QY_X, QY_TROLLEY_Y + 0.45, S.tz);
+  QY.spreader.position.set(QY_X, S.sy + 1.48, S.tz);
+  const len = QY_TROLLEY_Y - (S.sy + 1.6);
+  for (const c of QY.cables) { c.scale.y = Math.max(0.1, len); c.position.set(QY_X + c.userData.dx, S.sy + 1.6 + len / 2, S.tz + c.userData.dz); }
+  if (S.box) S.box.position.set(QY_X, S.sy, S.tz);
+  QY.lorry.position.set(S.lorryX, 0, QY_LZ); QY.lorry.visible = S.lorry !== null;
+  if (S.lorry && S.lorry.box) S.lorry.box.position.set(S.lorryX, QY_BED + 1.3, QY_LZ);
+}
+
+// =====================================================================
+// The cycle
+// =====================================================================
+const qyMove = (v, to, sp, dt) => (Math.abs(to - v) <= sp * dt ? to : v + Math.sign(to - v) * sp * dt);
+// is anyone standing where the box would come down?
+function qyUnder(K, y) { const P = K.player; return !P.car && Math.abs(P.x - QY_X) < 3.6 && Math.abs(P.z - QY_STATE.tz) < 1.8 && P.y < y + 1; }
+function qyStep(dt, K) {
+  const S = QY_STATE, P = K.player, hr = K.hour;
+  S.t += dt;
+  if (S.state === 'idle') { if (QY_HOURS(hr)) { S.state = 'wait'; S.gapT = 2; } return; }
+  if (S.state === 'wait') { // the next lorry pulls in under the crane
+    S.gapT -= dt; if (S.gapT > 0) return;
+    if (!S.lorry) { if (!QY_HOURS(hr)) { S.state = 'idle'; return; } S.lorry = { box: null }; S.lorryX = QY_X - 70; }
+    S.lorryX = Math.min(QY_X, S.lorryX + dt * Math.max(1.2, (QY_X - S.lorryX) * 0.35));
+    if (S.lorryX >= QY_X) { S.state = 'out'; if (!S.stack.length && !S.hold) S.hold = true; }
+    return;
+  }
+  if (S.state === 'out') { S.sy = qyMove(S.sy, QY_HIGH, 2.5, dt); S.tz = qyMove(S.tz, QY_PICK_Z, 3.2, dt); if (S.tz === QY_PICK_Z && S.sy === QY_HIGH) S.state = 'down'; return; }
+  if (S.state === 'down') {
+    const top = S.stack.length ? qyStackY(S.stack.length - 1) : 2.2; // (or down into the hold)
+    S.sy = qyMove(S.sy, top + 2.6, 2.5, dt);
+    if (S.sy === top + 2.6) { S.state = 'grab'; S.t = 0; if (K.near(QY_X, QY_PICK_Z, 80)) K.sfx.clank && K.sfx.clank(); }
+    return;
+  }
+  if (S.state === 'grab') {
+    if (S.t < 1) return;
+    S.box = S.stack.length ? S.stack.pop() : qyContainer(); S.sy -= 2.6; S.box.position.set(QY_X, S.sy, QY_PICK_Z); S.state = 'lift'; return;
+  }
+  if (S.state === 'lift') { S.sy = qyMove(S.sy, QY_HIGH, 2.2, dt); if (S.sy === QY_HIGH) S.state = 'in'; return; }
+  if (S.state === 'in') { S.tz = qyMove(S.tz, QY_LZ, 3.0, dt); if (S.tz === QY_LZ) S.state = 'lower'; return; }
+  if (S.state === 'lower') {
+    const bedY = QY_BED + 1.3;
+    if (qyUnder(K, S.sy - 1.3)) { // somebody's under it: stop, horn, shout
+      S.hornT = (S.hornT || 0) - dt;
+      if (S.hornT <= 0) { S.hornT = 3; S.horn++; K.sfx.horn(); K.say({ g: QY.banks.group }, mpick(QY_SHOUT)); K.bumpLocal(0.03); if (S.msgT <= 0) { S.msgT = 4; K.showMsg('THE CRANE STOPS DEAD WITH A CONTAINER HANGING OVER YOUR HEAD. THE WHOLE QUAY IS LOOKING AT YOU', 2.4); } }
+      S.waits += dt; return;
+    }
+    S.sy = qyMove(S.sy, bedY, S.sy - bedY > 5 ? 2.4 : 0.9, dt);
+    if (S.sy === bedY) { S.state = 'lash'; S.t = 0; S.lashT = S.shiftDay === K.G.day ? 12 : 4; S.lorry.box = S.box; S.box = null; if (K.near(QY_X, QY_LZ, 60)) K.sfx.thunk && K.sfx.thunk(); if (S.shiftDay === K.G.day && K.near(QY_X, QY_LZ, 40)) K.showMsg(`BOX DOWN. ${K.isTouch ? 'USE' : 'E'} AT THE LORRY TO LOCK THE TWISTLOCKS`, 2); }
+    return;
+  }
+  if (S.state === 'lash') {
+    S.lashT -= dt;
+    if (S.lashT <= 0) { // the docker does it
+      if (S.shiftDay === K.G.day && K.near(QY_X, QY_LZ, 40)) K.say({ g: QY.banks.group }, mpick(['WAKE UP, YOU!', 'I\'M NOT PAYING YOU TO WATCH', 'COME ON, COME ON!']));
+      qyLashed(K, false);
+    }
+    return;
+  }
+  if (S.state === 'away') { // the spreader goes back up; the lorry pulls off
+    S.sy = qyMove(S.sy, QY_HIGH, 2.5, dt);
+    S.lorryX += dt * Math.min(10, 1.2 + (S.lorryX - QY_X) * 0.4);
+    if (S.lorryX > QY_X + 80) { if (S.lorry && S.lorry.box) scene.remove(S.lorry.box); S.lorry = null; S.moved++; S.state = 'wait'; S.gapT = mr(4, 10); if (!S.stack.length && S.moved % 6 === 0) qyRestock(); }
+  }
+}
+function qyLashed(K, byPlayer) {
+  const S = QY_STATE; S.state = 'away';
+  if (byPlayer) { S.lashed++; S.earned += 3; K.player.cash += 3; K.sfx.cash(); K.say({ g: QY.banks.group }, mpick(['GOOD LAD. NEXT ONE', 'NICE AND TIGHT', 'THAT\'S THE WAY', 'THREE DOLLARS. DON\'T SPEND IT ALL AT ONCE'])); K.showMsg('CLUNK, CLUNK, CLUNK, CLUNK. LOCKED ON. +$3', 1.6); }
+  if (K.near(QY_X, QY_LZ, 60)) K.sfx.horn();
+}
+
+// =====================================================================
+// The venue hooks
+// =====================================================================
+const qyLorryNear = (K) => { const S = QY_STATE, P = K.player; return S.lorry && Math.abs(P.x - S.lorryX) < 6 && Math.abs(P.z - QY_LZ) < 3.2; };
+function qyUseTarget(K) {
+  const P = K.player; if (!QY || P.car || P.hide || P.mode !== 'move' || P.y > 1.5 || !K.near(QY_X, QY_QZ, 30)) return null;
+  const S = QY_STATE;
+  if (S.state === 'lash' && S.shiftDay === K.G.day && qyLorryNear(K)) return { kind: 'lash' };
+  const b = QY.banks.group.position;
+  if (Math.hypot(P.x - b.x, P.z - b.z) < 2.4) return { kind: 'banks' };
+  return null;
+}
+function qyUsePrompt(T, K, useK) {
+  if (T.kind === 'lash') return `${useK} to lock the twistlocks ($3)`;
+  if (T.kind === 'banks') return QY_STATE.shiftDay === K.G.day ? 'On shift: lash the boxes as they come down on the lorry' : QY_HOURS(K.hour) ? `${useK} to sign on with the banksman (lashing, $3 a box)` : 'The crane gang has knocked off for the night';
+  return '';
+}
+function qyUse(T, K) {
+  if (T.kind === 'lash') { qyLashed(K, true); return; }
+  if (T.kind === 'banks') {
+    if (QY_STATE.shiftDay === K.G.day) { K.say({ g: QY.banks.group }, 'GET OVER BY THE LORRY THEN'); return; }
+    if (!QY_HOURS(K.hour)) { K.showMsg('NOBODY ABOUT. THE CRANE\'S LOCKED OFF FOR THE NIGHT', 1.6); return; }
+    QY_STATE.shiftDay = K.G.day; K.say({ g: QY.banks.group }, 'CASH IN HAND. NO QUESTIONS. PUT THIS ON');
+    K.showMsg('THE BANKSMAN HANDS YOU A HI-VIS VEST. WHEN A BOX COMES DOWN ON THE LORRY, LOCK IT ON: $3 A BOX', 2.8);
+  }
+}
+function qyUpdate(dt, K) {
+  QY_STATE.msgT = Math.max(0, QY_STATE.msgT - dt);
+  if (!K.near(QY_X, QY_QZ, 260)) return; // (it only runs while you're down this end)
+  if (!QY) { qyBuild(); qyRestock(); }
+  qyStep(dt, K); qyPose();
+  // the docker stands by the back of the lorry, and goes to the corners to lash
+  const S = QY_STATE, d = QY.docker.group;
+  d.visible = !!S.lorry && S.lorryX > QY_X - 30;
+  if (d.visible) { const lash = S.state === 'lash' && S.shiftDay !== K.G.day; d.position.set(S.lorryX - (lash ? 4.6 : 6.4), 0, QY_LZ - (lash ? 1.4 : 2.2)); d.rotation.y = Math.PI / 2; QY.docker.armL.rotation.x = QY.docker.armR.rotation.x = lash ? -1.3 + Math.sin(K.time * 9) * 0.3 : 0; }
+  QY.banks.armR.rotation.x = S.state === 'lower' || S.state === 'in' ? -2.6 + Math.sin(K.time * 3) * 0.3 : 0; // signalling the driver
+}
+const qyOnShift = (K) => QY_STATE.shiftDay === K.G.day;
+const quay = {
+  name: 'quay', roofs: [],
+  useTarget: qyUseTarget, usePrompt: qyUsePrompt, use: qyUse,
+  conspic: (K) => { if (!qyOnShift(K)) return 0; const P = K.player; if (P.z > QY_QZ - 60 && Math.abs(P.x - QY_DOCKS.cx) < 200) return -0.3; if (P.z > QY_DOCKS.minZ) return -0.12; return 0; }, // (in hi-vis, on the waterfront)
+  update: qyUpdate, plan: () => false, ride: () => false,
+  reset() { Object.assign(QY_STATE, { lashed: 0, earned: 0, shiftDay: 0, horn: 0, waits: 0, moved: 0 }); },
+  diary: (K) => { const b = []; if (qyOnShift(K)) b.push('ON SHIFT AT THE QUAY CRANE (HI-VIS)'); if (QY_STATE.lashed) b.push(`LASHED ${QY_STATE.lashed} CONTAINER${QY_STATE.lashed > 1 ? 'S' : ''} ($${QY_STATE.earned})`); return b; },
+  debug: () => ({ x: QY_X, state: QY_STATE.state, tz: +QY_STATE.tz.toFixed(1), sy: +QY_STATE.sy.toFixed(1), stack: QY_STATE.stack.length, lorry: !!QY_STATE.lorry, lorryX: Math.round(QY_STATE.lorryX), moved: QY_STATE.moved, lashed: QY_STATE.lashed, earned: QY_STATE.earned, horn: QY_STATE.horn, shift: QY_STATE.shiftDay, built: QY_STATE.built }),
+  QY_STATE, QY_X, QY_LZ, QY_QZ, QY_SHIP, qyUnder, qyLashed,
+};
+
 // The telly in the pub: every pub in the three towns has a big TV over the bar, and when there's football
 // on, the whole room is watching it.
 //  - The Harriers live from the ground (the same goals, at the same minute, as the match up on Route 9),
@@ -11784,6 +11963,9 @@ const pubTV = {
 //  - POOL: E at the table. $2 a game, reds and yellows: you're reds. Turn to aim from behind the white, and
 //    E strikes it at whatever the power bar says. Pot one of yours and you go again. Pot the white and it's
 //    their go. Clear your reds and then sink the black to win; the black early and you lose.
+//  - MONDAY IS DARTS LEAGUE NIGHT (7:30 till 11): a crowd round every oche and the home team a player short.
+//    Stand in as their ringer: no stake, a tougher opponent from the visiting team, and $15 from the captain
+//    if you win your leg. Two legs a night, then they find a proper player.
 //  - Either way, while you're playing you're just another punter, and the regulars stop looking at the door.
 
 
@@ -11792,8 +11974,12 @@ const pubTV = {
 
 
 
-const PG_STATE = { darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0, msgT: 0 };
+
+const PG_STATE = { leagueDay: 0, leagueLegs: 0, leagueWon: 0, leaguePlayed: 0, crowd: null, darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0, msgT: 0 };
 const pgPubs = []; // {W, F, board:{x,y,z,n,right}, oche:{x,z}, table?:{ac,bc}}
+TD_EVENTS.push({ id: 'darts', town: null, days: [0], from: 19.5, to: 23, name: 'DARTS LEAGUE NIGHT', where: 'EVERY BAR WITH A BOARD', blurb: 'The county league. A crowd round every oche, and every home team a player short. Stand in as a ringer: win your leg and the captain pays $15.' });
+const PG_TEAMS = ['THE ANCHOR ARROWS', 'SPIRE STREET SPARROWS', 'THE TIDEMARK TUNGSTENS', 'WHEATLEY WANDERERS', 'THE DOUBLE TOPS', 'QUAYSIDE FLIGHTS', 'THE BULLSEYE BOYS', 'TREBLE TROUBLE'];
+const pgLeagueOn = (K) => !!eventOn('darts', null, K.G.day, K.hour);
 const PG_NAMES = ['BIG DEREK', 'SHEILA', 'TWO-DARTS TEL', 'MAUREEN', 'YOUNG KEV', 'OLD WALLY', 'PAULINE', 'THE PROFESSOR', 'GAZ', 'DOT'];
 
 // =====================================================================
@@ -11869,15 +12055,22 @@ function pgStick(Q, rx, ry, col) {
   return g;
 }
 function pgClearDarts(D) { for (const g of D.stuck) scene.remove(g); D.stuck.length = 0; }
-function pgStartDarts(Q, K) {
+function pgStartDarts(Q, K, league) {
   const P = K.player;
-  if (P.cash < 3) { K.showMsg('$3 ON THE DARTS, AND YOU HAVEN\'T GOT IT', 1.6); return; }
-  P.cash -= 3; K.sfx.cash();
+  if (league) {
+    if (PG_STATE.leagueDay !== K.G.day) { PG_STATE.leagueDay = K.G.day; PG_STATE.leagueLegs = 0; }
+    if (PG_STATE.leagueLegs >= 2) { K.showMsg('"CHEERS, BUT OUR KEITH\'S TURNED UP NOW. HAVE A HALF ON US"', 2); return; }
+    PG_STATE.leagueLegs++; PG_STATE.leaguePlayed++;
+  } else {
+    if (P.cash < 3) { K.showMsg('$3 ON THE DARTS, AND YOU HAVEN\'T GOT IT', 1.6); return; }
+    P.cash -= 3; K.sfx.cash();
+  }
   const foe = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: mpick(SHIRTS), pants: mpick(PANTS) });
   const [fx, fz] = Q.F.toXZ(Q.F.A1 - 3.3, Q.F.D - 2.4); foe.group.position.set(fx, 0.21, fz); foe.group.rotation.y = Q.board.face + Math.PI; scene.add(foe.group);
-  PG_STATE.darts = { Q, name: mpick(PG_NAMES), skill: mr(0.018, 0.04), you: [], them: [], visit: [], turn: 'you', t: 0, stuck: [], foe, waitT: 0, swayT: Math.random() * 10, sway: { y: 0, p: 0 } };
+  PG_STATE.darts = { Q, league: !!league, name: mpick(PG_NAMES), skill: league ? mr(0.013, 0.024) : mr(0.018, 0.04), you: [], them: [], visit: [], turn: 'you', t: 0, stuck: [], foe, waitT: 0, swayT: Math.random() * 10, sway: { y: 0, p: 0 } };
   PG_STATE.dartsGames++;
-  K.showMsg(`$3 ON IT. YOU AGAINST ${PG_STATE.darts.name}: THREE VISITS EACH, HIGHEST TOTAL WINS. ${K.isTouch ? 'USE' : 'E'} TO THROW`, 3);
+  if (league) { const Cr = PG_STATE.crowd; PG_STATE.darts.team = Cr ? Cr.away : mpick(PG_TEAMS); K.showMsg(`LEAGUE NIGHT. YOU'RE PLAYING FOR ${Cr ? Cr.home : 'THE HOME TEAM'} AGAINST ${PG_STATE.darts.name} OF ${PG_STATE.darts.team}. WIN THE LEG AND IT'S $15. ${K.isTouch ? 'USE' : 'E'} TO THROW`, 3.4); if (Cr) K.say({ g: Cr.folk[0].group }, 'COME ON, RINGER!'); }
+  else K.showMsg(`$3 ON IT. YOU AGAINST ${PG_STATE.darts.name}: THREE VISITS EACH, HIGHEST TOTAL WINS. ${K.isTouch ? 'USE' : 'E'} TO THROW`, 3);
 }
 function pgDartsSum(a) { return a.reduce((s, v) => s + v.reduce((t, d) => t + d.pts, 0), 0); }
 function pgThrow(K) {
@@ -11916,8 +12109,15 @@ function pgEndDarts(K, quit) {
   const D = PG_STATE.darts; if (!D) return;
   PG_STATE.darts = null;
   pgClearDarts(D); scene.remove(D.foe.group);
-  if (quit) { K.showMsg(`YOU PUT THE DARTS DOWN. ${D.name} KEEPS YOUR $3`, 1.8); return; }
+  if (quit) { K.showMsg(D.league ? 'YOU PUT THE DARTS DOWN. THE CAPTAIN CONCEDES THE LEG WITH A FACE LIKE THUNDER' : `YOU PUT THE DARTS DOWN. ${D.name} KEEPS YOUR $3`, 1.8); return; }
   const a = pgDartsSum(D.you), b = pgDartsSum(D.them);
+  if (D.league) {
+    const Cr = PG_STATE.crowd;
+    if (a > b) { K.player.cash += 15; PG_STATE.leagueWon++; PG_STATE.dartsWon++; K.sfx.cash(); K.sfx.cheer && K.sfx.cheer(); K.coolHeat(4); K.showMsg(`YOU WIN THE LEG, ${a} TO ${b}! THE CAPTAIN PRESSES $15 INTO YOUR HAND. YOU'RE A LEGEND IN HERE NOW`, 3.2); if (Cr) { Cr.cheerT = 3; K.say({ g: Cr.folk[1].group }, 'RINGER! RINGER! RINGER!'); } }
+    else if (a === b) K.showMsg(`A TIE, ${a} ALL. THE CAPTAIN SHRUGS: "HALF A POINT'S HALF A POINT"`, 2.4);
+    else { K.showMsg(`${D.name} TAKES THE LEG, ${b} TO ${a}. THE CAPTAIN STARES INTO HIS PINT`, 2.6); if (Cr) K.say({ g: Cr.folk[0].group }, 'WHERE DID WE FIND THIS ONE?'); }
+    return;
+  }
   if (a > b) { K.player.cash += 6; PG_STATE.dartsWon++; K.sfx.cash(); K.showMsg(`YOU WIN, ${a} TO ${b}. $6 FROM THE POT. ${D.name} BUYS YOU A HALF`, 3); K.coolHeat(2); }
   else if (a === b) { K.player.cash += 3; K.showMsg(`A DRAW, ${a} ALL. YOUR $3 BACK`, 2.4); }
   else K.showMsg(`${D.name} WINS, ${b} TO ${a}. "BETTER LUCK NEXT TIME, PAL"`, 2.6);
@@ -12080,6 +12280,34 @@ function pgShoot(K) {
 }
 
 // =====================================================================
+// League night: the crowd round the oche
+// =====================================================================
+function pgCrowdFor(Q) {
+  const folk = [], F = Q.F;
+  for (let k = 0; k < 6; k++) {
+    const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: k < 3 ? 0x1a3a8a : 0x8a1a2a, pants: mpick(PANTS) }); // team shirts: home blue, away claret
+    const a = F.A1 - 2.0 - (k % 3) * 0.7 - (k >= 3 ? 0.4 : 0), b = F.D - 3.0 - (k >= 3 ? 0.8 : 0) + (k % 2) * 0.3;
+    const [x, z] = F.toXZ(a, b); p.group.position.set(x, 0, z);
+    p.group.rotation.y = Math.atan2(Q.board.x - x, Q.board.z - z);
+    scene.add(p.group); folk.push(p);
+  }
+  const home = mpick(PG_TEAMS); let away = mpick(PG_TEAMS); if (away === home) away = PG_TEAMS[(PG_TEAMS.indexOf(home) + 1) % PG_TEAMS.length];
+  return { Q, folk, home, away, cheerT: 0, chatT: 2 };
+}
+function pgClearCrowd() { const Cr = PG_STATE.crowd; if (!Cr) return; for (const p of Cr.folk) scene.remove(p.group); PG_STATE.crowd = null; }
+function pgUpdate(dt, K) {
+  const P = K.player, on = pgLeagueOn(K), Q = on && !P.car ? pgPubAt(P.x, P.z) : null;
+  if (PG_STATE.crowd && PG_STATE.crowd.Q !== Q) pgClearCrowd();
+  if (!Q) return;
+  if (!PG_STATE.crowd) { PG_STATE.crowd = pgCrowdFor(Q); K.showMsg(`DARTS LEAGUE NIGHT: ${PG_STATE.crowd.home} v ${PG_STATE.crowd.away}. THE HOME TEAM'S A PLAYER SHORT...`, 2.6); }
+  const Cr = PG_STATE.crowd;
+  Cr.cheerT = Math.max(0, Cr.cheerT - dt);
+  Cr.folk.forEach((p, i) => { const up = Cr.cheerT > 0 ? -2.6 - Math.sin(K.time * 12 + i) * 0.3 : -0.2; p.armL.rotation.x = p.armR.rotation.x = up; });
+  Cr.chatT -= dt;
+  if (Cr.chatT <= 0) { Cr.chatT = (6 + Math.random() * 6); K.say({ g: mpick(Cr.folk).group }, mpick(['SHOT, MATE!', 'GAME SHOT!', 'NEED A RINGER, WE DO', 'ONE HUNDRED AND... FORTY', 'WHOSE ROUND IS IT?', 'DOUBLE SIXTEEN, LOVELY'])); }
+}
+
+// =====================================================================
 // The venue hooks
 // =====================================================================
 function pgUseTarget(K) {
@@ -12088,7 +12316,7 @@ function pgUseTarget(K) {
   if (PG_STATE.pool) return { kind: 'shoot', first: true };
   if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
   const Q = pgPubAt(P.x, P.z); if (!Q) return null;
-  if (Math.hypot(P.x - Q.oche.x, P.z - Q.oche.z) < 1.2) return { kind: 'darts', Q };
+  if (Math.hypot(P.x - Q.oche.x, P.z - Q.oche.z) < 1.2) return { kind: pgLeagueOn(K) ? 'league' : 'darts', Q };
   if (Q.table) { const [x, z] = Q.F.toXZ(Q.table.ac, Q.table.bc); if (Math.abs(P.x - x) < 1.9 && Math.abs(P.z - z) < 1.9) return { kind: 'pool', Q }; }
   return null;
 }
@@ -12097,6 +12325,7 @@ function pgUsePrompt(T, K, useK) {
   if (T.kind === 'throw') { const D = PG_STATE.darts; return D.turn === 'you' ? `${useK} to throw (dart ${D.visit.length + 1} of 3) · ${back} to give up` : `${D.name}'s throw...`; }
   if (T.kind === 'shoot') { const G = PG_STATE.pool; if (G.turn !== 'you' || G.state !== 'aim') return G.state === 'roll' ? '...' : `${G.name} is lining one up`; const p = Math.round(pgPower(G) * 10); return `${useK} to strike · POWER ${'|'.repeat(p)}${'.'.repeat(10 - p)} · ${back} to walk away`; }
   if (T.kind === 'darts') return `${useK} to play darts ($3 against a regular)`;
+  if (T.kind === 'league') return PG_STATE.leagueDay === K.G.day && PG_STATE.leagueLegs >= 2 ? 'League night: they\'ve got a full team now' : `${useK} to stand in as the home team's ringer (win the leg: $15)`;
   if (T.kind === 'pool') return `${useK} to play pool ($2, reds and yellows)`;
   return '';
 }
@@ -12104,19 +12333,20 @@ function pgUse(T, K) {
   if (T.kind === 'throw') { pgThrow(K); return; }
   if (T.kind === 'shoot') { pgShoot(K); return; }
   if (T.kind === 'darts') { pgStartDarts(T.Q, K); return; }
+  if (T.kind === 'league') { pgStartDarts(T.Q, K, true); return; }
   if (T.kind === 'pool') pgStartPool(T.Q, K);
 }
 const pubGames = {
   name: 'pubgames', roofs: [],
   useTarget: pgUseTarget, usePrompt: pgUsePrompt, use: pgUse,
-  conspic: () => (PG_STATE.darts || PG_STATE.pool ? -0.28 : 0),
-  update: () => {},
+  conspic: (K) => (PG_STATE.darts ? (PG_STATE.darts.league ? -0.36 : -0.28) : PG_STATE.pool ? -0.28 : PG_STATE.crowd && K.near(PG_STATE.crowd.Q.oche.x, PG_STATE.crowd.Q.oche.z, 5) ? -0.18 : 0),
+  update: pgUpdate,
   ride: (dt, K) => (PG_STATE.darts ? pgDartsRide(dt, K) : PG_STATE.pool ? pgPoolRide(dt, K) : false),
   plan: () => false,
-  reset() { const k = { player: { cash: 0 }, showMsg: () => {}, sfx: {}, coolHeat: () => {} }; if (PG_STATE.darts) pgEndDarts(k, true); if (PG_STATE.pool) pgPoolEnd(k, false, ''); Object.assign(PG_STATE, { darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0 }); },
-  diary: () => { const b = []; if (PG_STATE.dartsWon) b.push(`WON AT DARTS (${PG_STATE.dartsWon})`); if (PG_STATE.poolWon) b.push(`WON AT POOL (${PG_STATE.poolWon})`); return b; },
-  debug: () => ({ pubs: pgPubs.length, tables: pgPubs.filter((Q) => Q.table).length, ...PG_STATE, darts: PG_STATE.darts ? { turn: PG_STATE.darts.turn, you: pgDartsSum(PG_STATE.darts.you), them: pgDartsSum(PG_STATE.darts.them) } : null, pool: PG_STATE.pool ? { turn: PG_STATE.pool.turn, state: PG_STATE.pool.state, reds: pbLeft(PG_STATE.pool, 'red'), yellows: pbLeft(PG_STATE.pool, 'yellow') } : null }),
-  PG_STATE, pgPubs, dartScore, poolRack, poolStep, pgStartDarts, pgStartPool, pgPubAt, pgEndDarts, pgPoolEnd, pgSettle, pgFoeTarget, pgStrike,
+  reset() { const k = { player: { cash: 0 }, showMsg: () => {}, sfx: {}, coolHeat: () => {} }; if (PG_STATE.darts) pgEndDarts(k, true); if (PG_STATE.pool) pgPoolEnd(k, false, ''); pgClearCrowd(); Object.assign(PG_STATE, { leagueDay: 0, leagueLegs: 0, leagueWon: 0, leaguePlayed: 0, darts: null, pool: null, dartsGames: 0, dartsWon: 0, poolGames: 0, poolWon: 0, ton80: 0, thrown: 0, best: 0, pots: 0 }); },
+  diary: () => { const b = []; if (PG_STATE.dartsWon) b.push(`WON AT DARTS (${PG_STATE.dartsWon})`); if (PG_STATE.poolWon) b.push(`WON AT POOL (${PG_STATE.poolWon})`); if (PG_STATE.leagueWon) b.push(`A LEAGUE NIGHT RINGER (${PG_STATE.leagueWon} LEGS WON)`); return b; },
+  debug: () => ({ pubs: pgPubs.length, tables: pgPubs.filter((Q) => Q.table).length, ...PG_STATE, crowd: PG_STATE.crowd ? { home: PG_STATE.crowd.home, away: PG_STATE.crowd.away, n: PG_STATE.crowd.folk.length } : null, darts: PG_STATE.darts ? { league: PG_STATE.darts.league, turn: PG_STATE.darts.turn, you: pgDartsSum(PG_STATE.darts.you), them: pgDartsSum(PG_STATE.darts.them) } : null, pool: PG_STATE.pool ? { turn: PG_STATE.pool.turn, state: PG_STATE.pool.state, reds: pbLeft(PG_STATE.pool, 'red'), yellows: pbLeft(PG_STATE.pool, 'yellow') } : null }),
+  PG_STATE, pgPubs, dartScore, poolRack, poolStep, pgStartDarts, pgStartPool, pgPubAt, pgEndDarts, pgPoolEnd, pgSettle, pgFoeTarget, pgStrike, pgLeagueOn, pgClearCrowd,
 };
 
 // GUTTERBALL LANES: an eight-lane bowling alley on Route 4, just south of PORT HALDEN, on the leisure park it
@@ -13516,7 +13746,13 @@ const buses = {
 //  - A ticket inspector comes down the train on most journeys. No ticket from a staffed station means a
 //    penalty fare ($15), or off at the next stop and a call to the police if you can't pay. From WHEATLEY
 //    HALT you can just buy one from him. Or lock yourself in the toilet when you hear him coming.
-//  - Freight trains run through at night on the far track, and they don't stop. Neither line is a footpath.
+//  - Freight trains run through at night (and over lunch) on the far track. Most of them wait at the red signal
+//    in the fields west of WHEATLEY: that's your chance to climb on to one of the flat wagons and lie low. Jump off
+//    whenever you like (it hurts at speed), and get off before the tunnel. People on the platforms might see you.
+//  - Delays: leaves on the line, a cow, the wrong kind of rain. The train sits in the station and the board says so.
+//  - Every Wednesday there's a RAIL STRIKE: no passenger trains, pickets with a brazier outside the stations.
+//  - A platform cafe at both staffed stations (through the barriers): tea, bacon rolls, cake.
+
 
 
 
@@ -13539,7 +13775,12 @@ const RW_STATIONS = [
 // footpaths from the stations down to the nearest road
 const RW_PATHS = [{ x: 700, z0: -245, z1: -181 }, { x: 380, z0: -258, z1: -178 }];
 for (const p of RW_PATHS) clearings.push({ x0: p.x - 3, x1: p.x + 3, z0: p.z0 - 1, z1: p.z1 });
-const RW_STATE = { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, boardT: 0, boarded: [] };
+const RW_STATE = { ride: null, fride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, boardT: 0, boarded: [], hops: 0, tumbles: 0, spotted: 0, held: 0, delays: 0, delayP: 0.16, cafe: 0, petitions: 0, petitionDay: 0, strikeSeen: 0 };
+// the strike: every Wednesday, until somebody settles the pay dispute
+const rwStrikeDay = (day) => weekdayOf(day) === 2;
+TD_EVENTS.push({ id: 'strike', town: null, days: [2], from: 5.5, to: 24, name: 'RAIL STRIKE', where: 'COUNTY RAIL', blurb: 'No passenger trains all day. Pickets and a brazier outside PORT HALDEN CENTRAL and ASHFORD. The freight still runs.' });
+const RW_DELAYS = ['LEAVES ON THE LINE', 'A SIGNAL FAILURE AT WHEATLEY', 'A COW ON THE LINE', 'THE WRONG KIND OF RAIN', 'A SHORTAGE OF GUARDS', 'A LATE-RUNNING FREIGHT TRAIN', 'A PIGEON IN THE SIGNAL BOX'];
+const RW_SIG_X = 240; // the freight signal, out in the fields between PORT HALDEN and WHEATLEY
 const rwRoofs = [];
 const rwRideRoof = { x0: 0, x1: 0, z0: 0, z1: 0, h: -99 };
 rwRoofs.push(rwRideRoof);
@@ -13641,6 +13882,15 @@ function rwHall(S) {
   for (const dx of [-8, 8]) rwBench(S.x + dx, -248.4, false);
   // the member of staff at the gates
   S.staffPos = { x: S.x + 6.4, z: gz + 1.2 };
+  // the platform cafe, through the barriers on the east side: a counter, an urn, two little tables
+  const cn = S.id === 'ph' ? 'THE BUFFER STOP CAFE' : 'PLATFORM TEAS';
+  propBuf.box(S.x + 15, S.x + 23, 0, 1.05, -257.0, -256.3, 0x6a4a3a); addCollider(S.x + 15, S.x + 23, -257.0, -256.3, 1.05);
+  propBuf.box(S.x + 15, S.x + 23, 1.05, 1.1, -257.05, -256.25, 0xd8d0c0);
+  propBuf.cyl(S.x + 16, -256.65, 0.18, 0.18, 1.1, 1.6, 0xb8bcc4, 10); // the urn
+  glowBuf.box(S.x + 18, S.x + 21.5, 1.1, 1.35, -256.9, -256.5, 0xf0e0b0); // the cake cabinet
+  rwPlane(6, 0.7, textTex(512, 60, '#5a2a1a', '#f8e8c0', [cn], 'bold 34px Georgia, serif'), S.x + 19, 3.0, -257.95, 0);
+  for (const dx of [16.5, 21.5]) { propBuf.cyl(S.x + dx, -254.4, 0.45, 0.45, 0.72, 0.76, 0xe8e0d0, 12); propBuf.cyl(S.x + dx, -254.4, 0.05, 0.05, 0, 0.72, 0x3a3a3a, 6); addCollider(S.x + dx - 0.3, S.x + dx + 0.3, -254.7, -254.1, 0.76); for (const s of [-1, 1]) lifeSpots.push({ kind: 'bench', x: S.x + dx + s * 0.75, z: -254.4, face: s > 0 ? -Math.PI / 2 : Math.PI / 2, sx: S.x + dx + s * 0.75, sz: -254.4 }); }
+  S.cafe = { x: S.x + 19, z: -255.6, name: cn, server: null };
 }
 function rwHalt(S) { // the shelter, a help point and a sign: REQUEST STOP
   propBuf.box(S.x - 3, S.x + 3, 2.6, 2.75, -263, -259.4, RW_GREEN, { bottom: true }); addRoof(S.x - 3, S.x + 3, -263, -259.4, 2.75, { y0: 2.6 }); rwRoofs.push({ x0: S.x - 3, x1: S.x + 3, z0: -263, z1: -259.4, h: 2.6 });
@@ -13658,7 +13908,11 @@ function rwBuild() {
   groundBuf.flat(-6, 6, -244, -239, 0.014, 0x9a948c);
   // a footbridge at each staffed station, over both lines at the west end (scenery: you can't get up it)
   for (const S of RW_STATIONS) if (S.staffed) { const x = S.x - 44; propBuf.box(x - 1.2, x + 1.2, 5.6, 6.0, -279, -258, 0x5a6a5a); for (const s of [-1.2, 1.2]) propBuf.box(x + s - 0.05, x + s + 0.05, 6.0, 7.1, -279, -258, 0x5a6a5a); for (const z of [-279, -273, -258.5]) { propBuf.box(x - 1.3, x - 1.1, 0, 5.6, z - 0.1, z + 0.1, 0x5a6a5a); propBuf.box(x + 1.1, x + 1.3, 0, 5.6, z - 0.1, z + 0.1, 0x5a6a5a); addCollider(x - 1.3, x + 1.3, z - 0.1, z + 0.1, 5.6); } }
+  // the freight signal: a post beside the far track with a red and a green lamp
+  propBuf.box(RW_SIG_X - 0.1, RW_SIG_X + 0.1, 0, 4.2, -278.9, -278.7, 0x2a2e32); propBuf.box(RW_SIG_X - 0.35, RW_SIG_X + 0.35, 3.2, 4.6, -279.0, -278.6, 0x111114);
+  for (const [y, col] of [[4.25, 0xff2a1a], [3.55, 0x2aff5a]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.92), new THREE.MeshBasicMaterial({ color: col })); m.position.set(RW_SIG_X, y, -278.8); scene.add(m); rwSigLamps.push(m); }
 }
+const rwSigLamps = [];
 worldHooks.beforeBake.push(rwBuild);
 
 // =====================================================================
@@ -13670,7 +13924,7 @@ const RW_FLOOR = 1.0;
 const rwBodyMat = lam(RW_GREEN), rwCreamMat = lam(RW_CREAM), rwDarkMat = lam(0x1a1a1e);
 const rwWinDay = new THREE.MeshLambertMaterial({ color: 0x2a3a4a }), rwWinNight = new THREE.MeshBasicMaterial({ color: 0xfff0c0 });
 function rwMakeTrain(freight) {
-  const g = new THREE.Group(), wins = [], doors = [];
+  const g = new THREE.Group(), wins = [], doors = [], flats = [];
   const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
   if (!freight) {
     for (const cx of RW_CARS) {
@@ -13689,15 +13943,18 @@ function rwMakeTrain(freight) {
       if (k === 0) { add(new THREE.BoxGeometry(L, 3.4, 2.9), lam(0x2a2a6a), cx, 2.2, 0); add(new THREE.BoxGeometry(0.1, 0.3, 2.0), new THREE.MeshBasicMaterial({ color: 0xffffe0 }), cx - L / 2 - 0.06, 1.1, 0); continue; }
       add(new THREE.BoxGeometry(L, 0.4, 2.6), rwDarkMat, cx, 1.0, 0);
       if (k % 3 !== 2) add(new THREE.BoxGeometry(L - 0.6, 2.6, 2.5), lam(mpick([0xb0302a, 0x2a5aa0, 0x2a8a4a, 0xd0902a, 0x6a6a70, 0xc85a1a])), cx, 2.5, 0);
+      else { flats.push(cx); for (const o of [-4.5, 4.5]) add(new THREE.BoxGeometry(1.6, 0.9, 2.2), lam(0x7a5a3a), cx + o, 1.65, 0); } // a flat wagon: a couple of crates and room to lie down
     }
   }
   g.visible = false; scene.add(g);
-  return { g, wins, doors, freight };
+  return { g, wins, doors, freight, flats };
 }
 // state: 'tunnel' (waiting out of sight), 'run', 'dwell' (in a station, doors open)
 const rwPax = { id: 'pax', z: RW_TZ, x: RW_X0 - 60, dir: 1, v: 0, state: 'tunnel', waitT: 3, dwellT: 0, stopAt: null, served: null, mesh: null, cruise: 26, len: RW_HALF };
-const rwFreight = { id: 'freight', z: RW_FZ, x: RW_X1 + 80, dir: -1, v: 0, state: 'tunnel', waitT: 30, cruise: 22, mesh: null, len: 60 };
+const rwFreight = { id: 'freight', z: RW_FZ, x: RW_X1 + 80, dir: -1, v: 0, state: 'tunnel', waitT: 30, cruise: 22, mesh: null, len: 62, sigStop: false, heldT: 0 };
+const rwFreightHours = (hr) => hr >= 21 || hr < 6.5 || (hr >= 12 && hr < 14);
 const rwTrains = [rwPax, rwFreight];
+const rwSigStopX = (T) => RW_SIG_X - T.dir * (4 + T.len);
 const rwNextStation = (T) => RW_STATIONS.filter((S) => (S.x - T.x) * T.dir > 0.5 && S !== T.served).sort((a, b) => (a.x - b.x) * T.dir)[0] || null;
 const rwTerminus = (T) => (T.dir > 0 ? RW_STATIONS[RW_STATIONS.length - 1] : RW_STATIONS[0]);
 function rwStepTrain(T, dt, K) {
@@ -13706,14 +13963,20 @@ function rwStepTrain(T, dt, K) {
   if (T.state === 'tunnel') {
     T.mesh.g.visible = false; T.v = 0;
     T.waitT -= dt;
-    const ok = T.id === 'pax' ? rwTrainsRun(hr) : (hr >= 21 || hr < 6.5);
-    if (T.waitT <= 0 && ok) { T.state = 'run'; T.dir = -T.dir; T.x = T.dir > 0 ? RW_X0 - T.len - 5 : RW_X1 + T.len + 5; T.v = T.cruise * 0.7; T.served = null; if (T.id === 'freight') RW_STATE.freight++; }
+    const ok = T.id === 'pax' ? rwTrainsRun(hr) && !rwStrikeDay(K.G.day) : rwFreightHours(hr);
+    if (T.waitT <= 0 && ok) {
+      T.state = 'run'; T.dir = -T.dir; T.x = T.dir > 0 ? RW_X0 - T.len - 5 : RW_X1 + T.len + 5; T.v = T.cruise * 0.7; T.served = null; T.delayed = null;
+      if (T.id === 'freight') { RW_STATE.freight++; T.sigStop = Math.random() < 0.8; T.mesh.g.rotation.y = T.dir > 0 ? Math.PI : 0; } // (the loco's built at -x: turn it round to lead)
+    }
     return;
   }
   T.mesh.g.visible = true;
-  if (T.state === 'dwell') {
+  if (T.state === 'held') { // a freight at the red signal
+    T.v = 0; T.heldT -= dt;
+    if (T.heldT <= 0) { T.state = 'run'; T.sigStop = false; if (K.near(T.x, T.z, 120)) K.sfx.horn(); }
+  } else if (T.state === 'dwell') {
     T.v = 0; T.dwellT -= dt;
-    if (T.dwellT <= 0) { T.state = 'run'; RW_STATE.departed = (RW_STATE.departed || 0) + 1; if (K.near(T.x, T.z, 120)) K.sfx.whistle && K.sfx.whistle(); rwDoors(T, false); }
+    if (T.dwellT <= 0) { T.state = 'run'; T.delayed = null; RW_STATE.departed = (RW_STATE.departed || 0) + 1; if (K.near(T.x, T.z, 120)) K.sfx.whistle && K.sfx.whistle(); rwDoors(T, false); }
   } else {
     let want = T.cruise;
     if (T.id === 'pax') {
@@ -13723,6 +13986,12 @@ function rwStepTrain(T, dt, K) {
         want = Math.min(want, Math.sqrt(2 * 1.4 * d) + 0.6);
         if (d < 0.6) { T.x = S.x; T.v = 0; T.state = 'dwell'; T.dwellT = S.staffed ? 11 : 7; T.served = S; T.stopAt = S; rwArrive(T, S, K); return; }
       }
+    } else if (T.sigStop) { // the freight pulls up with its nose at the signal
+      const d = (rwSigStopX(T) - T.x) * T.dir;
+      if (d > -1) {
+        want = Math.min(want, Math.sqrt(2 * 1.1 * Math.max(0, d)) + 0.3);
+        if (d < 0.5) { T.v = 0; T.state = 'held'; T.heldT = mr(18, 30); RW_STATE.held++; T.mesh.g.position.set(T.x, 0.15, T.z); if (K.near(T.x, T.z, 90) && RW_STATE.msgT <= 0) { RW_STATE.msgT = 4; K.showMsg('THE FREIGHT GRINDS TO A HALT AT THE RED SIGNAL', 2); } return; }
+      } else T.sigStop = false;
     }
     T.v += clamp(want - T.v, -2.6 * dt, 1.3 * dt);
     T.x += T.dir * T.v * dt;
@@ -13740,6 +14009,12 @@ function rwArrive(T, S, K) {
     R.stops++;
     if (S === rwTerminus(T)) { rwGetOff(K, `${S.name}. THIS TRAIN TERMINATES HERE. ALL CHANGE`); return; }
     if (K.near(S.x, RW_TZ, 80)) K.showMsg(`THIS IS ${S.name}. ${K.isTouch ? 'USE' : 'E'} TO GET OFF`, 2.2);
+  }
+  // held in the station
+  if (S !== rwTerminus(T) && Math.random() < RW_STATE.delayP) {
+    const why = mpick(RW_DELAYS); T.dwellT += mr(22, 40); T.delayed = why; RW_STATE.delays++;
+    if (R && R.train === T) R.delayMsgT = 2.4; // (after the station announcement)
+    else if (K.near(S.x, -255, 60)) K.showMsg(`"COUNTY RAIL APOLOGISES. THE TRAIN AT PLATFORM 1 IS DELAYED DUE TO ${why}"`, 3);
   }
   // a few people get off, and head out through the barriers
   if (!K.near(S.x, -255, 140)) return;
@@ -13845,7 +14120,9 @@ function rwRide(dt, K) {
   if (C && R.insDone && !R.loo && R.chatT < 0) R.chatT = 0;
   if (T.state === 'dwell' && R.throwOff && R.stops > 0) { R.throwOff = false; rwGetOff(K, 'THE INSPECTOR WALKS YOU TO THE DOOR. "OFF."'); return false; }
   if (T.state === 'dwell' && R.bell && R.stops > 0) { rwGetOff(K, `YOU GET OFF AT ${T.stopAt ? T.stopAt.name : 'THE STATION'}`); return false; }
+  if (R.delayMsgT > 0) { R.delayMsgT -= dt; if (R.delayMsgT <= 0 && T.delayed) { K.showMsg(`"THIS IS YOUR GUARD. WE'RE BEING HELD HERE FOR A FEW MINUTES DUE TO ${T.delayed}. SORRY ABOUT THAT"`, 3); R.chatT = 1.5; R.groan = true; } }
   R.chatT -= dt;
+  if (R.groan && R.chatT <= 0 && C && C.folk.length) { R.groan = false; R.chatT = mr(6, 12); K.say({ g: mpick(C.folk).g }, mpick(['TYPICAL', 'EVERY SINGLE DAY', 'I\'LL BE LATE AGAIN', 'UNBELIEVABLE'])); }
   if (R.chatT <= 0 && C && C.folk.length) { R.chatT = mr(6, 12); K.say({ g: mpick(C.folk).g }, mpick(RW_CHAT)); }
   Object.assign(rwRideRoof, { x0: T.x - RW_HALF, x1: T.x + RW_HALF, z0: T.z - 1.6, z1: T.z + 1.6, h: 3.8 });
   return true;
@@ -13882,21 +14159,29 @@ function rwGateNear(K) {
 }
 function rwUseTarget(K) {
   const P = K.player, R = RW_STATE.ride;
+  if (RW_STATE.fride) return { kind: 'jumpfreight', first: true };
   if (R) {
     if (R.insT != null && R.insT < 4 && !R.loo && !R.paid && !rwHasTicket(K)) return { kind: 'loo', first: true };
     if (R.loo) return { kind: 'unloo', first: true };
     return { kind: R.train.state === 'dwell' && R.t > 1 ? 'off' : 'stay', first: true };
   }
   const T = rwTrainAtDoor(K); if (T) return { kind: 'board', T };
+  const fx = rwFreightNear(K); if (fx != null) return { kind: 'hopfreight', fx };
   if (rwPax.state === 'dwell' && rwPax.stopAt === rwTerminus(rwPax) && !P.car && rwDoorSpots(rwPax).some((D) => Math.hypot(D.x - P.x, D.z - P.z) < 2.4)) return { kind: 'terminates' };
   const Gt = rwGateNear(K); if (Gt) return { kind: 'gate', Gt };
   if (P.car || P.hide || P.mode !== 'move' || P.y > 0.8) return null;
+  for (const S of RW_STATIONS) if (S.picket && S.picket.g.visible && Math.hypot(P.x - S.picket.table.x, P.z - S.picket.table.z) < 2.2) return { kind: 'picket', S };
   const S = rwStationAt(P.x, P.z); if (!S || !S.staffed || !rwInHall(S, P.x, P.z)) return null;
   if (S.office && Math.hypot(P.x - S.office.x, P.z - S.office.z) < 3 && P.z > -248.5) return { kind: 'office', S };
+  if (S.cafe && Math.abs(P.x - S.cafe.x) < 4 && P.z > -256.4 && P.z < -254.6) return { kind: 'cafe', S };
   for (const M of S.machines) if (Math.hypot(P.x - M.x, P.z - M.z) < 1.3) return { kind: 'machine', S };
   return null;
 }
 function rwUsePrompt(T, K, useK) {
+  if (T.kind === 'jumpfreight') return rwFreight.v < 1 ? `Lying on a freight wagon. ${useK} to climb down` : `Lying on a freight wagon. ${useK} to jump off (it's moving${rwFreight.v > 6 ? ': it will hurt' : ''})`;
+  if (T.kind === 'hopfreight') return `${useK} to climb on to the freight wagon`;
+  if (T.kind === 'cafe') return rwCafeOpen(K) ? `${useK} for ${T.S.cafe.name} (tea $1, bacon roll $3)` : `${T.S.cafe.name} is shut`;
+  if (T.kind === 'picket') return RW_STATE.petitionDay === K.G.day ? 'You signed their petition. Solidarity' : `${useK} to sign the strikers' petition`;
   if (T.kind === 'loo') return `${useK} to lock yourself in the toilet`;
   if (T.kind === 'unloo') return `In the toilet. ${useK} to come out`;
   if (T.kind === 'stay') return RW_STATE.ride.bell ? 'GETTING OFF at the next station' : `${useK} to get off at the next station`;
@@ -13904,6 +14189,7 @@ function rwUsePrompt(T, K, useK) {
   if (T.kind === 'board') return `${useK} to get on the train${rwHasTicket(K) ? '' : ' (no ticket)'}`;
   if (T.kind === 'terminates') return 'This train terminates here. Wait for the next one';
   if (T.kind === 'gate') return rwHasTicket(K) || RW_STATE.ride ? `${useK} to put your ticket in` : 'NO TICKET: the barrier stays shut';
+  if (T.kind === 'office' && rwStrikeDay(K.G.day)) return 'The ticket office is shut: ON STRIKE';
   if (T.kind === 'office') return rwOfficeOpen(K.hour) ? `${useK} for tickets (SINGLE $4, DAY RETURN $7)` : 'The ticket office is shut. Use the machines';
   if (T.kind === 'machine') return `${useK} for the ticket machine`;
   return '';
@@ -13911,6 +14197,14 @@ function rwUsePrompt(T, K, useK) {
 function rwOpenGate(Gt, by, K) { Gt.openT = 2.4; if (by) { Gt.byPlayer = K.time; RW_STATE.opened++; } }
 function rwUse(T, K) {
   const R = RW_STATE.ride;
+  if (T.kind === 'jumpfreight') { rwJumpFreight(K, false); return; }
+  if (T.kind === 'hopfreight') { rwHopFreight(T.fx, K); return; }
+  if (T.kind === 'cafe') { if (!rwCafeOpen(K)) { K.showMsg(rwStrikeDay(K.G.day) ? 'SHUT. A NOTE ON THE COUNTER: "IN SOLIDARITY"' : 'THE SHUTTERS ARE DOWN', 1.6); return; } K.openMenu({ name: T.S.cafe.name, kind: 'cafe', blurbs: ['"WHAT CAN I GET YOU, LOVE?"', '"THE BACON\'S JUST ON."', '"YOU\'VE GOT TIME. IT\'S RUNNING LATE."'] }, rwCafeMenu(K)); return; }
+  if (T.kind === 'picket') {
+    if (RW_STATE.petitionDay === K.G.day) { K.say({ g: mpick(T.S.picket.folk).group }, mpick(['CHEERS FOR THE SUPPORT', 'HONK IF YOU\'RE PASSING', 'WE\'RE HERE TILL SEVEN'])); return; }
+    RW_STATE.petitionDay = K.G.day; RW_STATE.petitions++; K.player.hp = Math.min(100, K.player.hp + 8); K.coolHeat(2);
+    K.say({ g: T.S.picket.folk[0].group }, 'GOOD ON YOU. HAVE A TEA'); K.showMsg('YOU SIGN THE PETITION. THEY POUR YOU A TEA FROM THE URN AND LET YOU WARM YOUR HANDS', 2.6); return;
+  }
   if (T.kind === 'loo') { R.loo = true; RW_STATE.loo++; K.showMsg('YOU LOCK THE DOOR. IT SMELLS. YOU HOLD YOUR BREATH', 1.8); return; }
   if (T.kind === 'unloo') { R.loo = false; return; }
   if (T.kind === 'stay') { if (!R.bell) { R.bell = true; K.showMsg('YOU\'LL GET OFF AT THE NEXT STATION', 1.4); } return; }
@@ -13919,7 +14213,9 @@ function rwUse(T, K) {
   if (T.kind === 'terminates') { K.showMsg('"NOT THIS ONE. IT\'S GOING TO THE SHED"', 1.6); return; }
   if (T.kind === 'gate') { if (rwHasTicket(K)) { rwOpenGate(T.Gt, true, K); K.sfx.thunk && K.sfx.thunk(); } else K.showMsg('THE BARRIER BEEPS. SEEK ASSISTANCE', 1.4); return; }
   const blurbs = ['"SINGLE OR RETURN?"', '"THE NEXT ONE\'S ON TIME. FOR ONCE."', '"WHEATLEY? WHY WOULD ANYONE GO TO WHEATLEY?"'];
+  if (T.kind === 'office' && rwStrikeDay(K.G.day)) { K.showMsg('A SIGN IN THE WINDOW: "CLOSED. ALL STAFF ON STRIKE"', 1.8); return; }
   if (T.kind === 'office' && !rwOfficeOpen(K.hour)) { K.showMsg('SHUT. USE THE MACHINES', 1.4); return; }
+  if (T.kind === 'machine' && rwStrikeDay(K.G.day)) { K.showMsg('THE SCREEN SAYS: NO SERVICES TODAY', 1.6); return; }
   K.openMenu({ name: `${T.S.name} · ${T.kind === 'office' ? 'TRAVEL CENTRE' : 'TICKET MACHINE'}`, kind: 'railway', blurbs: T.kind === 'office' ? blurbs : ['PLEASE SELECT YOUR TICKET', 'CARDS AND CASH ACCEPTED (MOSTLY)'] }, rwTicketMenu(K));
 }
 
@@ -13928,7 +14224,8 @@ function rwUse(T, K) {
 // =====================================================================
 function rwEta(S) {
   const T = rwPax;
-  if (T.state === 'dwell' && T.stopAt === S) return 'PLATFORM 1 · BOARDING';
+  if (T.state === 'dwell' && T.stopAt === S) return T.delayed ? 'PLATFORM 1 · DELAYED' : 'PLATFORM 1 · BOARDING';
+  if (T.state === 'dwell' && T.delayed) return 'DELAYED';
   if (T.state === 'tunnel') return 'APPROX 2 MIN';
   const ahead = (S.x - T.x) * T.dir;
   if (ahead > 0) { const s = ahead / Math.max(8, T.cruise * 0.8) + RW_STATIONS.filter((Q) => (Q.x - T.x) * T.dir > 0 && (S.x - Q.x) * T.dir > 0).length * 9; return s < 20 ? 'DUE' : `${Math.ceil(s / 30)} MIN`; }
@@ -13940,15 +14237,112 @@ function rwDrawBoard(S, K) {
   x.fillStyle = '#ffb020'; x.font = 'bold 22px monospace'; x.textAlign = 'left'; x.fillText('DEPARTURES', 12, 28);
   x.textAlign = 'right'; const hh = Math.floor(K.hour), mm = Math.floor((K.hour % 1) * 60); x.fillText(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, 500, 28);
   x.textAlign = 'left'; x.font = 'bold 19px monospace';
+  if (rwStrikeDay(K.G.day)) { x.fillStyle = '#ff6a4a'; x.fillText('NO SERVICE TODAY', 12, 72); x.fillStyle = '#ffb020'; x.fillText('INDUSTRIAL ACTION', 12, 104); x.font = '15px monospace'; x.fillText('COUNTY RAIL APOLOGISES FOR ANY INCONVENIENCE', 12, 140); x.fillText('PLEASE USE THE ROUTE 9 BUSES', 12, 166); S.boardTex.needsUpdate = true; return; }
   if (!run) { x.fillText('NO MORE TRAINS TONIGHT', 12, 80); x.fillText('FIRST TRAIN 05:30', 12, 110); x.fillStyle = '#7a7a7a'; x.fillText('FREIGHT ONLY · KEEP BACK', 12, 160); S.boardTex.needsUpdate = true; return; }
   const rows = [];
   const eastOk = S !== RW_STATIONS[RW_STATIONS.length - 1], westOk = S !== RW_STATIONS[0];
   if (eastOk) rows.push(['ASHFORD', T.dir > 0 || T.state === 'tunnel' ? rwEta(S) : 'APPROX 4 MIN']);
   if (westOk) rows.push(['PORT HALDEN CENTRAL', T.dir < 0 || T.state === 'tunnel' ? rwEta(S) : 'APPROX 4 MIN']);
-  rows.forEach((r, i) => { const y = 72 + i * 36; x.fillStyle = '#ffb020'; x.fillText(r[0], 12, y); x.textAlign = 'right'; x.fillStyle = /DUE|BOARD/.test(r[1]) ? '#7aff7a' : '#ffb020'; x.fillText(r[1], 500, y); x.textAlign = 'left'; });
+  rows.forEach((r, i) => { const y = 72 + i * 36; x.fillStyle = '#ffb020'; x.fillText(r[0], 12, y); x.textAlign = 'right'; x.fillStyle = /DELAY/.test(r[1]) ? '#ff6a4a' : /DUE|BOARD/.test(r[1]) ? '#7aff7a' : '#ffb020'; x.fillText(r[1], 500, y); x.textAlign = 'left'; });
   x.fillStyle = '#ffb020'; x.font = '15px monospace'; x.fillText('CALLING AT: PORT HALDEN CENTRAL, WHEATLEY HALT, ASHFORD', 12, 176);
   S.boardTex.needsUpdate = true;
 }
+
+
+// =====================================================================
+// Hopping the freight: climb on to a flat wagon while it waits at the signal, lie flat, jump off
+// =====================================================================
+const rwFlatXs = (T) => { const M = T.mesh; if (!M || !M.flats) return []; const s = T.dir > 0 ? -1 : 1; return M.flats.map((cx) => T.x + s * cx); };
+function rwFreightNear(K) {
+  const P = K.player, T = rwFreight;
+  if (RW_STATE.ride || RW_STATE.fride || P.car || P.hide || P.bike || P.mode !== 'move' || T.state === 'tunnel' || T.v > 2.5 || P.y > 1.6) return null;
+  if (Math.abs(P.z - RW_FZ) > 3.4) return null;
+  return rwFlatXs(T).find((fx) => Math.abs(P.x - fx) < 5.5) ?? null;
+}
+function rwHopFreight(fx, K) {
+  const P = K.player, T = rwFreight;
+  const passed = {}; for (const S of RW_STATIONS) passed[S.id] = (fx - S.x) * T.dir > 0;
+  RW_STATE.fride = { T, off: fx - T.x + mr(-2.5, 2.5), t: 0, passed, moved: T.state === 'run' && T.v > 1, tunnelWarned: false };
+  RW_STATE.hops++;
+  P.x = fx; P.z = RW_FZ; P.y = 1.25;
+  K.showMsg(`YOU HAUL YOURSELF UP ON TO THE FLAT WAGON AND LIE DOWN BETWEEN THE CRATES. ${K.isTouch ? 'USE' : 'E'} TO JUMP OFF`, 2.8);
+}
+function rwJumpFreight(K, quiet, msg) {
+  const F = RW_STATE.fride; if (!F) return;
+  RW_STATE.fride = null;
+  const P = K.player, T = F.T, x = T.x + F.off;
+  P.x = x; P.z = RW_FZ + 3.0; P.y = 0; P.vx = T.dir * T.v * 0.2; P.vz = T.v > 6 ? 2.5 : 0; P.vy = T.v > 6 ? 2 : 0; P.crouch = 0;
+  if (quiet) return;
+  if (T.v > 6) { const dmg = Math.min(35, Math.round(T.v * 1.4)); RW_STATE.tumbles++; K.hurt(dmg); K.sfx.thud(); K.showMsg(msg || 'YOU JUMP FROM THE MOVING WAGON AND HIT THE BALLAST HARD', 2.2); }
+  else K.showMsg(msg || 'YOU CLIMB DOWN OFF THE WAGON', 1.6);
+}
+function rwFreightRide(dt, K) {
+  const F = RW_STATE.fride, P = K.player, T = F.T;
+  if (!P.alive || T.state === 'tunnel') { rwJumpFreight(K, true); return false; }
+  F.t += dt;
+  P.x = T.x + F.off; P.z = RW_FZ; P.y = 1.25; P.vx = P.vz = P.vy = 0; P.crouch = 1; P.sprinting = false;
+  P.stam = Math.min(100, P.stam + 8 * dt);
+  if (!F.moved && T.state === 'run' && T.v > 1) { F.moved = true; K.showMsg('THE SIGNAL GOES GREEN. THE WAGONS JOLT AND START TO ROLL', 2); }
+  const toPortal = T.dir > 0 ? RW_X1 - P.x : P.x - RW_X0;
+  if (toPortal < 110 && !F.tunnelWarned) { F.tunnelWarned = true; K.showMsg(`THE TUNNEL'S COMING UP. ${K.isTouch ? 'USE' : 'E'} TO JUMP OFF. NOW`, 2.4); }
+  if (toPortal < 10) { rwJumpFreight(K, false, 'YOU THROW YOURSELF OFF BEFORE THE TUNNEL SWALLOWS THE WAGON'); return false; }
+  // rolling through a station: somebody on the platform might see you
+  for (const S of RW_STATIONS) {
+    if (F.passed[S.id] || (P.x - S.x) * T.dir < 0) continue;
+    F.passed[S.id] = true;
+    if (S.staffed && rwOfficeOpen(K.hour) && !rwStrikeDay(K.G.day) && Math.random() < 0.4) { RW_STATE.spotted++; K.addHeat(3); K.report(); K.showMsg(`SOMEONE ON THE PLATFORM AT ${S.name} POINTS AT YOU AND GETS ON THE PHONE`, 2.4); }
+    else if (K.near(S.x, RW_TZ, 60)) K.showMsg(`YOU RATTLE THROUGH ${S.name}, FLAT ON YOUR BACK`, 1.6);
+  }
+  return true;
+}
+
+// =====================================================================
+// The platform cafe, and the picket line on strike days
+// =====================================================================
+const rwCafeOpen = (K) => K.hour >= 6 && K.hour < 21 && !rwStrikeDay(K.G.day);
+function rwCafeMenu(K) {
+  const P = K.player;
+  return {
+    cash: () => P.cash,
+    items: () => [
+      { id: 'rw_tea', name: 'A CUP OF TEA', price: 1, heal: 6, desc: 'Stewed. Hot. Calms you right down.' },
+      { id: 'rw_bacon', name: 'A BACON ROLL', price: 3, heal: 22, desc: 'With brown sauce, whether you want it or not.' },
+      { id: 'rw_cake', name: 'A SLICE OF FRUIT CAKE', price: 2, heal: 12, desc: 'Made this morning. Possibly yesterday morning.' },
+      { id: 'rw_paper', name: 'A NEWSPAPER', price: 1, desc: 'Something to hide behind on the train.' },
+    ],
+    state: () => '',
+    buy(it) {
+      if (P.cash < it.price) return `YOU NEED $${it.price - P.cash} MORE`;
+      P.cash -= it.price; K.sfx.cash(); RW_STATE.cafe++;
+      if (it.id === 'rw_paper') { RW_STATE.paperDay = K.G.day; return 'THE COUNTY GAZETTE. YOU\'RE ON PAGE FOUR'; }
+      P.hp = Math.min(100, P.hp + it.heal); if (it.id === 'rw_tea') K.coolHeat(3);
+      return mpick(['THERE YOU GO, LOVE', 'MIND, IT\'S HOT', 'NAPKINS ARE ON THE SIDE', 'ENJOY YOUR JOURNEY']);
+    },
+  };
+}
+const RW_PLACARDS = ['ON STRIKE', 'FAIR PAY FOR RAIL', 'SAVE OUR GUARDS', 'HONK FOR THE PICKET'];
+function rwPicketFor(S) {
+  if (S.picket) return S.picket;
+  const g = new THREE.Group(), folk = [], cx = S.x + 9, cz = -241.6;
+  for (let k = 0; k < 4; k++) {
+    const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: k % 2 ? 0xe06a1a : mpick(SHIRTS), pants: mpick(PANTS) });
+    const a = (k / 4) * Math.PI * 2 + 0.4; p.group.position.set(cx + Math.cos(a) * 1.6, 0, cz + Math.sin(a) * 1.1); p.group.rotation.y = Math.atan2(cx - p.group.position.x, cz - p.group.position.z);
+    if (k < 3) { // a placard on a stick
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.2, 0.04), lam(0x8a6a4a)); st.position.set(0.3, 1.5, 0.25); p.group.add(st);
+      const bd = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.55), new THREE.MeshBasicMaterial({ map: textTex(256, 160, '#f8f0e0', '#c0202a', [RW_PLACARDS[k]], 'bold 34px Arial'), side: THREE.DoubleSide })); bd.position.set(0.3, 2.2, 0.27); bd.rotation.y = Math.PI; p.group.add(bd);
+      p.armR.rotation.x = -1.2;
+    }
+    g.add(p.group); folk.push(p);
+  }
+  // the brazier, and a table with an urn and the petition
+  const br = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.3, 0.7, 10), lam(0x3a3a3a)); br.position.set(cx, 0.35, cz); g.add(br);
+  const fire = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.5, 8), new THREE.MeshBasicMaterial({ color: 0xff8a2a })); fire.position.set(cx, 0.95, cz); g.add(fire);
+  const tb = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.75, 0.7), lam(0x6a6a70)); tb.position.set(cx + 3.6, 0.375, cz); g.add(tb);
+  scene.add(g);
+  S.picket = { g, folk, fire, x: cx, z: cz, table: { x: cx + 3.6, z: cz + 0.9 } };
+  return S.picket;
+}
+const rwPicketsOut = (K) => rwStrikeDay(K.G.day) && K.hour >= 6 && K.hour < 19;
 
 // =====================================================================
 // Each frame
@@ -13963,19 +14357,21 @@ function rwHitCheck(T, dt, K) {
   if (T.state === 'tunnel' || !T.mesh) return;
   const P = K.player, half = T.id === 'pax' ? RW_HALF : (9 * 13.8) / 2;
   const inRect = (x, z, y) => y < 4.2 && Math.abs(z - T.z) < 1.75 && Math.abs(x - T.x) < half + 0.4;
-  if (!RW_STATE.ride && P.alive && !P.car && inRect(P.x, P.z, P.y)) {
+  if (!RW_STATE.ride && !RW_STATE.fride && P.alive && !P.car && inRect(P.x, P.z, P.y)) {
     if (T.v > 2.5) { RW_STATE.hits++; K.hurt(Math.min(60, 12 + T.v * 1.6)); P.z = T.z + (P.z > T.z ? 2.4 : -2.4); P.vz = (P.z > T.z ? 1 : -1) * 6; P.vx = T.dir * T.v * 0.3; P.vy = 4; K.showMsg('THE TRAIN CLIPS YOU AND FLINGS YOU OFF THE LINE', 2); }
     else P.z = T.z + (P.z > T.z ? 1.85 : -1.85);
   }
   if (T.v > 3) for (const h of K.hunters()) if (!h.dead && inRect(h.x, h.z, h.y || 0)) h.die({ x: T.dir * T.v * 1.1, y: 5, z: (h.z > T.z ? 1 : -1) * 6 }, 1.2, false);
   // the horn, for anyone on the line ahead
   const ax = P.x - T.x;
-  if (T.state === 'run' && T.v > 6 && Math.abs(P.z - T.z) < 2.2 && ax * T.dir > 0 && ax * T.dir < 160 && !RW_STATE.ride) { T.hornT = (T.hornT || 0) - dt; if (T.hornT <= 0) { T.hornT = 2.5; K.sfx.horn(); if (RW_STATE.msgT <= 0) { RW_STATE.msgT = 6; K.showMsg('A TRAIN IS COMING. GET OFF THE LINE!', 1.6); } } }
+  if (T.state === 'run' && T.v > 6 && Math.abs(P.z - T.z) < 2.2 && ax * T.dir > 0 && ax * T.dir < 160 && !RW_STATE.ride && !RW_STATE.fride) { T.hornT = (T.hornT || 0) - dt; if (T.hornT <= 0) { T.hornT = 2.5; K.sfx.horn(); if (RW_STATE.msgT <= 0) { RW_STATE.msgT = 6; K.showMsg('A TRAIN IS COMING. GET OFF THE LINE!', 1.6); } } }
 }
 function rwUpdate(dt, K) {
   if (!RW_STATIONS[0].built) return;
   const P = K.player, hr = K.hour;
   for (const T of rwTrains) { rwStepTrain(T, dt, K); rwHitCheck(T, dt, K); }
+  if (rwSigLamps.length) { const red = rwFreight.sigStop || rwFreight.state === 'held'; rwSigLamps[0].visible = red; rwSigLamps[1].visible = !red; }
+  const strike = rwStrikeDay(K.G.day);
   RW_STATE.msgT = Math.max(0, RW_STATE.msgT - dt);
   const night = hr >= 19 || hr < 6.5;
   if (rwPax.mesh) for (const w of rwPax.mesh.wins) { const m = night ? rwWinNight : rwWinDay; if (w.material !== m) w.material = m; }
@@ -13986,13 +14382,18 @@ function rwUpdate(dt, K) {
     if (S.staffed) {
       // the gates: open for anyone walking through with a ticket (the town has season tickets), and for you if you put yours in
       for (const Gt of S.gates) {
+        if (strike) Gt.openT = Math.max(Gt.openT, 1); // (nobody's minding them)
         if (Gt.openT <= 0 && K.hunters().some((h) => !h.dead && Math.abs(h.x - Gt.x) < 0.9 && Math.abs(h.z - Gt.z) < 1.5)) rwOpenGate(Gt, false, K);
         Gt.openT = Math.max(0, Gt.openT - dt);
         const open = Gt.openT > 0; Gt.c.h = open ? 0 : 1.05;
         Gt.paddles[0].position.x = Gt.x - (open ? 0.5 : 0.27); Gt.paddles[1].position.x = Gt.x + (open ? 0.5 : 0.27);
         Gt.paddles[0].rotation.y = Gt.paddles[1].rotation.y = open ? Math.PI / 2 : 0;
       }
-      const St = rwStaffFor(S); St.p.group.visible = rwOfficeOpen(hr);
+      const St = rwStaffFor(S); St.p.group.visible = rwOfficeOpen(hr) && !strike;
+      // the cafe lady, and the picket line out front
+      if (S.cafe) { if (!S.cafe.server) { const p = buildPerson({ skin: mpick(SKINS), hair: mpick(HAIRS), shirt: 0xf0e8e0, pants: 0x2a2a3a }); p.group.position.set(S.cafe.x, 0, -257.5); scene.add(p.group); S.cafe.server = p; } S.cafe.server.group.visible = rwCafeOpen(K); }
+      const out = rwPicketsOut(K);
+      if (out || S.picket) { const Pk = rwPicketFor(S); Pk.g.visible = out; if (out) { Pk.fire.scale.y = 0.8 + Math.random() * 0.4; Pk.chantT = (Pk.chantT || 0) - dt; if (Pk.chantT <= 0) { Pk.chantT = mr(5, 9); if (K.near(Pk.x, Pk.z, 30)) K.say({ g: mpick(Pk.folk).group }, mpick(['FAIR PAY NOW!', 'NO TRAINS TODAY, MATE', 'HONK! HONK!', 'SAVE OUR GUARDS!', 'WHAT DO WE WANT?'])); } if (K.near(Pk.x, Pk.z, 30) && RW_STATE.strikeSeen !== K.G.day) { RW_STATE.strikeSeen = K.G.day; K.showMsg('A PICKET LINE OUTSIDE THE STATION. NO TRAINS TODAY', 2.2); } } }
       // vaulting the barriers
       if (rwInHall(S, P.x, P.z) || (Math.abs(P.x - S.x) < 26 && P.z < -244 && P.z > -258)) {
         const side = P.z < RW_HALL.gateZ ? 'in' : 'out';
@@ -14020,26 +14421,31 @@ function rwUpdate(dt, K) {
 }
 function rwConspic(K) {
   const P = K.player, R = RW_STATE.ride;
+  if (RW_STATE.fride) return -0.5; // flat on a wagon
+  for (const S of RW_STATIONS) if (S.picket && S.picket.g.visible && K.near(S.picket.x, S.picket.z, 6)) return -0.25; // one of the strikers
   if (R) return R.loo ? -0.6 : RW_STATE.paperDay === K.G.day ? -0.38 : -0.3;
   if (P.car) return 0;
   const S = rwStationAt(P.x, P.z);
   if (S && (rwInHall(S, P.x, P.z) || rwOnPlatform(S, P.x, P.z))) return -0.12; // just another commuter
+  if (S && S.cafe && Math.abs(P.x - S.cafe.x) < 6 && P.z > -257 && P.z < -253) return -0.2; // a cuppa in the cafe
   if (P.z < -264 && P.z > -280) return 0.2; // walking along the railway line is not normal
   return 0;
 }
 const railway = {
   name: 'railway', roofs: rwRoofs,
-  useTarget: rwUseTarget, usePrompt: rwUsePrompt, use: rwUse, conspic: rwConspic, update: rwUpdate, ride: rwRide, plan: () => false,
-  riding: () => !!RW_STATE.ride,
-  unseen: () => !!(RW_STATE.ride && RW_STATE.ride.loo),
+  useTarget: rwUseTarget, usePrompt: rwUsePrompt, use: rwUse, conspic: rwConspic, update: rwUpdate, ride: (dt, K) => (RW_STATE.fride ? rwFreightRide(dt, K) : rwRide(dt, K)), plan: () => false,
+  riding: () => !!(RW_STATE.ride || RW_STATE.fride),
+  unseen: (h) => !!(RW_STATE.ride && RW_STATE.ride.loo) || !!(RW_STATE.fride && h && Math.hypot(h.x - (RW_STATE.fride.T.x + RW_STATE.fride.off), h.z - RW_FZ) > 9), // (lying flat on a wagon, you can't be seen from the ground)
   reset() {
     if (RW_STATE.ride) rwGetOff({ player: { x: 0, z: 0 }, blocked: () => false, showMsg: () => {} });
-    Object.assign(RW_STATE, { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, doorTip: false, paperDay: 0 });
+    if (RW_STATE.fride) rwJumpFreight({ player: { x: 0, z: 0 } }, true);
+    Object.assign(RW_STATE, { ride: null, ticket: null, rides: 0, fares: 0, fines: 0, dodged: 0, vaults: 0, warned: 0, inspections: 0, loo: 0, hits: 0, freight: 0, msgT: 0, opened: 0, doorTip: false, paperDay: 0, fride: null, hops: 0, tumbles: 0, spotted: 0, held: 0, delays: 0, cafe: 0, petitions: 0, petitionDay: 0, strikeSeen: 0 });
     for (const S of RW_STATIONS) { S.welcomed = 0; if (S.staff) S.staff.warned = 0; }
     rwRideRoof.h = -99;
   },
-  diary(K) { const b = []; if (rwHasTicket(K)) b.push(RW_STATE.ticket.kind === 'return' ? 'A DAY RETURN ON COUNTY RAIL' : 'A SINGLE TRAIN TICKET'); if (RW_STATE.ride) b.push('ON THE TRAIN'); return b; },
-  debug: () => ({ stations: RW_STATIONS.map((S) => ({ id: S.id, built: S.built, gates: S.gates.length })), pax: { x: Math.round(rwPax.x), dir: rwPax.dir, state: rwPax.state, v: +rwPax.v.toFixed(1), at: rwPax.stopAt ? rwPax.stopAt.id : null }, freight: { x: Math.round(rwFreight.x), state: rwFreight.state }, ...RW_STATE, ride: RW_STATE.ride ? { t: RW_STATE.ride.t, paid: RW_STATE.ride.paid, loo: RW_STATE.ride.loo, stops: RW_STATE.ride.stops } : null }),
+  diary(K) { const b = []; if (rwHasTicket(K)) b.push(RW_STATE.ticket.kind === 'return' ? 'A DAY RETURN ON COUNTY RAIL' : 'A SINGLE TRAIN TICKET'); if (RW_STATE.ride) b.push('ON THE TRAIN'); if (RW_STATE.fride) b.push('LYING ON A FREIGHT WAGON'); if (rwStrikeDay(K.G.day)) b.push('NO TRAINS: RAIL STRIKE'); return b; },
+  debug: () => ({ stations: RW_STATIONS.map((S) => ({ id: S.id, built: S.built, gates: S.gates.length })), pax: { x: Math.round(rwPax.x), dir: rwPax.dir, state: rwPax.state, v: +rwPax.v.toFixed(1), at: rwPax.stopAt ? rwPax.stopAt.id : null }, freight: { x: Math.round(rwFreight.x), state: rwFreight.state, v: +rwFreight.v.toFixed(1), dir: rwFreight.dir, sig: rwFreight.sigStop }, ...RW_STATE, fride: RW_STATE.fride ? { t: RW_STATE.fride.t, x: RW_STATE.fride.T.x + RW_STATE.fride.off } : null, ride: RW_STATE.ride ? { t: RW_STATE.ride.t, paid: RW_STATE.ride.paid, loo: RW_STATE.ride.loo, stops: RW_STATE.ride.stops } : null }),
+  rwFreightNear, rwHopFreight, rwJumpFreight, rwFlatXs, rwSigStopX, rwCafeMenu, rwStrikeDay, rwPicketsOut, RW_SIG_X, RW_X0, RW_X1, RW_FZ,
   RW_STATE, RW_STATIONS, rwPax, rwFreight, rwDoorSpots, rwBoard, rwGetOff, rwHasTicket, rwTicketMenu, rwTrainAtDoor, rwInspect, rwInHall, rwStationAt,
 };
 
@@ -15056,8 +15462,9 @@ function mhRivalCaughtByYou(r, ctx) {
 
 
 
+
 // the newer venues all plug in the same way: E targets, how well you blend in, each frame, the diary...
-const XV = [pubTV, pubGames, bowling, baths, buses, railway, dockWork];
+const XV = [pubTV, pubGames, bowling, baths, buses, railway, dockWork, quay];
 
 
 
@@ -17962,7 +18369,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { XV, pubTV, pubGames, dockWork, bowling, baths, buses, railway, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { XV, pubTV, pubGames, dockWork, quay, bowling, baths, buses, railway, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>
