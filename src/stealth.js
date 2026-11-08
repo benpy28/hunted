@@ -262,7 +262,9 @@ export const cams = []; // {x,y,z, yaw0, yaw, sweep, period, phase, city, seeT, 
 const CAM_RANGE = 24, CAM_HALF = 0.42;
 let camBody = null, camLed = null;
 const camLedMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-const coneGeo = (() => { const g = new THREE.ConeGeometry(Math.tan(CAM_HALF) * CAM_RANGE, CAM_RANGE, 18, 1, true); g.translate(0, -CAM_RANGE / 2, 0); g.rotateX(-Math.PI / 2); return g; })();
+// the drawn beam is only a short stub of what the camera can actually see, so it doesn't flood the screen
+const CAM_VIS = 7;
+const coneGeo = (() => { const g = new THREE.ConeGeometry(Math.tan(CAM_HALF) * CAM_VIS, CAM_VIS, 18, 1, true); g.translate(0, -CAM_VIS / 2, 0); g.rotateX(-Math.PI / 2); return g; })();
 const cones = [];
 function placeCams() {
   const take = (x, z, nx, nz, city, off) => {
@@ -285,7 +287,7 @@ function placeCams() {
   for (const C of cams) { drawCam(C); camLed.setColorAt(C.i, new THREE.Color(0x40ff60)); }
   if (camLed.instanceColor) camLed.instanceColor.needsUpdate = true;
   for (let k = 0; k < 6; k++) {
-    const m = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+    const m = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0.04, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
     m.visible = false; m.renderOrder = 3; scene.add(m); cones.push(m);
   }
 }
@@ -367,12 +369,14 @@ function updateCams(dt, K) {
   }
   SK_STATE.camMsgT -= dt;
   near.sort((a, b) => a.dist - b.dist);
+  // the glow only shows after dark (the cameras still watch all day, the LED tells you that)
+  const nightGlow = clamp((0.35 - K.G.dayAmt) / 0.2, 0, 1);
   cones.forEach((m, k) => {
-    const n = near[k]; m.visible = !!n;
+    const n = k < 4 && nightGlow > 0 ? near[k] : null; m.visible = !!n;
     if (!n) return;
     const C = n.C; m.position.set(C.x, C.y, C.z); m.rotation.set(0, 0, 0, 'YXZ'); m.rotation.order = 'YXZ'; m.rotation.y = C.yaw; m.rotation.x = -C.pitch;
     m.material.color.setHex(C.alarmT > 0 ? 0xff3030 : C.seeT > 0.05 ? 0xffa030 : 0xfff0a0);
-    m.material.opacity = (C.alarmT > 0 ? 0.11 : 0.06) * clamp(1.4 - n.dist / 45, 0, 1);
+    m.material.opacity = (C.alarmT > 0 ? 0.08 : 0.04) * nightGlow * clamp(1.2 - n.dist / 40, 0, 1);
   });
 }
 

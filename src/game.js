@@ -2088,7 +2088,14 @@ const hud = {
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
   pose: $('btn-pose'), carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), junk: $('hud-junk'), crack: $('hidecrack'), btnThrow: $('btn-throw'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
 };
-function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
+// small toast under the top pill; the same line again within a few seconds doesn't re-flash it
+let lastMsg = '', lastMsgAt = -99;
+function showMsg(t, dur = 2) {
+  const now = performance.now() / 1000;
+  if (t === lastMsg && now - lastMsgAt < 6 && G.msgT > 0) return;
+  lastMsg = t; lastMsgAt = now;
+  hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = Math.min(dur, 5);
+}
 let bannerT = 0;
 function showBanner(html, dur = 3) { hud.banner.innerHTML = html; hud.banner.classList.add('show'); bannerT = dur; }
 
