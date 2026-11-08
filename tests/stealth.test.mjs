@@ -36,22 +36,20 @@ test('climb into a bin unseen and the chase loses you; climb out again with E', 
     let spot = null;
     for (let x = -400; x < 900 && !spot; x += 3) { const T = H.hideSpotNear(x, 0.15, 0, 999); if (T && T.kind === 'dumpster') spot = T; }
     H.player.x = spot.stand.x; H.player.z = spot.stand.z; H.player.y = 0.15;
-    const P = H.player, K = H.TDK, near = (L, r) => L.filter((o) => Math.hypot(o.x - P.x, o.z - P.z) < r);
-    const why = [H.kidNear(P.x, P.z) && 'kid', H.pramNear(P.x, P.z) && 'pram', H.townUseTarget(K) && 'town', H.mdUseTarget(K) && 'matchday', H.icHatchNear(K) && 'icecream', H.lorryRearNear(H.GJ) && 'lorry', H.stallNear(P.x, P.y, P.z) && 'stall',
-      ...near(H.G.cars, 4).map((c) => `car:${c.kind}:${Math.hypot(c.x - P.x, c.z - P.z).toFixed(1)}`)].filter(Boolean).join(' ');
+    const why = { junk: !!H.junkNear(H.player.x, H.player.y, H.player.z), pram: !!H.pramNear(H.player.x, H.player.z), kid: !!H.kidNear(H.player.x, H.player.z), town: !!H.townUseTarget(H.TDK), md: !!H.mdUseTarget(H.TDK), ic: !!H.icHatchNear(H.TDK), gl: !!H.lorryRearNear(H.GJ), cars: H.G.cars.filter((c) => Math.hypot(c.x - H.player.x, c.z - H.player.z) < 4).map((c) => c.kind), mode: H.player.mode, y: H.player.y };
     H.useAction();
     const inBin = !!H.player.hide && H.player.hide === spot;
-    const after = [P.car ? 'in car' : '', P.mode, H.G.mode, P.hide ? P.hide.kind : 'no hide', H.GJ_STATE.ride ? 'on lorry' : ''].join(' ');
+    Object.assign(why, { hide: H.player.hide?.kind, car: H.player.car?.kind, ride: !!H.DL_STATE.ride, spot: [spot.x, spot.z] });
     // someone was chasing, but they're round the corner and didn't see you get in
     const a = Math.random() * 6.28, h = H.person(H, spot.stand.x + Math.sin(a) * 25, spot.stand.z + Math.cos(a) * 25, { waitT: 0 });
     h.state = 'chase'; h.lastSeen = 0; h.noticeT = 0;
     H.step(4);
-    const r = { why, after, inBin, still: !!H.player.hide, conspic: H.G.conspic, state: h.state, hp: H.player.hp, airHide: H.underRoof() };
+    const r = { why, inBin, still: !!H.player.hide, conspic: H.G.conspic, state: h.state, hp: H.player.hp, airHide: H.underRoof() };
     H.useAction();
     r.out = !H.player.hide; r.dist = Math.hypot(H.player.x - spot.stand.x, H.player.z - spot.stand.z);
     return r;
   });
-  assert.ok(s.inBin, `E at a dumpster should put you in it (near: ${s.why || 'nothing'}; after: ${s.after})`);
+  assert.ok(s.inBin, `E at a dumpster should put you in it ${JSON.stringify(s.why)}`);
   assert.ok(s.still, 'you should still be hidden');
   assert.equal(s.conspic, 0, 'hidden in a bin you don\'t stand out at all');
   assert.equal(s.state, 'search', 'a chaser who never saw you go in should lose you');
@@ -66,10 +64,10 @@ test('anyone who watched you climb in comes over and hauls you out', async () =>
     let spot = null;
     for (let x = 900; x > -400 && !spot; x -= 3) { const T = H.hideSpotNear(x, 0.15, 0, 999); if (T && T.kind === 'dumpster') spot = T; }
     H.player.x = spot.stand.x; H.player.z = spot.stand.z; H.player.y = 0.15;
-    // somewhere a few metres off on the open side, with a clear view of the bin (not wedged behind it between other bins)
+    // somewhere a few metres off with a clear view of the bin
     let hp = null;
-    for (let a = 0; a < 6.28 && !hp; a += 0.3) for (const r of [4, 5, 3]) { const x = spot.stand.x + Math.sin(a) * r, z = spot.stand.z + Math.cos(a) * r; if (!H.blockedAt(x, z) && !H.solidAt(x, 0.6, z, 0) && H.losSolid(x, 1.6, z, spot.stand.x, 1.6, spot.stand.z) && (x - spot.stand.x) * spot.stand.ux + (z - spot.stand.z) * spot.stand.uz > 0.5) { hp = { x, z }; break; } }
-    const h = H.person(H, hp.x, hp.z, { waitT: 0, role: 'rusher' }); // not a hesitant one, who won't go in alone
+    for (let a = 0; a < 6.28 && !hp; a += 0.3) for (const r of [4, 5, 3]) { const x = spot.stand.x + Math.sin(a) * r, z = spot.stand.z + Math.cos(a) * r; if (!H.blockedAt(x, z) && !H.solidAt(x, 0.6, z, 0) && H.losSolid(x, 1.6, z, spot.stand.x, 1.6, spot.stand.z)) { hp = { x, z }; break; } }
+    const h = H.person(H, hp.x, hp.z, { waitT: 0 });
     h.state = 'chase'; h.hasLOS = true; h.lastSeen = 0; h.noticeT = 0;
     H.enterHide(spot, H.SK);
     const marked = h.checkSpot === spot;

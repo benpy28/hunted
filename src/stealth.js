@@ -74,9 +74,9 @@ export function enterHide(S, K) {
   }
   if (S.kind !== 'lorry') K.showMsg(seen ? 'THEY SAW YOU GET IN. NOT GREAT' : `IN THE ${hideName(S)}. KEEP STILL. E TO GET OUT`, 2.5);
 }
-export const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY', stall: 'MARKET STALL', shed: 'SHED', loo: 'PORTALOO', compost: 'COMPOST BIN' })[S.kind] || 'BIN';
+export const hideName = (S) => ({ dumpster: 'BIN', wardrobe: 'WARDROBE', cupboard: 'CUPBOARD', crate: 'CRATE', locker: 'LOCKER', lorry: 'BIN LORRY', lorryback: 'LORRY', stall: 'MARKET STALL', shed: 'SHED', loo: 'PORTALOO', compost: 'COMPOST BIN' })[S.kind] || 'BIN';
 // a dog's nose: the hiding place you're in, if it's within r of (x, z) (dogs can't smell you over a moving lorry)
-export function sniffHide(x, z, r) { const S = SK_STATE.hide; if (!S || S.kind === 'lorry') return null; return Math.abs(S.x - x) < r && Math.abs(S.z - z) < r ? S : null; }
+export function sniffHide(x, z, r) { const S = SK_STATE.hide; if (!S || S.kind === 'lorry' || S.kind === 'lorryback') return null; return Math.abs(S.x - x) < r && Math.abs(S.z - z) < r ? S : null; }
 export function leaveHide(K, found = null) {
   const S = SK_STATE.hide; if (!S) return;
   SK_STATE.hide = null; K.player.hide = null; S.lift = 1;
