@@ -1,7 +1,7 @@
 // Parkour: running, jumping, sliding, vaulting low cover, mantling ledges, climbing walls and ladders,
 // and riding ziplines between rooftops. Works on a player-like body {x, y (feet), z, vx, vy, vz, yaw}.
 import { clamp, lerp } from './core.js';
-import { resolveBody, floorAt, stackTop, headroom, ladderNear, ladderTopNear, zipNear, groundY, bucketAt } from './world.js';
+import { resolveBody, moveBody, solidAt, floorAt, stackTop, headroom, ladderNear, ladderTopNear, zipNear, groundY, bucketAt } from './world.js';
 import { sfx } from './audio.js';
 
 const GRAV = 22, JUMP_V = 7.4;
@@ -25,7 +25,7 @@ function tryLedge(P, fx, fz, inp, sprint, cb) {
   const top = stackTop(px, pz, P.y);
   if (top < 0) return false;
   const rel = top - P.y;
-  if (!headroom(px, pz, top, 1.7)) return false;
+  if (!headroom(px, pz, top, 1.7) || !headroom(P.x, P.z, P.y + 0.1, top - P.y + 1.7)) return false; // no pulling yourself up through a ceiling
   // reach depends on what you're doing: a running jump grabs higher, a sprint into a wall lets you scramble up it
   let reach = P.grounded ? 1.3 : 2.45 + (P.vy > 0 ? 0.35 : 0);
   if (P.grounded && inp.jump) reach = 2.45;
@@ -123,7 +123,8 @@ export function parkourMove(dt, P, inp, sprint, speed, cb) {
   const ox = P.x, oz = P.z;
   P.x += (P.vx + P.kx) * dt; P.z += (P.vz + P.kz) * dt;
   const tall = P.crouch > 0.5 ? 1.1 : 1.8;
-  const hit = resolveBody(P, 0.4, P.y, tall);
+  const hit = moveBody(P, ox, oz, 0.4, P.y, tall);
+  if (solidAt(P.x, P.y, P.z, 0.02)) { if (P.goodX !== undefined) { P.x = P.goodX; P.z = P.goodZ; } } else { P.goodX = P.x; P.goodZ = P.z; }
   if (hit && inp.fwd > 0) {
     const moved = Math.hypot(P.x - ox, P.z - oz) / Math.max(dt, 1e-4);
     if (moved < Math.hypot(P.vx, P.vz) * 0.85 && tryLedge(P, fx, fz, inp, sprint, cb)) return;
@@ -202,7 +203,7 @@ function climbStep(dt, P, inp, cb, fx, fz) {
   // reached the top: pull yourself over
   if (top < 0 || top - P.y < 1.6) {
     const t = top < 0 ? P.y : top, tx = P.x - N.x * 1.0, tz = P.z - N.z * 1.0;
-    if (headroom(tx, tz, t, 1.7)) { P.mode = 'mantle'; P.anim = { t: 0, dur: 0.38, fx: P.x, fy: P.y, fz: P.z, tx, ty: t, tz, peak: t }; P.vy = 0; sfx.climb(); return; }
+    if (headroom(tx, tz, t, 1.7) && headroom(P.x, P.z, P.y + 0.1, t - P.y + 1.7)) { P.mode = 'mantle'; P.anim = { t: 0, dur: 0.38, fx: P.x, fy: P.y, fz: P.z, tx, ty: t, tz, peak: t }; P.vy = 0; sfx.climb(); return; }
   }
   // something overhead (a balcony or landing sticking out): grab it and climb onto it
   if (!headroom(P.x, P.z, P.y, 2.0)) {

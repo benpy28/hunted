@@ -17,14 +17,14 @@ test('you can climb the wall of a building onto its roof', async () => {
       if (tried >= 12) break;
       const z = (r.z0 + r.z1) / 2, x = r.x0 - 0.45;
       H.navRecenter(x, z, true);
-      if (H.blockedAt(x - 1, z) || H.stackTop(x + 0.8, z, 0) < r.h - 0.2) continue; // something in the way, or not this roof's wall
+      if (H.blockedAt(x - 1, z) || H.stackTop(x + 0.8, z, 0) < r.h - 0.2 || !H.headroom(x, z, 0.2, r.h)) continue; // something in the way, not this roof's wall, or indoors
       tried++;
       const P = H.player;
       Object.assign(P, { x, z, y: H.floorAt(x, z, 0.5), vx: 0, vz: 0, vy: 0, yaw: -Math.PI / 2, pitch: 0, stam: 100, mode: 'move', grounded: true, climbCd: 0 });
       H.input.fwd = 1; H.input.jump = true;
       H.step(0.1); H.input.jump = false;
       let peak = P.y;
-      for (let t = 0; t < 12 && P.y < r.h - 0.2; t++) { H.step(0.5); P.stam = Math.max(P.stam, 60); peak = Math.max(peak, P.y); }
+      for (let t = 0; t < 12 && P.y < r.h - 0.2; t++) { if (P.mode === 'move' && P.grounded) { H.input.jump = true; H.step(0.1); H.input.jump = false; } H.step(0.5); P.stam = Math.max(P.stam, 60); peak = Math.max(peak, P.y); } // keep going from balconies
       H.input.fwd = 0;
       if (P.y >= r.h - 0.2) ok++; else fails.push(`${r.h} reached ${peak.toFixed(1)} mode ${P.mode}`);
     }

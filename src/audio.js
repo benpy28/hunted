@@ -48,6 +48,12 @@ sfx.swap = () => { tone(420, 0.04, 'square', 0.05); tone(260, 0.05, 'square', 0.
 sfx.pump = () => { noise(0.08, 0.25, 900, 1); noise(0.08, 0.25, 600, 1, 0.12); };
 sfx.shotgun = () => { noise(0.3, 0.75, 500, 0.5); tone(90, 0.2, 'square', 0.16, 0.4); };
 sfx.smg = () => { noise(0.08, 0.38, 1300, 0.7); tone(180, 0.05, 'square', 0.07, 0.5); };
+sfx.clap = () => { for (let i = 0; i < 6; i++) noise(0.03, 0.12, 2500 + Math.random() * 1500, 1.5, i * 0.09 + Math.random() * 0.05); };
+sfx.sting = () => { tone(110, 0.5, 'sawtooth', 0.14, 0.7); tone(104, 0.6, 'sawtooth', 0.12, 0.6, 0.12); tone(55, 0.9, 'square', 0.1, 1, 0.3); };
+sfx.vzap = () => { noise(0.12, 0.3, 3200, 2); tone(1600, 0.1, 'square', 0.06, 0.3); };
+sfx.ice = () => { tone(1900, 0.12, 'sine', 0.08, 1.5); noise(0.1, 0.18, 5000, 3); };
+sfx.cheer = () => { for (let i = 0; i < 4; i++) noise(0.5, 0.08, 900 + i * 300, 0.6, i * 0.05); tone(520, 0.2, 'triangle', 0.05, 1.2, 0.1); };
+sfx.sigh = () => { noise(0.9, 0.05, 500, 0.5); };
 sfx.explode = () => { noise(0.9, 0.6, 180, 0.4); tone(60, 0.7, 'sawtooth', 0.2, 0.4); };
 
 // continuous rotor / propeller hum, volume driven by distance to the nearest aircraft
