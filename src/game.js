@@ -2832,7 +2832,8 @@ function updateDirector(dt) {
     G.hunterCarT = Math.max(8, 30 - G.day - G.level * 2);
     const have = G.cars.filter((c) => c.driver === 'hunter').length;
     if ((G.day >= 2 || G.level >= 2) && have < Math.min(G.day - 1 + G.level, 6)) {
-      const cand = G.cars.filter((c) => c.driver === 'traffic' && !c.far && Math.hypot(c.x - tp.x, c.z - tp.z) > 30 && Math.hypot(c.x - tp.x, c.z - tp.z) < 130);
+      const cand = G.cars.filter((c) => c.driver === 'traffic' && !c.far && !c.aw && !c.cb && !c.dl && !['coach', 'icecream', 'binlorry', 'bus'].includes(c.kind) && // (never the away coach, a county bus, the ice cream van or a working lorry: they have jobs to do)
+         Math.hypot(c.x - tp.x, c.z - tp.z) > 30 && Math.hypot(c.x - tp.x, c.z - tp.z) < 130);
       if (cand.length) { mpick(cand).driver = 'hunter'; showMsg('A DRIVER IS COMING FOR YOU', 2.5); sfx.horn(); }
     }
   }
