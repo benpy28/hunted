@@ -75,6 +75,7 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #btn-shove { right: calc(24px + env(safe-area-inset-right)); bottom: calc(120px + env(safe-area-inset-bottom)); width: 86px; height: 86px; background: rgba(190,30,40,.5); }
 #btn-fire { right: calc(118px + env(safe-area-inset-right)); bottom: calc(150px + env(safe-area-inset-bottom)); width: 86px; height: 86px; background: rgba(230,170,30,.5); }
 #btn-jump { right: calc(122px + env(safe-area-inset-right)); bottom: calc(60px + env(safe-area-inset-bottom)); }
+#btn-slide { right: calc(210px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }
 #btn-run { right: calc(30px + env(safe-area-inset-right)); bottom: calc(26px + env(safe-area-inset-bottom)); }
 #btn-car { right: calc(30px + env(safe-area-inset-right)); bottom: calc(220px + env(safe-area-inset-bottom)); background: rgba(46,155,224,.55); }
 #btn-reload { right: calc(210px + env(safe-area-inset-right)); bottom: calc(40px + env(safe-area-inset-bottom)); }

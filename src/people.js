@@ -1,7 +1,7 @@
 // People: blocky low-poly characters and verlet ragdolls for takedowns.
 import * as THREE from '../vendor/three.module.min.js';
 import { clamp, lerp, scene } from './core.js';
-import { resolveCircle, groundY } from './world.js';
+import { resolveBody, floorAt } from './world.js';
 
 export const PG = {
   leg: new THREE.BoxGeometry(0.22, 0.82, 0.24).translate(0, -0.41, 0),
@@ -85,10 +85,10 @@ class Ragdoll {
       }
       for (let i = 0; i < this.p.length; i++) {
         const p = this.p[i], q = this.prev[i], r = 0.11 * this.scale;
-        const gy = groundY(p.x, p.z) + r;
+        const gy = floorAt(p.x, p.z, Math.max(p.y, q.y) - r, 0.05) + r;
         if (p.y < gy) { p.y = gy; q.x = lerp(q.x, p.x, 0.25); q.z = lerp(q.z, p.z, 0.25); }
         const before = { x: p.x, z: p.z };
-        resolveCircle(p, 0.15);
+        resolveBody(p, 0.15, p.y - r, 0.3);
         if (before.x !== p.x || before.z !== p.z) { q.x = lerp(q.x, p.x, 0.5); q.z = lerp(q.z, p.z, 0.5); }
       }
     }
