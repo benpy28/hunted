@@ -38,13 +38,14 @@ canvas#game { position: fixed; inset: 0; width: 100%; height: 100%; display: blo
 #hud-alert.hot { color: #fff; background: rgba(190,20,30,.75); border-color: #ff5a5a; animation: pulse .8s infinite; }
 @keyframes pulse { 50% { box-shadow: 0 0 22px rgba(255,40,40,.8); } }
 
-#hud-msg { position: absolute; top: 20%; left: 50%; transform: translateX(-50%); font-weight: 800; font-size: 19px;
-  letter-spacing: 2px; color: #ffd27a; text-shadow: 0 2px 8px #000; opacity: 0; transition: opacity .3s; white-space: nowrap; }
+#hud-msg { position: absolute; top: calc(92px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); font-weight: 700; font-size: 12px;
+  letter-spacing: 1px; line-height: 1.35; color: #ffe3a8; text-shadow: 0 1px 3px #000; opacity: 0; transition: opacity .3s; text-align: center;
+  max-width: min(460px, 78vw); width: max-content; padding: 4px 12px; border-radius: 10px; background: rgba(8,10,16,.45); }
 #hud-msg.show { opacity: 1; }
-#hud-banner { position: absolute; top: 38%; left: 50%; transform: translate(-50%,-50%); text-align: center;
-  font-size: 56px; font-weight: 900; letter-spacing: 6px; text-shadow: 0 4px 20px #000; opacity: 0;
+#hud-banner { position: absolute; top: 36%; left: 50%; transform: translate(-50%,-50%); text-align: center;
+  font-size: 30px; font-weight: 900; letter-spacing: 4px; text-shadow: 0 2px 10px #000; opacity: 0;
   transition: opacity .6s; white-space: nowrap; }
-#hud-banner small { display: block; font-size: 16px; letter-spacing: 4px; margin: 6px 0; font-weight: 700; color: #cfd6e4; }
+#hud-banner small { display: block; font-size: 12px; letter-spacing: 3px; margin: 4px 0; font-weight: 700; color: #cfd6e4; }
 #hud-banner.show { opacity: 1; }
 
 #minimap { position: absolute; right: calc(16px + env(safe-area-inset-right)); top: calc(16px + env(safe-area-inset-top));
@@ -120,7 +121,7 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
   #hud-bars { width: 150px; }
   #hud-alert { font-size: 11px; }
   h1 { font-size: 54px; } h2 { font-size: 36px; }
-  #hud-banner { font-size: 38px; }
+  #hud-banner { font-size: 22px; }
 }
 /* phone layout: keep the thumbs' corners clear */
 .is-touch #hud-bars { left: auto; right: calc(140px + env(safe-area-inset-right)); bottom: auto; top: calc(126px + env(safe-area-inset-top)); width: 120px; }
@@ -204,16 +205,16 @@ button.ghost { display: block; margin: 6px auto; padding: 8px 26px; background: 
   font-size: 12px; font-weight: 700; letter-spacing: 1.5px; color: #cfd6e4; animation: mhIn .5s ease-out; }
 #hud-recap.hidden { display: none; }
 #hud-recap small { display: block; font-size: 11px; letter-spacing: 4px; color: #5ae0ff; }
-#hud-recap h3 { margin: 4px 0 8px; font-size: 26px; letter-spacing: 5px; color: #fff; }
+#hud-recap h3 { margin: 4px 0 8px; font-size: 20px; letter-spacing: 5px; color: #fff; }
 #hud-recap .mh-row { margin-top: 4px; } #hud-recap b { color: #fff; } #hud-recap .ok { color: #8fe39a; } #hud-recap .no { color: #ff6a5a; }
 @keyframes mhIn { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
 #hud-stamp { position: absolute; left: 72%; top: 44%; transform: translate(-50%, -50%) rotate(-6deg) scale(1.6); opacity: 0; pointer-events: none;
-  padding: 6px 18px; border: 4px solid #ffd23a; border-radius: 8px; color: #ffd23a; font-size: 34px; font-weight: 900; letter-spacing: 6px; text-align: center;
+  padding: 4px 12px; border: 3px solid #ffd23a; border-radius: 6px; color: #ffd23a; font-size: 20px; font-weight: 900; letter-spacing: 4px; text-align: center;
   text-shadow: 0 2px 12px rgba(0,0,0,.8); background: rgba(10,10,10,.35); }
-#hud-stamp small { display: block; font-size: 12px; letter-spacing: 4px; color: #fff; }
+#hud-stamp small { display: block; font-size: 10px; letter-spacing: 4px; color: #fff; }
 #hud-stamp.show { animation: mhStamp 2.2s ease-out forwards; }
 @keyframes mhStamp { 0% { opacity: 0; transform: translate(-50%, -50%) rotate(-6deg) scale(1.8); } 12% { opacity: 1; transform: translate(-50%, -50%) rotate(-6deg) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -50%) rotate(-6deg) scale(1); } }
-@media (max-width: 760px) { #hud-goal { max-width: 170px; font-size: 10px; } #hud-recap { min-width: 240px; font-size: 11px; } #hud-stamp { font-size: 24px; } }
+@media (max-width: 760px) { #hud-goal { max-width: 170px; font-size: 10px; } #hud-recap { min-width: 240px; font-size: 11px; } #hud-stamp { font-size: 16px; } }
 
 /* ---------- inventory: four slots, press the one you're on again to empty your hands ---------- */
 #hud-slots { position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; align-items: flex-end; pointer-events: auto; }
@@ -565,12 +566,19 @@ class GeoBuf {
   }
   build(material) {
     if (!this.n) return null;
-    const m = new THREE.Mesh(this.geometry(), material);
+    const geo = this.geometry(); geo.computeBoundingBox();
+    // the baked world never changes once it's on the GPU: drop the JS copies of every vertex so a long
+    // night's ride isn't carrying the whole town twice (phones and tablets kill the tab when memory runs out)
+    for (const a of [...Object.values(geo.attributes), geo.index]) if (a) a.onUpload(freeAttrArray);
+    this.pos = []; this.nor = []; this.uv = []; this.col = []; this.idx = []; this.built = true;
+    const m = new THREE.Mesh(geo, material);
     m.matrixAutoUpdate = false; m.updateMatrix();
     scene.add(m);
     return m;
   }
 }
+
+function freeAttrArray() { this.array = new this.array.constructor(1); }
 
 // GeoBuf split into square chunks by position, so each chunk is its own mesh and the renderer can skip
 // whatever is off screen (or, with farCull, too far away to matter)
@@ -2311,7 +2319,8 @@ function groundY(x, z) {
 // ---------------------------------------------------------------------
 // Local navigation grid around the player: BFS flow field + line of sight
 // ---------------------------------------------------------------------
-const CELL = 2, GN = 180;
+const CELL = 1, GN = 360; // 1m cells: a 2m grid couldn't tell a doorway from the wall either side of it
+const CK = 2 / CELL; // distances below were tuned for 2m cells
 const blocked = new Uint8Array(GN * GN), flow = new Int32Array(GN * GN).fill(-1), bfsQueue = new Int32Array(GN * GN);
 let gox = 0, goz = 0; // grid origin (world coords of cell 0,0 corner)
 let gcx = 1e9, gcz = 1e9;
@@ -2369,7 +2378,7 @@ function computeFlow(tx, tz) {
   if (start < 0) return;
   if (blocked[start]) {
     const cx = start % GN, cz = Math.floor(start / GN);
-    outer: for (let r = 1; r < 4; r++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+    outer: for (let r = 1; r < 4 * CK; r++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
       const x = cx + dx, z = cz + dz;
       if (x >= 0 && z >= 0 && x < GN && z < GN && !blocked[z * GN + x]) { start = z * GN + x; break outer; }
     }
@@ -2399,22 +2408,38 @@ function flowStep(i) {
   }
   return best;
 }
+// is the straight walk from a to b blocked by anything solid (fine check, not the grid)?
+function segBlocked(ax, az, bx, bz) {
+  const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / 0.25));
+  for (let s = 1; s <= n; s++) { const t = s / n; if (pointBlocked(ax + (bx - ax) * t, az + (bz - az) * t, 0.3)) return true; }
+  return false;
+}
 function navTarget(x, z, look = 2) {
   let i = cellIdx(x, z);
   if (i < 0) return null;
   if (flow[i] < 0) {
     const cx = i % GN, cz = Math.floor(i / GN); let bd = 1e9, bi = -1;
-    for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+    for (let dz = -2 * CK; dz <= 2 * CK; dz++) for (let dx = -2 * CK; dx <= 2 * CK; dx++) {
       const nx = cx + dx, nz = cz + dz; if (nx < 0 || nz < 0 || nx >= GN || nz >= GN) continue;
-      const j = nz * GN + nx; if (flow[j] >= 0 && flow[j] < bd) { bd = flow[j]; bi = j; }
+      const j = nz * GN + nx; if (flow[j] < 0) continue;
+      const c = cellCenter(j), k = flow[j] + Math.hypot(c.x - x, c.z - z) * 2; // nearest reachable cell you can actually walk straight to
+      if (k < bd && !segBlocked(x, z, c.x, c.z)) { bd = k; bi = j; }
     }
     return bi < 0 ? null : cellCenter(bi);
   }
-  for (let s = 0; s < look; s++) { const n = flowStep(i); if (n < 0) break; i = n; }
+  // walk down the flow, but only as far as you can see in a straight line: aiming several cells
+  // ahead round a corner is what had people walking into the end of a wall instead of the door
+  for (let s = 0; s < look * CK; s++) {
+    const n = flowStep(i); if (n < 0) break;
+    if (s > 0) { const c = cellCenter(n); if (segBlocked(x, z, c.x, c.z)) break; }
+    i = n;
+  }
   return cellCenter(i);
 }
+// inside the nav grid but with no walkable way to the player (a sealed yard, a locked-off room)
+function navCutOff(x, z) { const i = cellIdx(x, z); return i >= 0 && flow[i] < 0 && navTarget(x, z) === null; }
 function los(ax, az, bx, bz) {
-  const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz), n = Math.ceil(d / 1.2);
+  const dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz), n = Math.ceil(d / (0.6 * CELL));
   for (let s = 1; s < n; s++) { const t = s / n; if (blockedAt(ax + dx * t, az + dz * t)) return false; }
   return true;
 }
@@ -2490,6 +2515,16 @@ function losSolid(ax, ay, az, bx, by, bz) {
     }
   }
   return true;
+}
+// tests/debugging: a picture of the nav grid round a point ('#' blocked, '.' open, digits = flow distance mod 10)
+function navDebugMap(x, z, r = 8) {
+  const rows = [];
+  for (let gz = -r; gz <= r; gz++) {
+    let row = '';
+    for (let gx = -r; gx <= r; gx++) { const i = cellIdx(x + gx * CELL, z + gz * CELL); row += i < 0 ? '?' : blocked[i] ? '#' : flow[i] < 0 ? '.' : String(flow[i] % 10); }
+    rows.push(row);
+  }
+  return rows;
 }
 
 // News: Channel 9 runs on the billboards and on TVs around town. When nobody knows who you are it's
@@ -6789,7 +6824,9 @@ const cams = []; // {x,y,z, yaw0, yaw, sweep, period, phase, city, seeT, alarmT,
 const CAM_RANGE = 24, CAM_HALF = 0.42;
 let camBody = null, camLed = null;
 const camLedMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-const coneGeo = (() => { const g = new THREE.ConeGeometry(Math.tan(CAM_HALF) * CAM_RANGE, CAM_RANGE, 18, 1, true); g.translate(0, -CAM_RANGE / 2, 0); g.rotateX(-Math.PI / 2); return g; })();
+// the drawn beam is only a short stub of what the camera can actually see, so it doesn't flood the screen
+const CAM_VIS = 7;
+const coneGeo = (() => { const g = new THREE.ConeGeometry(Math.tan(CAM_HALF) * CAM_VIS, CAM_VIS, 18, 1, true); g.translate(0, -CAM_VIS / 2, 0); g.rotateX(-Math.PI / 2); return g; })();
 const cones = [];
 function placeCams() {
   const take = (x, z, nx, nz, city, off) => {
@@ -6812,7 +6849,7 @@ function placeCams() {
   for (const C of cams) { drawCam(C); camLed.setColorAt(C.i, new THREE.Color(0x40ff60)); }
   if (camLed.instanceColor) camLed.instanceColor.needsUpdate = true;
   for (let k = 0; k < 6; k++) {
-    const m = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0.07, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+    const m = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xfff0a0, transparent: true, opacity: 0.04, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
     m.visible = false; m.renderOrder = 3; scene.add(m); cones.push(m);
   }
 }
@@ -6894,12 +6931,14 @@ function updateCams(dt, K) {
   }
   SK_STATE.camMsgT -= dt;
   near.sort((a, b) => a.dist - b.dist);
+  // the glow only shows after dark (the cameras still watch all day, the LED tells you that)
+  const nightGlow = clamp((0.35 - K.G.dayAmt) / 0.2, 0, 1);
   cones.forEach((m, k) => {
-    const n = near[k]; m.visible = !!n;
+    const n = k < 4 && nightGlow > 0 ? near[k] : null; m.visible = !!n;
     if (!n) return;
     const C = n.C; m.position.set(C.x, C.y, C.z); m.rotation.set(0, 0, 0, 'YXZ'); m.rotation.order = 'YXZ'; m.rotation.y = C.yaw; m.rotation.x = -C.pitch;
     m.material.color.setHex(C.alarmT > 0 ? 0xff3030 : C.seeT > 0.05 ? 0xffa030 : 0xfff0a0);
-    m.material.opacity = (C.alarmT > 0 ? 0.11 : 0.06) * clamp(1.4 - n.dist / 45, 0, 1);
+    m.material.opacity = (C.alarmT > 0 ? 0.08 : 0.04) * nightGlow * clamp(1.2 - n.dist / 40, 0, 1);
   });
 }
 
@@ -14590,6 +14629,257 @@ function safeSpotNear(s, x, z) {
   return null;
 }
 
+// SWAT: hole up in a building once they know you're in there and, two minutes later, an armoured van
+// turns up with a squad in riot gear. Shields stop everything from the front, rifles fire in bursts,
+// and pepper-smoke canisters through the door mean you can't just sit in a corner shooting the doorway.
+// Knockdowns stay cartoony like everyone else's (they go through the same Hunter.die / knockFX path).
+
+
+
+
+
+
+
+const SWAT_DELAY = 120; // seconds you can stay holed up once they know you're there
+const SWT = {
+  phase: 'none', // none | siege (countdown) | deployed
+  t: 0, B: null, outT: 0, coolT: 0, squad: [], van: null, gas: null, gasCd: 0, tinkMsg: false, deployT: 0, toSpawn: 0, lostT: 0,
+};
+const SWAT_LINES = ['ARMED POLICE!', 'COME OUT WITH YOUR HANDS UP!', 'SHIELDS UP!', 'MOVE MOVE MOVE!', 'HOLD THE LINE!', 'STAY DOWN!', 'CONTACT FRONT!', 'GAS GOING IN!'];
+const COUGH = ['*COUGH* *COUGH*', 'EYES! MY EYES!', 'PEPPER! SO MUCH PEPPER!', 'CAN\'T BREATHE IN HERE!', '*SNEEZE*'];
+
+// ---------------------------------------------------------------------------------------------
+// gear
+const shieldMat = new THREE.MeshLambertMaterial({ color: 0x9fb6c8, transparent: true, opacity: 0.55, depthWrite: false });
+const shieldRimMat = new THREE.MeshLambertMaterial({ color: 0x1a1d24 });
+const rifleMat = new THREE.MeshLambertMaterial({ color: 0x15171c });
+const swatGeo = { shield: new THREE.BoxGeometry(0.62, 1.05, 0.05), rim: new THREE.BoxGeometry(0.66, 0.06, 0.07), rifle: new THREE.BoxGeometry(0.07, 0.1, 0.72), mag: new THREE.BoxGeometry(0.05, 0.16, 0.08), visor: new THREE.BoxGeometry(0.4, 0.1, 0.06) };
+const visorMat = new THREE.MeshLambertMaterial({ color: 0x223040, emissive: 0x0a1018 });
+function kitOutSwat(h) {
+  const p = h.p;
+  const sh = new THREE.Group();
+  sh.add(new THREE.Mesh(swatGeo.shield, shieldMat));
+  for (const y of [-0.52, 0.52]) { const r = new THREE.Mesh(swatGeo.rim, shieldRimMat); r.position.y = y; sh.add(r); }
+  sh.position.set(-0.1, 1.05, 0.42); p.group.add(sh); h.shield = sh; // carried out front, so it shows which way they're covering
+  const rf = new THREE.Mesh(swatGeo.rifle, rifleMat); rf.position.set(0, -0.62, 0.28); p.armR.add(rf);
+  const mg = new THREE.Mesh(swatGeo.mag, rifleMat); mg.position.set(0, -0.72, 0.22); p.armR.add(mg);
+  const vz = new THREE.Mesh(swatGeo.visor, visorMat); vz.position.set(0, 0.06, 0.22); p.head.add(vz);
+}
+
+// the van: dark blue box on wheels with a light bar that flashes red and blue
+const vanMat = new THREE.MeshLambertMaterial({ color: 0x1b2a44 }), vanDark = new THREE.MeshLambertMaterial({ color: 0x111317 });
+const vanRed = new THREE.MeshBasicMaterial({ color: 0xff2a2a }), vanBlue = new THREE.MeshBasicMaterial({ color: 0x2a6aff }), vanGlass = new THREE.MeshLambertMaterial({ color: 0x223040 });
+function buildVan() {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.3, 2.1, 5.4), vanMat); body.position.y = 1.45; g.add(body);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 0.1), vanGlass); cab.position.set(0, 1.9, 2.71); g.add(cab);
+  const bump = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.4, 0.3), vanDark); bump.position.set(0, 0.55, 2.75); g.add(bump);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.34, 0.25, 4.6), new THREE.MeshLambertMaterial({ color: 0xe8e8e8 })); stripe.position.y = 1.2; g.add(stripe);
+  for (const [x, z] of [[-1, 1.7], [1, 1.7], [-1, -1.7], [1, -1.7]]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.35, 10), vanDark); w.rotation.z = Math.PI / 2; w.position.set(x * 1.05, 0.45, z); g.add(w); }
+  const red = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.18, 0.3), vanRed); red.position.set(-0.45, 2.6, 1.6); g.add(red);
+  const blue = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.18, 0.3), vanBlue); blue.position.set(0.45, 2.6, 1.6); g.add(blue);
+  g.userData = { red, blue };
+  scene.add(g);
+  return g;
+}
+
+// ---------------------------------------------------------------------------------------------
+// where are you holed up? a shop, warehouse, venue or a safehouse
+function swBuildingAt(P) {
+  if (P.car || !P.alive) return null;
+  const Z = zoneAt(P.x, P.y, P.z); if (Z) return { x0: Z.x0, x1: Z.x1, z0: Z.z0, z1: Z.z1, name: Z.name };
+  const S = safeAt(P.x, P.y, P.z); if (S) return { x0: S.x0, x1: S.x1, z0: S.z0, z1: S.z1, name: S.name };
+  return null;
+}
+const swIn = (B, x, z, pad = 0) => !!B && x > B.x0 - pad && x < B.x1 + pad && z > B.z0 - pad && z < B.z1 + pad;
+const swSame = (a, b) => !!a && !!b && Math.abs(a.x0 - b.x0) < 0.5 && Math.abs(a.z0 - b.z0) < 0.5;
+const swCx = (B) => (B.x0 + B.x1) / 2, swCz = (B) => (B.z0 + B.z1) / 2;
+
+let hudEl = null;
+function swHud(text, hot) {
+  if (!hudEl) {
+    if (typeof document === 'undefined') return;
+    hudEl = document.createElement('div'); hudEl.id = 'swat-timer';
+    hudEl.style.cssText = 'position:fixed;top:56px;left:50%;transform:translateX(-50%);padding:5px 14px;border-radius:14px;font:bold 15px/1.2 Arial,sans-serif;letter-spacing:1px;color:#fff;background:rgba(20,30,60,.82);pointer-events:none;z-index:30;display:none;text-align:center';
+    document.body.appendChild(hudEl);
+  }
+  if (!text) { hudEl.style.display = 'none'; return; }
+  hudEl.style.display = 'block'; hudEl.textContent = text;
+  hudEl.style.background = hot ? 'rgba(170,25,25,.88)' : 'rgba(20,30,60,.82)';
+}
+
+function swatReset() {
+  for (const h of SWT.squad) if (!h.dead) h.remove();
+  if (SWT.van) scene.remove(SWT.van.g);
+  Object.assign(SWT, { phase: 'none', t: 0, B: null, outT: 0, coolT: 0, squad: [], van: null, gas: null, gasCd: 0, tinkMsg: false, deployT: 0, toSpawn: 0, lostT: 0 });
+  swHud(null);
+}
+
+// does a hit from direction (ux, uz) (pointing from the attacker to them) land on the shield?
+function swatBlocks(h, ux, uz, K) {
+  if (!h.swat || h.dead || h.stun > 0.6) return false;
+  const fx = Math.sin(h.face), fz = Math.cos(h.face);
+  if (-(fx * ux + fz * uz) < 0.3) return false; // from the side or behind: no shield there
+  emitPuff(h.x + fx * 0.5, h.y + 1.2, h.z + fz * 0.5, { life: 0.18, vy: 0.4, size0: 0.15, size1: 0.45, alpha: 0.9, color: 0xffe080 });
+  K.sfx.hit();
+  if (!SWT.tinkMsg) { SWT.tinkMsg = true; K.showMsg('THE SHIELDS STOP EVERYTHING FROM THE FRONT. GET ROUND THE SIDE, OR RUN', 4); }
+  if (Math.random() < 0.15) K.say(h, 'SHIELD!');
+  return true;
+}
+
+// one SWAT operator's move this tick (they're Hunters in chase with h.swat set): returns the velocity
+function swatSteer(h, dt, d, dx, dz, tp, K) {
+  const P = K.player, T = h.T;
+  h.lastSeen += dt;
+  // over to you: through the door, not into the wall
+  let tx = tp.x, tz = tp.z;
+  if (!(h.hasLOS && d < 30) && !los(h.x, h.z, tx, tz)) { const n = navTarget(h.x, h.z, 2); if (n) { tx = n.x; tz = n.z; } }
+  // holding the line at the door while the gas goes in: wait just outside rather than piling into the smoke
+  if (SWT.gas && swIn(SWT.gas.B, tp.x, tp.z) && !swIn(SWT.gas.B, h.x, h.z, 0.3) && d < 9) { tx = h.x; tz = h.z; }
+  const ex = tx - h.x, ez = tz - h.z, ed = Math.hypot(ex, ez) || 1;
+  let spd = T.speed * K.dayMult();
+  if (h.hasLOS && d < 10) spd = 1.6; // shield up, steady advance
+  let vx = (ex / ed) * spd, vz = (ez / ed) * spd;
+  if (d < 1.3) { vx = 0; vz = 0; }
+  // rifles: three-round bursts, accurate, from behind the shield
+  h.swBurst = h.swBurst || 0;
+  if (h.hasLOS && d < 45 && !P.hide && h.noticeT <= 0) {
+    if (h.swBurst > 0) { h.swBurstT -= dt; if (h.swBurstT <= 0) { h.swBurst--; h.swBurstT = 0.11; K.swatShot(h, d); } }
+    else if (h.fireCd <= 0) { h.swBurst = 3; h.swBurstT = 0; h.fireCd = (1.25 + Math.random() * 0.6) / Math.min(1.5, K.dayMult()); }
+  }
+  if (P.hide && d < 1.8) K.forceOutOfHiding(h); // a bin lid's no match for a riot squad
+  // shield bash up close
+  if (d < 1.6 && h.attackCd <= 0 && P.alive && !P.hide && Math.abs(P.y - h.y) < 1.3) { h.attackCd = 1.1; K.bash(h); }
+  h.shoutT = (h.shoutT || Math.random() * 3) - dt;
+  if (h.shoutT <= 0) { h.shoutT = 3.5 + Math.random() * 4; K.say(h, SWAT_LINES[(Math.random() * SWAT_LINES.length) | 0]); }
+  return { x: vx, z: vz };
+}
+
+function swSpawnSquad(K) {
+  const tp = K.targetPos(), B = SWT.B;
+  const n = SWT.toSpawn; if (n <= 0 || !SWT.van) return;
+  const V = SWT.van, rx = V.g.position.x - Math.sin(V.g.rotation.y) * 3.6, rz = V.g.position.z - Math.cos(V.g.rotation.y) * 3.6; // out of the back doors
+  const p = !pointBlocked(rx, rz, 0.4) ? { x: rx, z: rz } : randomOpenPoint(V.g.position.x, V.g.position.z, 2.5, 6, 12);
+  if (!p) return;
+  const h = K.makeSwat(p.x, p.z);
+  h.face = Math.atan2(tp.x - p.x, tp.z - p.z);
+  SWT.squad.push(h); SWT.toSpawn--;
+  if (SWT.toSpawn === 0) { K.say(h, 'ARMED POLICE! COME OUT!'); K.reportSighting(B ? swCx(B) : tp.x, B ? swCz(B) : tp.z); }
+}
+
+function swPlaceVan(K) {
+  const B = SWT.B, tp = K.targetPos(), cx = B ? swCx(B) : tp.x, cz = B ? swCz(B) : tp.z;
+  // somewhere on open ground 16-30m out, ideally where you can't see it pull up
+  let best = null;
+  for (let t = 0; t < 30 && !best; t++) {
+    const c = randomOpenPoint(cx, cz, 16, 30, 4); if (!c) continue;
+    if (navCutOff(c.x, c.z) || swIn(B, c.x, c.z, 3)) continue;
+    let ok = true; for (const [ox, oz] of [[1.4, 3], [-1.4, 3], [1.4, -3], [-1.4, -3], [0, 0]]) if (pointBlocked(c.x + ox, c.z + oz, 0.2)) ok = false; // room for the van itself
+    if (ok || t > 22) best = c;
+  }
+  if (!best) best = randomOpenPoint(cx, cz, 10, 40, 30) || { x: tp.x + 20, z: tp.z };
+  const g = buildVan(), yaw = Math.atan2(cx - best.x, cz - best.z) + Math.PI / 2;
+  g.rotation.y = yaw;
+  const sx = best.x - Math.sin(yaw) * 26, sz = best.z - Math.cos(yaw) * 26; // screeches in sideways along its own nose
+  g.position.set(sx, 0, sz);
+  SWT.van = { g, fx: sx, fz: sz, tx: best.x, tz: best.z, t: 0 };
+}
+
+function swGasStep(dt, K) {
+  const G = SWT.gas, P = K.player;
+  if (!G) return;
+  G.t -= dt; G.fuse -= dt;
+  if (G.fuse > 0) { // canister skittering in
+    emitPuff(G.x, 0.3, G.z, { life: 0.5, vy: 0.6, size0: 0.2, size1: 0.6, alpha: 0.5, color: 0xd8e8b0 });
+    return;
+  }
+  G.puffT -= dt;
+  if (G.puffT <= 0) {
+    G.puffT = 0.07;
+    const B = G.B;
+    for (let k = 0; k < 2; k++) emitPuff(B.x0 + Math.random() * (B.x1 - B.x0), 0.4 + Math.random() * 1.6, B.z0 + Math.random() * (B.z1 - B.z0), { life: 2.2, vy: 0.15, vx: Math.random() - 0.5, vz: Math.random() - 0.5, size0: 1.2, size1: 3.6, alpha: 0.32, color: 0xdfe8b8 });
+  }
+  if (swIn(G.B, P.x, P.z) && P.y < 4 && !P.car) {
+    if (P.hide) K.forceOutOfHiding(); // nobody stays in a wardrobe full of pepper
+    G.coughT -= dt;
+    if (G.coughT <= 0) { G.coughT = 1.1; K.hurt(5); K.showMsg(COUGH[(Math.random() * COUGH.length) | 0] + '  GET OUT!', 1.1); }
+  }
+  for (const h of K.hunters()) if (!h.dead && !h.swat && swIn(G.B, h.x, h.z) && !(h.panicT > 0)) { h.panicT = 3; K.say(h, '*COUGH*'); }
+  if (G.t <= 0) SWT.gas = null;
+}
+
+function updateSwat(dt, K) {
+  const P = K.player, Gs = K.G;
+  if (Gs.super || Gs.mode !== 'playing') { if (SWT.phase !== 'none' && Gs.super) swatReset(); return; }
+  SWT.coolT = Math.max(0, SWT.coolT - dt);
+  SWT.squad = SWT.squad.filter((h) => !h.dead);
+  const B = swBuildingAt(P), tp = K.targetPos();
+  if (SWT.phase === 'none') {
+    if (!B || SWT.coolT > 0 || !P.alive) { swHud(null); return; }
+    // they know you're in here: someone saw you, or the last sighting is right on this building
+    const seen = K.hunters().some((h) => !h.dead && h.state === 'chase' && (h.hasLOS || h.lastSeen < 2) && Math.hypot(h.x - P.x, h.z - P.z) < 45);
+    const known = seen || (Gs.lastSeenT < 6 && swIn(B, Gs.lkp.x, Gs.lkp.z, 4));
+    if (!known) { swHud(null); return; }
+    SWT.phase = 'siege'; SWT.t = SWAT_DELAY; SWT.B = B; SWT.outT = 0;
+    K.showMsg(`THEY KNOW YOU'RE IN ${B.name || 'HERE'}. SWAT IN 2 MINUTES`, 4); K.sfx.alarm();
+  }
+  if (SWT.phase === 'siege') {
+    if (swIn(SWT.B, P.x, P.z, 1) && P.alive) { SWT.outT = 0; SWT.t -= dt; }
+    else {
+      SWT.outT += dt;
+      const far = Math.hypot(P.x - swCx(SWT.B), P.z - swCz(SWT.B)) > 30;
+      if (B && !swSame(B, SWT.B)) { SWT.B = B; } // ducked next door: they follow the trail, clock keeps running
+      else if (SWT.outT > 12 && far && Gs.unseenT > 8) { SWT.phase = 'none'; SWT.B = null; swHud(null); K.showMsg('YOU SLIPPED OUT. THE SIEGE IS STOOD DOWN', 3); return; }
+    }
+    const m = Math.max(0, Math.ceil(SWT.t)), mm = Math.floor(m / 60), ss = String(m % 60).padStart(2, '0');
+    swHud(`SWAT EN ROUTE ${mm}:${ss}`, m <= 20);
+    if (SWT.t <= 0) {
+      SWT.phase = 'deployed'; SWT.deployT = 0; SWT.lostT = 0;
+      SWT.toSpawn = Math.min(10, 6 + Math.floor(Gs.day / 4));
+      swPlaceVan(K); K.sfx.alarm(); K.sfx.horn();
+      K.showBanner('SWAT<small>RIOT SHIELDS AND RIFLES. THEY\'RE COMING IN</small>', 3.5);
+    }
+    return;
+  }
+  // deployed
+  SWT.deployT += dt;
+  const V = SWT.van;
+  if (V) {
+    V.t = Math.min(1, V.t + dt / 2.2);
+    const k = 1 - Math.pow(1 - V.t, 3);
+    V.g.position.x = V.fx + (V.tx - V.fx) * k; V.g.position.z = V.fz + (V.tz - V.fz) * k;
+    const on = Math.floor(Gs.elapsed * 6) % 2 === 0; V.g.userData.red.visible = on; V.g.userData.blue.visible = !on;
+    if (V.t >= 1 && SWT.toSpawn > 0) { V.spawnT = (V.spawnT ?? 0.3) - dt; if (V.spawnT <= 0) { V.spawnT = 0.45; swSpawnSquad(K); } }
+  }
+  if (B) SWT.B = B;
+  const inside = swIn(SWT.B, P.x, P.z, 0.3) && !!B;
+  swHud(inside ? 'SWAT ON SCENE. GET OUT!' : SWT.squad.length ? `SWAT: ${SWT.squad.length} ON YOUR TAIL` : null, true);
+  // gas in through the door once they're stacked up close
+  SWT.gasCd -= dt;
+  if (inside && !SWT.gas && SWT.gasCd <= 0 && SWT.toSpawn === 0) {
+    const thrower = SWT.squad.find((h) => Math.hypot(h.x - P.x, h.z - P.z) < 16);
+    if (thrower) {
+      SWT.gasCd = 20;
+      SWT.gas = { B: { ...SWT.B }, t: 22, fuse: 1.4, x: P.x + (Math.random() - 0.5) * 3, z: P.z + (Math.random() - 0.5) * 3, puffT: 0, coughT: 0.6 };
+      K.say(thrower, 'GAS GOING IN!'); K.sfx.shove(); K.showMsg('PEPPER SMOKE! YOU CAN\'T STAY IN HERE', 2.5);
+    }
+  }
+  swGasStep(dt, K);
+  // stand down once you've given them the slip (or the whole team's on the floor)
+  const close = SWT.squad.some((h) => Math.hypot(h.x - tp.x, h.z - tp.z) < 70);
+  SWT.lostT = !close && Gs.unseenT > 10 ? SWT.lostT + dt : 0;
+  if ((SWT.toSpawn === 0 && SWT.squad.length === 0) || SWT.lostT > 25 || !P.alive) {
+    const beaten = SWT.toSpawn === 0 && SWT.squad.length === 0;
+    for (const h of SWT.squad) if (!h.dead) { h.remove(); }
+    if (SWT.van) scene.remove(SWT.van.g);
+    Object.assign(SWT, { phase: 'none', squad: [], van: null, gas: null, B: null, coolT: beaten ? 90 : 45, toSpawn: 0 });
+    swHud(null);
+    if (P.alive) K.showMsg(beaten ? 'THE WHOLE SWAT TEAM IS DOWN. THEY\'LL SEND MORE NEXT TIME' : 'SWAT STOOD DOWN. YOU LOST THEM', 3.5);
+  }
+}
+
+function swatDebug() { return { phase: SWT.phase, t: SWT.t, squad: SWT.squad.length, toSpawn: SWT.toSpawn, gas: !!SWT.gas, van: !!SWT.van, B: SWT.B }; }
+
 // Allies: people you've paid to be on your side for a few days. Pals throw hands, bodyguards shoot.
 
 
@@ -15518,6 +15808,7 @@ const XV = [pubTV, pubGames, bowling, baths, buses, railway, dockWork, quay];
 
 
 
+
 const CFG = { days: 30, dayLength: 120, startHour: 7 }; // each day starts at dawn
 
 generateWorld();
@@ -15633,6 +15924,7 @@ const HTYPES = {
   runner: { speed: 6.6, walk: 2.0, dmg: 5, scale: 0.95, hp: 2, knock: 1.2, stun: 1.5 },
   brute: { speed: 4.0, walk: 1.3, dmg: 14, scale: 1.28, hp: 5, knock: 0.45, stun: 0.9 },
   cop: { speed: 5.6, walk: 1.8, dmg: 6, scale: 1.04, hp: 3, knock: 0.8, stun: 1.2 },
+  swat: { speed: 4.7, walk: 1.6, dmg: 10, scale: 1.08, hp: 12, knock: 0.25, stun: 0.4 }, // riot squad: slow, heavy, shielded
 };
 const qMarkerMat = new THREE.SpriteMaterial({
   map: canvasTex(64, 64, (ctx) => { ctx.fillStyle = '#ffc23a'; ctx.beginPath(); ctx.arc(32, 32, 26, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#222'; ctx.font = 'bold 44px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', 32, 34); }),
@@ -15648,12 +15940,12 @@ const markerMat = new THREE.SpriteMaterial({
 class Hunter {
   constructor(x, z, type, gunner, state = 'search') {
     this.type = type; this.T = HTYPES[type]; this.gunner = gunner || type === 'cop';
-    const cop = type === 'cop';
+    const cop = type === 'cop' || type === 'swat', swat = type === 'swat';
     const look = {
       skin: mpick(SKINS), hair: mpick(HAIRS), gun: this.gunner,
-      pants: cop ? 0x1a2238 : mpick(PANTS),
-      shirt: cop ? 0x2a3f78 : type === 'runner' ? mpick([0xd6763a, 0xc93030, 0xe0c030]) : type === 'brute' ? mpick([0x333333, 0x4a3a2a, 0x2c3e66]) : mpick(SHIRTS),
-      cap: cop ? 0x1a2238 : null, vest: cop ? 0x222222 : null,
+      pants: swat ? 0x1a1d24 : cop ? 0x1a2238 : mpick(PANTS),
+      shirt: swat ? 0x232a36 : cop ? 0x2a3f78 : type === 'runner' ? mpick([0xd6763a, 0xc93030, 0xe0c030]) : type === 'brute' ? mpick([0x333333, 0x4a3a2a, 0x2c3e66]) : mpick(SHIRTS),
+      cap: swat ? 0x111317 : cop ? 0x1a2238 : null, vest: swat ? 0x0f1115 : cop ? 0x222222 : null,
     };
     // townsfolk dress for who they are: office types, pensioners, dock workers in hi-vis...
     let folkSlow = 1; this.folk = null;
@@ -15669,6 +15961,7 @@ class Hunter {
     this.stun = 0; this.kx = 0; this.kz = 0; this.phase = Math.random() * 10; this.hasLOS = false; this.lastSeen = 0;
     this.wt = null; this.progT = 0; this.lx = x; this.lz = z; this.alertT = -1; this.strafe = Math.random() < 0.5 ? 1 : -1;
     this.dead = false;
+    this.swat = swat; if (swat) kitOutSwat(this);
     this.role = type === 'cop' ? mpick(['rusher', 'flanker', 'flanker']) : type === 'brute' ? mpick(['rusher', 'hesitant', 'stalker']) : mpick(ROLES);
     this.y = groundY(x, z); this.vy = 0; this.peakY = this.y; this.climb = null; this.ladder = null;
     this.sus = 0; this.huntT = 0; this.panicT = 0; this.thinkAt = G.elapsed; this.home = { x, z };
@@ -15676,6 +15969,7 @@ class Hunter {
   }
   alert(delay = 0) {
     if (this.state === 'chase') return;
+    if (navCutOff(this.x, this.z)) { this.huntT = Math.max(this.huntT, 6); return; } // no way through to you from here: they shout, but can't join in
     if (delay > 0) { if (this.alertT < 0) this.alertT = delay; return; }
     this.state = 'chase'; this.lastSeen = 0; this.sus = 0; this.noticeT = mr(0.35, 1.1) + player.disg * 1.6; // a double-take before they commit (longer if you're in disguise)
     if (player.disg > 0) wearDisguise(0.035);
@@ -15694,6 +15988,7 @@ class Hunter {
     if (this.rival) rivalDown(this);
   }
   damage(n, dirX, dirZ, hitY, byPlayer = true) {
+    if (this.swat && swatBlocks(this, dirX, dirZ, SWK)) { this.alert(); return; } // TINK: straight off the riot shield
     this.hp -= n; this.alert();
     if (this.hp > 0) hitFX(this.x, this.y + 1.8 * this.T.scale, this.z, hitKindNow());
     if (this.hp <= 0) this.die({ x: dirX * 7, y: 2.5, z: dirZ * 7 }, hitY, byPlayer, true);
@@ -15747,6 +16042,7 @@ class Hunter {
     let tvx = 0, tvz = 0, lifeMode = null;
     if (this.stun > 0) {
       this.stun -= dt;
+    } else if (this.swat && this.state === 'chase') { const v = swatSteer(this, dt, d, dx, dz, tp, SWK); tvx = v.x; tvz = v.z;
     } else if (this.state === 'chase') {
       this.lastSeen += dt;
       if (player.hide) { if (hideHunterThink(this, d, SK)) return; if (this.checkSpot !== player.hide && this.lastSeen > 1.5) { this.state = 'search'; this.wt = randomOpenPoint(G.lkp.x, G.lkp.z, 2, 12) || null; this.huntT = 20; this.sus = 0.5; return; } }
@@ -15784,7 +16080,15 @@ class Hunter {
       }
       const ex0 = tx - this.x, ez0 = tz - this.z;
       if (this.y > 1 || this.y < -1) { /* on a roof or underground: straight at it */ }
-      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) { const n = navTarget(this.x, this.z, 2); if (n && !(goLadder && (los(this.x, this.z, tx, tz)))) { tx = n.x; tz = n.z; } }
+      else if (!((this.hasLOS && Math.abs(dy) < 1.5) || d < 4) || (Math.hypot(ex0, ez0) > 3 && !los(this.x, this.z, tx, tz))) {
+        const n = navTarget(this.x, this.z, 2);
+        if (n && !(goLadder && (los(this.x, this.z, tx, tz)))) { tx = n.x; tz = n.z; this.cutOffT = 0; }
+        else if (!n && !goLadder && d < 170) { // shut off from you (a sealed yard, the far side of a wall with no way round): don't walk into the wall forever
+          this.cutOffT = (this.cutOffT || 0) + dt;
+          if (this.cutOffT > 2.5) { this.state = 'search'; this.huntT = 0; this.wt = null; this.cutOffT = 0; return; }
+          tx = this.x; tz = this.z;
+        }
+      }
       const ex = tx - this.x, ez = tz - this.z, ed = Math.hypot(ex, ez) || 1;
       const spd = T.speed * dayMult() * this.spdMul * spdK;
       if (this.noticeT > 0) { this.noticeT -= dt; tvx = 0; tvz = 0; }
@@ -15835,6 +16139,7 @@ class Hunter {
         if (this.wt && this.huntT <= 0 && Math.random() < 0.5 && lifeStart(this, LIFE)) { /* off to do something */ }
         else if (this.wt && Math.random() < 0.6) this.waitT = mr(1, 3.5); // stop and look around
         if (this.peek && this.wt) hunterPeekArrive(this, SK); // lift the lid and have a look
+        if (this.huntT > 0 && navCutOff(this.x, this.z)) this.huntT = 0; // shut in a yard with no way out to you: forget it
         const hunting = this.huntT > 0 && Math.random() < 0.8;
         const guess = hunting ? G.lkp : this.home;
         if (!(hunting && !this.waitT && hunterPickPeek(this, G.lkp))) this.wt = randomOpenPoint(guess.x, guess.z, hunting ? 2 : 5, hunting ? 25 : 40) || { x: this.x, z: this.z };
@@ -15842,11 +16147,18 @@ class Hunter {
       if (!this.wt) this.wt = { x: this.x, z: this.z };
       const ex = this.wt.x - this.x, ez = this.wt.z - this.z, ed = Math.hypot(ex, ez) || 1;
       let ox = ex / ed, oz = ez / ed;
-      if (!(lifeMode === 'walk' && this.act && this.act.straight) && !los(this.x, this.z, this.wt.x, this.wt.z)) { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } } // a checked-clear route leg indoors walks straight: the coarse grid can't see the gaps between shelves
+      if (!(lifeMode === 'walk' && this.act && this.act.straight) && !los(this.x, this.z, this.wt.x, this.wt.z)) {
+        // searching near you: the flow field knows the way round (through the door, not into the wall)
+        const fn = this.huntT > 0 && Math.hypot(this.wt.x - tp.x, this.wt.z - tp.z) < 30 && (!this.peek || Math.hypot(this.wt.x - tp.x, this.wt.z - tp.z) < 3) ? navTarget(this.x, this.z, 2) : null;
+        if (fn) { const fl = Math.hypot(fn.x - this.x, fn.z - this.z) || 1; ox = (fn.x - this.x) / fl; oz = (fn.z - this.z) / fl; }
+        else { const n = this.navTo(this.wt); if (n) { ox = n.x; oz = n.z; } }
+      } // a checked-clear route leg indoors walks straight: the coarse grid can't see the gaps between shelves
       if (!(this.panicT > 0) && !(this.cowerT > 0)) {
       const w = this.waitT > 0 || lifeMode === 'hold' ? 0 : T.walk * this.spdMul * (this.huntT > 0 ? 1.4 : 1) * (this.walkK || 1);
       tvx = ox * w; tvz = oz * w;
       this.progT += dt;
+      this.pressT = this.pressing ? (this.pressT || 0) + dt : Math.max(0, (this.pressT || 0) - dt);
+      if (this.pressT > 1.5 && !this.act) { this.wt = null; this.peek = null; this.pressT = 0; } // up against a wall with no way through: pick somewhere else
       if (this.progT > 2) { if (Math.hypot(this.x - this.lx, this.z - this.lz) < 0.6) this.wt = null; this.progT = 0; this.lx = this.x; this.lz = this.z; }
       }
     }
@@ -15857,6 +16169,7 @@ class Hunter {
     const ox = this.x, oz = this.z;
     this.x += (this.vx + this.kx) * dt; this.z += (this.vz + this.kz) * dt;
     const wall = moveBody(this, ox, oz, 0.35 * T.scale, this.y, 1.8);
+    this.pressing = wall && Math.hypot(tvx, tvz) > 0.8 && Math.hypot(this.x - ox, this.z - oz) < Math.hypot(tvx, tvz) * dt * 0.25; // walking into a wall, getting nowhere
     if (this.y < 0.5) { const cx0 = this.x, cz0 = this.z; for (const c of G.cars) if (Math.abs(c.x - this.x) < c.hl + 2 && Math.abs(c.z - this.z) < c.hl + 2) resolveCircleCar(this, 0.35, c); if (this.x !== cx0 || this.z !== cz0) moveBody(this, cx0, cz0, 0.35 * T.scale, this.y, 1.8); }
     keepOutOfSolids(this);
     // scramble up walls to get at you (runners are good at it, brutes hopeless)
@@ -16772,6 +17085,19 @@ const SK = {
     if (h.hasLOS || Math.hypot(h.x - player.x, h.z - player.z) < 14) { h.alert(0.5); addHeat(1.5); } else { h.huntT = Math.max(h.huntT, 10); h.sus = Math.max(h.sus, 0.5); }
   },
 };
+// the SWAT team's hooks into the game (src/swat.js)
+const SWK = {
+  G, player, sfx, hunters: () => G.hunters, targetPos: () => targetPos(), dayMult: () => dayMult(),
+  say: (h, t) => say(h, t), showMsg: (t, d) => showMsg(t, d), showBanner: (h, d) => showBanner(h, d), reportSighting: (x, z) => reportSighting(x, z),
+  hurt: (n) => hurtPlayer(n, player.x, player.z, 0),
+  forceOutOfHiding: (h) => { if (player.hide) leaveHide(SK, h || null); },
+  makeSwat: (x, z) => { const h = new Hunter(x, z, 'swat', true, 'chase'); h.noticeT = 0.4; h.role = 'rusher'; G.hunters.push(h); return h; },
+  swatShot: (h, d) => { // rifle round from behind the shield: much better aim than a townie with a pistol
+    const s = h.T.scale; _from.set(h.x + Math.sin(h.face) * 0.7, h.y + 1.45 * s, h.z + Math.cos(h.face) * 0.7);
+    shootAtPlayer(_from, clamp(0.62 - d / 110, 0.25, 0.6) * (player.disg > 0 ? 0.9 : 1), 6, 0xffd070, d);
+  },
+  bash: (h) => { setHitKind('crowbar'); if (player.car) player.car.damage(6); else hurtPlayer(h.T.dmg, h.x, h.z, 7); sfx.thud(); },
+};
 // what the odd jobs and bin lorries need from the game
 const GJ = {
   G, player, sfx, get input() { return input; }, isTouch: () => isTouch, showMsg: (t, d) => showMsg(t, d), addCash: (n) => { player.cash += n; },
@@ -17039,6 +17365,7 @@ function setHitKind(k) { G.hitKind = k; G.hitKindAt = G.elapsed; }
 function hitKindNow() { return G.elapsed - (G.hitKindAt ?? -9) < 0.2 ? G.hitKind : 'oof'; }
 function launchHunter(h, ux, uz, getsUp, imp) {
   if (h.dead) return;
+  if (h.swat && swatBlocks(h, ux, uz, SWK)) { h.stun = Math.max(h.stun, 0.3); h.kx += ux * 3; h.kz += uz * 3; return; } // they brace behind the shield
   const heavy = h.type === 'brute' ? 0.9 : 1, sp = mr(19, 27) * heavy;
   if (h.held) { h.held = false; if (G.held === h) G.held = null; }
   lifeInterrupt(h); releaseJob(h);
@@ -17516,7 +17843,14 @@ const hud = {
   hp: $('bar-health'), st: $('bar-stamina'), vig: $('vignette'), ammo: $('hud-ammo'), prompt: $('hud-prompt'),
   pose: $('btn-pose'), carbar: $('carbar'), carhp: $('bar-car'), cross: $('crosshair'), btnCar: $('btn-car'), junk: $('hud-junk'), crack: $('hidecrack'), btnThrow: $('btn-throw'), map: $('minimap'), cash: $('hud-cash'), allies: $('hud-allies'), job: $('hud-job'), disg: $('hud-disg'), sus: $('hud-sus'),
 };
-function showMsg(t, dur = 2) { hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = dur; }
+// small toast under the top pill; the same line again within a few seconds doesn't re-flash it
+let lastMsg = '', lastMsgAt = -99;
+function showMsg(t, dur = 2) {
+  const now = performance.now() / 1000;
+  if (t === lastMsg && now - lastMsgAt < 6 && G.msgT > 0) return;
+  lastMsg = t; lastMsgAt = now;
+  hud.msg.textContent = t; hud.msg.classList.add('show'); G.msgT = Math.min(dur, 5);
+}
 let bannerT = 0;
 function showBanner(html, dur = 3) { hud.banner.innerHTML = html; hud.banner.classList.add('show'); bannerT = dur; }
 
@@ -17781,7 +18115,7 @@ function spawnHunter(minD = 55, maxD = 150, state = 'search') {
   let p = null;
   for (let t = 0; t < 12 && !p; t++) {
     const c = randomOpenPoint(tp.x, tp.z, minD, maxD, 4);
-    if (c && !safeAt(c.x, 0, c.z) && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
+    if (c && !safeAt(c.x, 0, c.z) && !navCutOff(c.x, c.z) && !(Math.hypot(c.x - tp.x, c.z - tp.z) < 70 && los(c.x, c.z, tp.x, tp.z))) p = c;
   }
   if (!p) return;
   const r = Math.random(), copChance = G.level >= 2 ? (G.level - 1) * 0.08 : 0;
@@ -17844,7 +18178,7 @@ function resetGame() {
 }
 function startGame(sup = G.super) {
   G.super = !!sup;
-  initAudio(); resetGame(); resetWeather(); G.newsLook = {};
+  initAudio(); resetGame(); resetWeather(); swatReset(); G.newsLook = {};
   resetHero(); G.villainFight = null; G.villainsBeaten = 0; resetVillains(HC);
   SLOTS[0] = G.super ? 'laser' : 'pistol';
   if (G.super) { player.weapon = 'laser'; player.lastWeapon = 'laser'; player.owned = new Set(['laser']); player.cash = 200; showWeaponModel(); }
@@ -18270,10 +18604,10 @@ function updateDirector(dt) {
   if (G.spawnT <= 0) {
     G.spawnT = 0.6;
     if (alive.length < targetHunters()) spawnHunter();
-    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && !h.rival && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
-    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && !h.rival && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
+    for (const h of alive) if (h.state !== 'chase' && !h.contract && !h.guard && !h.rival && !h.swat && Math.hypot(h.x - tp.x, h.z - tp.z) > 175) { h.remove(); if (alive.length <= targetHunters()) spawnHunter(); break; }
+    for (const h of alive) if (h.state === 'chase' && !h.contract && !h.guard && !h.rival && !h.swat && Math.hypot(h.x - tp.x, h.z - tp.z) > 260) { h.remove(); break; }
     // not everyone joins in: past the cap, the furthest ones who can't see you go back to searching
-    const ch = alive.filter((h) => h.state === 'chase' && !h.contract && !h.rival);
+    const ch = alive.filter((h) => h.state === 'chase' && !h.contract && !h.rival && !h.swat);
     if (ch.length > maxChasers()) {
       ch.sort((a, b) => Math.hypot(b.x - tp.x, b.z - tp.z) - Math.hypot(a.x - tp.x, a.z - tp.z));
       for (let i = 0; i < ch.length - maxChasers(); i++) if (!ch[i].hasLOS || Math.hypot(ch[i].x - tp.x, ch[i].z - tp.z) > 30) { ch[i].state = 'search'; ch[i].wt = null; ch[i].alertT = -1; }
@@ -18379,7 +18713,7 @@ function simulate(dt, t) {
     for (const a of G.drones) if (!a.dead) a.update(dt);
     G.helis = G.helis.filter((a) => !a.dead); G.drones = G.drones.filter((a) => !a.dead);
     for (const p of G.pickups) p.update(dt, t);
-    updateSafehouse(dt);
+    updateSafehouse(dt); updateSwat(dt, SWK);
     updateGetUps(dt); updateDrops(dt, t); updateLaser(dt); updateBubbles(dt); updateContract(dt); updateRival(dt); updateAllies(dt); updateShopLight();
     updateInteriors(dt, player, G.hunters, interiorCb);
     updateDirector(dt);
@@ -18411,7 +18745,7 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug / test hook
-window.__hunted = { XV, pubTV, pubGames, dockWork, quay, bowling, baths, buses, railway, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
+window.__hunted = { XV, pubTV, pubGames, dockWork, quay, bowling, baths, buses, railway, DL_STATE, dlRearNear, dlHopOn, deliveriesDebug: () => deliveriesDebug(TDK), dlInternals, AW_STATE, awayEnd, inAwayEnd, awayDaysDebug: () => awayDaysDebug(TDK), awInternals, CN_CLEAR, cinema, cnRoofs, CN_STATE, FILMS, showNow, filmOn, showTime, hasTicket, inCinema, screenAt, cnUseTarget, cnUse, cnConspic, cnSit, cnStand, cinemaDebug, cnInternals, LN_STATE, launderettes, launderetteAt, lnUseTarget, lnUse, lnConspic, launderetteDebug, lnInternals, mdRoofs, ground, church, clubhouse, carBoot, MD_STATE, MD_CLEAR, matchNow, opponentOn, inGround, inChurch, mdUseTarget, mdUse, mdConspic, matchDayDebug, mdInternals, IC_STATE, icHatch, icHatchNear, icMenu, icDistracted, iceCreamDebug: () => iceCreamDebug(TDK), shopHours, shopOpenAt, shutLine, conspicNow: () => conspicuous(), KD_STATE, kids, prams, playgrounds, schoolInfo, maybeFamily, makeKid, givePram, pramHeld, grabPram, dropPram, pramNear, kidNear, greetKid, kidsDebug, TDK, TD_STATE, TD_EVENTS, weekdayOf, dayNameOf, eventsOn, eventOn, folkMix, folkWants, crowdMul, townUseTarget, townUse, diaryHTML, townDayDebug, funRun, fete, todayLine, lifeGo, lifeLap, pauseGame, resumeGame, hideSpots, hunterPeekArrive, MK, MK_STATE, markets, marketStalls, stallNear, stallMenu, marketOpen, marketAt, marketsDebug, marketInternals, hireVendor, vendorOf, cityLifeDebug, randomOpenPoint, GJ, GJ_STATE, gigBoards, gigMenu, gigBoardNear, gigsDebug, gigInternals, lorryRearNear, hopOnLorry, hopOffLorry, SK, SK_STATE, stealthDebug, hideSpotNear, enterHide, leaveHide, junk, junkNear, pickJunk, throwJunk, noiseAt, cams, rayCams, breakCam, flocks, scareFlock, pickMark, pickPocket, raycastWorld, bikes, riders, spawnCyclist, playerBikeAction, bikeDebug, BK, streetProps: streetPropObjs, geysers, kickProp, hitHydrant, rayProps, propInFront, tidyStreetProps, streetPropDebug, fireRay, playerShove, carInteractions, Car, henchmen, warehouses, zoneAt, headroom, knockDebug, setHitKind, launchHunter, pointBlocked, losSolid, navDebugMap, computeFlow, renderOnce: (dt = 1 / 30) => { const t = performance.now() / 1000; updateLighting(t); updateCamera(dt, t); cullChunks(camera.position.x, camera.position.z); renderFrame({ drawVM: vm.visible && G.mode !== 'menu', indoor: false, floorY: G.floorY ?? 0, speed: 0, danger: 0, kick: 0 }); }, SWT, swatDebug, swatReset, updateSwat: (dt) => updateSwat(dt, SWK), SWK: () => SWK, stepDt: (secs, dt, each) => { for (let i = 0; i < secs / dt; i++) { simulate(dt, performance.now() / 1000); if (each) each(); } }, solidAt, unbucketedColliders, lanes, HERO, villains, villainHit, heroPoseCmd, HC, lifeSpots, cityLifeDebug, lifeStart, LIFE, roofs, stackTop, walkIns, blockedAt, navRecenter, underRoof, shopRooms, CFG, MH, mhCtx, hurtPlayer, killPlayer, heldSus, PFX, newsTex, WX, forceWeather, safehouses, localSus, bumpLocal, get disg() { return player.disg; }, atmSpots, atmCtx, get contract() { return G.contract; }, Hunter, Ally, shopSpots, selectWeapon, crowbarSwing, shopCtx, CATALOG, tryOpenShop, leaveShop, WEAPONS, floorAt, groundY, links, input, useAction, ladders, ziplines, step: (secs) => { for (let i = 0; i < secs * 30; i++) simulate(1 / 30, performance.now() / 1000); }, G, player, camera, scene, renderer, hourAt, startGame, spawnHunter, enterCar, exitCar, playerShoot, colliders, addHeat, get ragdolls() { return ragdolls.length; } };
 
 }
 </script>
